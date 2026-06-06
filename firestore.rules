@@ -1,0 +1,37 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function userRole() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role;
+    }
+
+    match /users/{userId} {
+      allow read: if signedIn();
+      allow create: if signedIn() && request.auth.uid == userId;
+      allow update: if signedIn() && (request.auth.uid == userId || userRole() == 'admin');
+    }
+
+    match /bookings/{bookingId} {
+      allow create: if signedIn();
+      allow read: if signedIn();
+      allow update: if signedIn() && userRole() in ['admin', 'technician', 'customer'];
+    }
+
+    match /{collection}/{docId} {
+      allow read, write: if signedIn() && collection in [
+        'attendance',
+        'estimates',
+        'bills',
+        'reviews',
+        'notifications',
+        'technician_locations',
+        'analytics'
+      ];
+    }
+  }
+}

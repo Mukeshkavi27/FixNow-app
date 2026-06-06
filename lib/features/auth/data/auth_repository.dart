@@ -1,0 +1,64 @@
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+
+import '../../../core/enums/user_role.dart';
+import '../../../core/providers/firebase_providers.dart';
+import '../domain/app_user.dart';
+
+final authRepositoryProvider = Provider<AuthRepository>((ref) {
+  return AuthRepository(ref.watch(firebaseRefsProvider).auth, ref.watch(firebaseRefsProvider).firestore);
+});
+
+final authStateProvider = StreamProvider<User?>((ref) {
+  return ref.watch(authRepositoryProvider).authStateChanges();
+});
+
+final currentUserProvider = StreamProvider<AppUser?>((ref) {
+  final authUser = ref.watch(authStateProvider).valueOrNull;
+  if (authUser == null) return Stream.value(null);
+  return ref.watch(authRepositoryProvider).watchUser(authUser.uid);
+});
+
+class AuthRepository {
+  AuthRepository(this._auth, this._firestore);
+
+  final FirebaseAuth _auth;
+  final FirebaseFirestore _firestore;
+
+  Stream<User?> authStateChanges() => _auth.authStateChanges();
+
+  Stream<AppUser?> watchUser(String uid) {
+    return _firestore.collection('users').doc(uid).snapshots().map((doc) {
+      if (!doc.exists) return null;
+      return AppUser.fromFirestore(doc);
+    });
+  }
+
+  Future<void> signIn(String email, String password) {
+    return _auth.signInWithEmailAndPassword(email: email, password: password);
+  }
+
+  Future<void> createUser({
+    required String name,
+    required String email,
+    required String password,
+    required String phone,
+    UserRole role = UserRole.customer,
+  }) async {
+    final credential = await _auth.createUserWithEmailAndPassword(email: email, password: password);
+    final uid = credential.user!.uid;
+    final user = AppUser(
+      uid: uid,
+      name: name,
+      email: email,
+      phone: phone,
+      role: role,
+      createdAt: DateTime.now(),
+      isActive: true,
+    );
+    await _firestore.collection('users').doc(uid).set(user.toJson());
+  }
+
+  Future<void> signOut() => _auth.signOut();
+}
