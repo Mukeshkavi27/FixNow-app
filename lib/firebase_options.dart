@@ -1,22 +1,24 @@
 import 'package:firebase_core/firebase_core.dart';
-import 'package:flutter/foundation.dart'
-    show defaultTargetPlatform, kIsWeb, TargetPlatform;
+import 'package:flutter/foundation.dart';
 
 class DefaultFirebaseOptions {
   static FirebaseOptions get currentPlatform {
     if (kIsWeb) {
-      throw UnsupportedError('Run flutterfire configure to add web options.');
+      return const FirebaseOptions(
+        apiKey: 'AIzaSyDeO15iDL-kJ-FOHcKRApj-vb-i5-rjIv0',
+        authDomain: 'fixnow-a6515.firebaseapp.com',
+        projectId: 'fixnow-a6515',
+        storageBucket: 'fixnow-a6515.firebasestorage.app',
+        messagingSenderId: '778888734140',
+        appId: '1:778888734140:web:16c0c10ff7ea785f7f37b9',
+        measurementId: 'G-H6Z2Y23ZPH',
+      );
     }
     switch (defaultTargetPlatform) {
       case TargetPlatform.android:
-        throw UnsupportedError('Run flutterfire configure to add Android options.');
+        throw UnsupportedError('Run flutterfire configure for Android options.');
       case TargetPlatform.iOS:
-        throw UnsupportedError('Run flutterfire configure to add iOS options.');
-      case TargetPlatform.macOS:
-        throw UnsupportedError('Run flutterfire configure to add macOS options.');
-      case TargetPlatform.windows:
-      case TargetPlatform.linux:
-        throw UnsupportedError('FixNow supports Android and iOS production targets.');
+        throw UnsupportedError('Run flutterfire configure for iOS options.');
       default:
         throw UnsupportedError('Unsupported platform.');
     }
