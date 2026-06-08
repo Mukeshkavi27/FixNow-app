@@ -1,8 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:geolocator/geolocator.dart';
+import 'package:http/http.dart' as http;
+import 'dart:convert';
 import 'package:go_router/go_router.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import '../../../app/theme/app_theme.dart';
 import '../../../core/constants/app_constants.dart';
 import '../../auth/data/auth_repository.dart';
 import '../../bookings/data/booking_repository.dart';
@@ -14,11 +18,463 @@ final customerBookingsProvider = StreamProvider.autoDispose<List<Booking>>((ref)
   return ref.watch(bookingRepositoryProvider).watchCustomerBookings(user.uid);
 });
 
-// Category filter state
 final _selectedCategoryProvider = StateProvider.autoDispose<String?>((ref) => null);
+final _bottomNavIndexProvider = StateProvider.autoDispose<int>((ref) => 0);
 
-class CustomerDashboardScreen extends ConsumerWidget {
+/// Holds the currently selected address label shown in the top bar
+final _selectedLocationProvider = StateProvider.autoDispose<String?>((ref) => null);
+
+// Most booked services data
+const _mostBooked = [
+  _MostBookedItem(
+    label: 'Bathroom Cleaning',
+    price: '₹979',
+    originalPrice: '₹1,058',
+    rating: 4.80,
+    imagePlaceholderColor: Color(0xFFE8F4FD),
+    iconData: Icons.bathtub_outlined,
+  ),
+  _MostBookedItem(
+    label: 'AC Repair',
+    price: '₹299',
+    originalPrice: null,
+    rating: 4.73,
+    isInstant: true,
+    imagePlaceholderColor: Color(0xFFE8F8F0),
+    iconData: Icons.ac_unit,
+  ),
+  _MostBookedItem(
+    label: 'Foam-jet AC Service',
+    price: '₹999',
+    originalPrice: null,
+    rating: 4.76,
+    isInstant: true,
+    imagePlaceholderColor: Color(0xFFFFF3E8),
+    iconData: Icons.air,
+  ),
+  _MostBookedItem(
+    label: 'Kitchen Cleaning',
+    price: '₹1,429',
+    originalPrice: '₹1,587',
+    rating: 4.80,
+    imagePlaceholderColor: Color(0xFFFFF0F0),
+    iconData: Icons.kitchen,
+  ),
+  _MostBookedItem(
+    label: 'Fan Repair',
+    price: '₹109',
+    originalPrice: null,
+    rating: 4.80,
+    imagePlaceholderColor: Color(0xFFF0F0FF),
+    iconData: Icons.air,
+  ),
+];
+
+// ── Location picker bottom sheet ──────────────────────────────────────────────
+
+class _LocationPickerSheet extends ConsumerStatefulWidget {
+  const _LocationPickerSheet();
+
+  @override
+  ConsumerState<_LocationPickerSheet> createState() => _LocationPickerSheetState();
+}
+
+class _LocationPickerSheetState extends ConsumerState<_LocationPickerSheet> {
+  bool _detecting = false;
+  String? _error;
+  final _searchController = TextEditingController();
+
+  // Simulated saved addresses (replace with real user addresses from Firestore)
+  final List<Map<String, dynamic>> _savedAddresses = [
+    {
+      'label': 'Home',
+      'address': '12, Gandhi Nagar, Coimbatore',
+      'icon': Icons.home_outlined,
+    },
+    {
+      'label': 'Work',
+      'address': 'Tidel Park, Elcot SEZ, Coimbatore',
+      'icon': Icons.work_outline,
+    },
+  ];
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _detectLocation() async {
+    setState(() { _detecting = true; _error = null; });
+
+    try {
+      // 1. Check if location services are enabled
+      bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
+      if (!serviceEnabled) {
+        setState(() {
+          _error = 'Location services are disabled. Please enable GPS.';
+          _detecting = false;
+        });
+        return;
+      }
+
+      // 2. Check / request permission
+      LocationPermission permission = await Geolocator.checkPermission();
+      if (permission == LocationPermission.denied) {
+        permission = await Geolocator.requestPermission();
+        if (permission == LocationPermission.denied) {
+          setState(() {
+            _error = 'Location permission denied.';
+            _detecting = false;
+          });
+          return;
+        }
+      }
+      if (permission == LocationPermission.deniedForever) {
+        setState(() {
+          _error = 'Location permission permanently denied. Enable it in Settings.';
+          _detecting = false;
+        });
+        return;
+      }
+
+      // 3. Get position
+      final position = await Geolocator.getCurrentPosition(
+        desiredAccuracy: LocationAccuracy.high,
+      );
+
+      // 4. Reverse geocode via OpenStreetMap Nominatim (works on web + mobile)
+      final lat = position.latitude;
+      final lon = position.longitude;
+      final url = Uri.parse(
+        'https://nominatim.openstreetmap.org/reverse'
+        '?lat=$lat&lon=$lon'
+        '&format=json&addressdetails=1',
+      );
+      final response = await http.get(
+        url,
+        headers: {'Accept-Language': 'en', 'User-Agent': 'FixNowApp/1.0'},
+      );
+
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body) as Map<String, dynamic>;
+        final addr = data['address'] as Map<String, dynamic>? ?? {};
+        final parts = <String>[
+          if (addr['neighbourhood'] != null) addr['neighbourhood'] as String,
+          if (addr['suburb'] != null) addr['suburb'] as String,
+          if (addr['city'] != null)
+            addr['city'] as String
+          else if (addr['town'] != null)
+            addr['town'] as String
+          else if (addr['village'] != null)
+            addr['village'] as String,
+        ];
+        final address = parts.isNotEmpty
+            ? parts.join(', ')
+            : (data['display_name'] as String? ?? 'Current location');
+
+        if (!mounted) return;
+        ref.read(_selectedLocationProvider.notifier).state = address;
+        Navigator.of(context).pop();
+      } else {
+        throw Exception('Geocoding failed');
+      }
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _error = 'Could not detect location. Try again.';
+        _detecting = false;
+      });
+    }
+  }
+
+  void _selectAddress(String address) {
+    ref.read(_selectedLocationProvider.notifier).state = address;
+    Navigator.of(context).pop();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      decoration: const BoxDecoration(
+        color: AppTheme.background,
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      padding: EdgeInsets.only(
+        bottom: MediaQuery.of(context).viewInsets.bottom,
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Handle bar
+          Center(
+            child: Container(
+              margin: const EdgeInsets.only(top: 12, bottom: 16),
+              width: 36,
+              height: 4,
+              decoration: BoxDecoration(
+                color: AppTheme.divider,
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+          ),
+
+          // Title
+          const Padding(
+            padding: EdgeInsets.symmetric(horizontal: 20),
+            child: Text(
+              'Select your location',
+              style: TextStyle(
+                fontSize: 18,
+                fontWeight: FontWeight.w800,
+                color: AppTheme.textPrimary,
+              ),
+            ),
+          ),
+          const SizedBox(height: 16),
+
+          // Search bar (manual address search)
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            child: TextField(
+              controller: _searchController,
+              style: const TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.w500,
+                color: AppTheme.textPrimary,
+              ),
+              decoration: InputDecoration(
+                hintText: 'Search area, street name…',
+                hintStyle: const TextStyle(
+                  color: AppTheme.textHint,
+                  fontSize: 14,
+                  fontWeight: FontWeight.w400,
+                ),
+                prefixIcon: const Icon(
+                  Icons.search,
+                  size: 18,
+                  color: AppTheme.textHint,
+                ),
+                filled: true,
+                fillColor: AppTheme.surface,
+                contentPadding: const EdgeInsets.symmetric(
+                    horizontal: 16, vertical: 14),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  borderSide: const BorderSide(color: AppTheme.divider),
+                ),
+                enabledBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  borderSide: const BorderSide(color: AppTheme.divider),
+                ),
+                focusedBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  borderSide:
+                      const BorderSide(color: AppTheme.primary, width: 1.5),
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(height: 12),
+
+          // Use current location button
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            child: InkWell(
+              onTap: _detecting ? null : _detectLocation,
+              borderRadius: BorderRadius.circular(12),
+              child: Container(
+                padding: const EdgeInsets.symmetric(
+                    horizontal: 16, vertical: 14),
+                decoration: BoxDecoration(
+                  color: AppTheme.surface,
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: AppTheme.divider),
+                ),
+                child: Row(
+                  children: [
+                    Container(
+                      width: 36,
+                      height: 36,
+                      decoration: BoxDecoration(
+                        color: AppTheme.primary.withOpacity(0.08),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: _detecting
+                          ? const Padding(
+                              padding: EdgeInsets.all(8),
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                color: AppTheme.primary,
+                              ),
+                            )
+                          : const Icon(
+                              Icons.my_location,
+                              size: 18,
+                              color: AppTheme.primary,
+                            ),
+                    ),
+                    const SizedBox(width: 12),
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          _detecting
+                              ? 'Detecting location…'
+                              : 'Use current location',
+                          style: const TextStyle(
+                            fontSize: 14,
+                            fontWeight: FontWeight.w700,
+                            color: AppTheme.primary,
+                          ),
+                        ),
+                        const Text(
+                          'Using GPS',
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: AppTheme.textSecondary,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const Spacer(),
+                    const Icon(Icons.chevron_right,
+                        size: 18, color: AppTheme.textHint),
+                  ],
+                ),
+              ),
+            ),
+          ),
+
+          // Error message
+          if (_error != null)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 8, 20, 0),
+              child: Row(
+                children: [
+                  const Icon(Icons.error_outline,
+                      size: 14, color: Colors.red),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: Text(
+                      _error!,
+                      style: const TextStyle(
+                        fontSize: 12,
+                        color: Colors.red,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+
+          // Saved addresses
+          if (_savedAddresses.isNotEmpty) ...[
+            const Padding(
+              padding: EdgeInsets.fromLTRB(20, 20, 20, 10),
+              child: Text(
+                'Saved addresses',
+                style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w700,
+                  color: AppTheme.textSecondary,
+                  letterSpacing: 0.3,
+                ),
+              ),
+            ),
+            ..._savedAddresses.map(
+              (addr) => Padding(
+                padding: const EdgeInsets.symmetric(
+                    horizontal: 16, vertical: 4),
+                child: InkWell(
+                  onTap: () => _selectAddress(addr['address'] as String),
+                  borderRadius: BorderRadius.circular(12),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 16, vertical: 12),
+                    decoration: BoxDecoration(
+                      color: AppTheme.surface,
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: AppTheme.divider),
+                    ),
+                    child: Row(
+                      children: [
+                        Container(
+                          width: 36,
+                          height: 36,
+                          decoration: BoxDecoration(
+                            color: AppTheme.primary.withOpacity(0.08),
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: Icon(
+                            addr['icon'] as IconData,
+                            size: 18,
+                            color: AppTheme.primary,
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                addr['label'] as String,
+                                style: const TextStyle(
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.w700,
+                                  color: AppTheme.textPrimary,
+                                ),
+                              ),
+                              const SizedBox(height: 2),
+                              Text(
+                                addr['address'] as String,
+                                style: const TextStyle(
+                                  fontSize: 11,
+                                  color: AppTheme.textSecondary,
+                                ),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ],
+                          ),
+                        ),
+                        const Icon(Icons.chevron_right,
+                            size: 18, color: AppTheme.textHint),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ],
+
+          const SizedBox(height: 24),
+        ],
+      ),
+    );
+  }
+}
+
+// ── Main dashboard ────────────────────────────────────────────────────────────
+
+class CustomerDashboardScreen extends ConsumerStatefulWidget {
   const CustomerDashboardScreen({super.key});
+
+  @override
+  ConsumerState<CustomerDashboardScreen> createState() =>
+      _CustomerDashboardScreenState();
+}
+
+class _CustomerDashboardScreenState
+    extends ConsumerState<CustomerDashboardScreen> {
+  final _scrollController = ScrollController();
+
+  @override
+  void dispose() {
+    _scrollController.dispose();
+    super.dispose();
+  }
 
   Future<void> _openWhatsapp() async {
     final uri = Uri.parse(
@@ -27,85 +483,192 @@ class CustomerDashboardScreen extends ConsumerWidget {
     await launchUrl(uri, mode: LaunchMode.externalApplication);
   }
 
+  void _openLocationPicker() {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (_) => const _LocationPickerSheet(),
+    );
+  }
+
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  Widget build(BuildContext context) {
     final bookings = ref.watch(customerBookingsProvider);
     final user = ref.watch(currentUserProvider).valueOrNull;
+    final navIndex = ref.watch(_bottomNavIndexProvider);
     final selectedCategory = ref.watch(_selectedCategoryProvider);
-    final cs = Theme.of(context).colorScheme;
-
+    final selectedLocation = ref.watch(_selectedLocationProvider);
     final categories = AppConstants.applianceCategories;
     final filtered = selectedCategory == null
         ? categories
         : categories.where((c) => c.name == selectedCategory).toList();
 
     return Scaffold(
-      backgroundColor: cs.surface,
+      backgroundColor: AppTheme.background,
+      bottomNavigationBar: _UCBottomNav(
+        index: navIndex,
+        onTap: (i) => ref.read(_bottomNavIndexProvider.notifier).state = i,
+      ),
       body: CustomScrollView(
+        controller: _scrollController,
         slivers: [
-          // ── App bar ──────────────────────────────────────────────
+          // ── Sticky top bar ──────────────────────────────────────────
           SliverAppBar(
-            floating: true,
-            snap: true,
-            backgroundColor: cs.surface,
-            surfaceTintColor: Colors.transparent,
-            title: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'Hello, ${user?.name.split(' ').first ?? 'there'} 👋',
-                  style: Theme.of(context)
-                      .textTheme
-                      .bodySmall
-                      ?.copyWith(color: cs.onSurfaceVariant),
-                ),
-                Text(
-                  'What needs fixing today?',
-                  style: Theme.of(context)
-                      .textTheme
-                      .titleMedium
-                      ?.copyWith(fontWeight: FontWeight.w700),
-                ),
-              ],
+            pinned: true,
+            floating: false,
+            backgroundColor: AppTheme.background,
+            elevation: 0,
+            scrolledUnderElevation: 1,
+            shadowColor: const Color(0x18000000),
+            titleSpacing: 0,
+            toolbarHeight: 60,
+            title: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: Row(
+                children: [
+                  // Logo
+                  Container(
+                    width: 34,
+                    height: 34,
+                    decoration: BoxDecoration(
+                      color: AppTheme.primary,
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: const Center(
+                      child: Text(
+                        'FN',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+
+                  // ── Location pill (tappable) ──
+                  Expanded(
+                    child: GestureDetector(
+                      onTap: _openLocationPicker,
+                      child: Container(
+                        height: 38,
+                        padding: const EdgeInsets.symmetric(horizontal: 12),
+                        decoration: BoxDecoration(
+                          color: AppTheme.surface,
+                          borderRadius: BorderRadius.circular(10),
+                          border: Border.all(color: AppTheme.divider),
+                        ),
+                        child: Row(
+                          children: [
+                            Icon(
+                              selectedLocation != null
+                                  ? Icons.location_on
+                                  : Icons.location_on_outlined,
+                              size: 14,
+                              color: AppTheme.primary,
+                            ),
+                            const SizedBox(width: 4),
+                            Expanded(
+                              child: Text(
+                                selectedLocation ?? 'Select your location',
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: selectedLocation != null
+                                      ? AppTheme.textPrimary
+                                      : AppTheme.textSecondary,
+                                  fontWeight: selectedLocation != null
+                                      ? FontWeight.w600
+                                      : FontWeight.w500,
+                                ),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                            const Icon(Icons.keyboard_arrow_down,
+                                size: 16, color: AppTheme.textSecondary),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+
+                  // Cart
+                  Stack(
+                    children: [
+                      IconButton(
+                        onPressed: () {},
+                        icon: const Icon(Icons.shopping_cart_outlined,
+                            color: AppTheme.primary),
+                        padding: EdgeInsets.zero,
+                        constraints:
+                            const BoxConstraints(minWidth: 36, minHeight: 36),
+                      ),
+                    ],
+                  ),
+
+                  // Profile / sign out
+                  IconButton(
+                    onPressed: () =>
+                        ref.read(authRepositoryProvider).signOut(),
+                    icon: const Icon(Icons.person_outline,
+                        color: AppTheme.primary),
+                    padding: EdgeInsets.zero,
+                    constraints:
+                        const BoxConstraints(minWidth: 36, minHeight: 36),
+                  ),
+                ],
+              ),
             ),
-            actions: [
-              IconButton(
-                tooltip: 'WhatsApp support',
-                onPressed: _openWhatsapp,
-                icon: Icon(Icons.support_agent_outlined, color: cs.primary),
-              ),
-              IconButton(
-                tooltip: 'Sign out',
-                onPressed: () => ref.read(authRepositoryProvider).signOut(),
-                icon: Icon(Icons.logout, color: cs.onSurfaceVariant),
-              ),
-              const SizedBox(width: 4),
-            ],
           ),
 
-          // ── Search bar ───────────────────────────────────────────
+          // ── Hero section ─────────────────────────────────────────────
+          SliverToBoxAdapter(
+            child: _HeroSection(user: user, onWhatsapp: _openWhatsapp),
+          ),
+
+          // ── Search bar ───────────────────────────────────────────────
           SliverToBoxAdapter(
             child: Padding(
-              padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+              padding: const EdgeInsets.fromLTRB(16, 20, 16, 0),
               child: GestureDetector(
-                onTap: () {},
+                onTap: () => showSearch(
+                  context: context,
+                  delegate: _ServiceSearchDelegate(
+                    categories: AppConstants.applianceCategories,
+                  ),
+                ),
                 child: Container(
-                  height: 48,
+                  height: 50,
                   decoration: BoxDecoration(
-                    color: cs.surfaceContainerHighest.withOpacity(0.5),
+                    color: AppTheme.surface,
                     borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: cs.outlineVariant.withOpacity(0.4)),
+                    border: Border.all(color: AppTheme.divider),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withOpacity(0.04),
+                        blurRadius: 8,
+                        offset: const Offset(0, 2),
+                      ),
+                    ],
                   ),
                   child: Row(
                     children: [
                       const SizedBox(width: 14),
-                      Icon(Icons.search, color: cs.onSurfaceVariant, size: 20),
+                      Icon(Icons.search, color: AppTheme.textHint, size: 20),
                       const SizedBox(width: 10),
                       Text(
-                        'Search for a service…',
-                        style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                              color: cs.onSurfaceVariant,
-                            ),
+                        "Search for 'AC service'",
+                        style: TextStyle(
+                          color: AppTheme.textHint,
+                          fontSize: 14,
+                          fontWeight: FontWeight.w400,
+                        ),
                       ),
                     ],
                   ),
@@ -114,122 +677,123 @@ class CustomerDashboardScreen extends ConsumerWidget {
             ),
           ),
 
-          // ── Promo banner ─────────────────────────────────────────
+          // ── Service categories ───────────────────────────────────────
+          const SliverToBoxAdapter(child: SizedBox(height: 24)),
           SliverToBoxAdapter(
             child: Padding(
-              padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
-              child: Container(
-                height: 100,
-                decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    colors: [cs.primary, cs.tertiary],
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
-                  ),
-                  borderRadius: BorderRadius.circular(16),
-                ),
-                child: Stack(
-                  children: [
-                    Positioned(
-                      right: -10,
-                      top: -10,
-                      child: Container(
-                        width: 100,
-                        height: 100,
-                        decoration: BoxDecoration(
-                          shape: BoxShape.circle,
-                          color: Colors.white.withOpacity(0.08),
-                        ),
-                      ),
-                    ),
-                    Padding(
-                      padding: const EdgeInsets.all(16),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Container(
-                            padding: const EdgeInsets.symmetric(
-                                horizontal: 8, vertical: 3),
-                            decoration: BoxDecoration(
-                              color: Colors.white.withOpacity(0.2),
-                              borderRadius: BorderRadius.circular(20),
-                            ),
-                            child: Text(
-                              'LIMITED OFFER',
-                              style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                                    color: Colors.white,
-                                    fontWeight: FontWeight.w700,
-                                    letterSpacing: 0.5,
-                                  ),
-                            ),
-                          ),
-                          const SizedBox(height: 6),
-                          Text(
-                            'Flat 20% off on first booking',
-                            style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                                  color: Colors.white,
-                                  fontWeight: FontWeight.w700,
-                                ),
-                          ),
-                          Text(
-                            'Use code FIXNOW20',
-                            style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                                  color: Colors.white70,
-                                ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
+              padding: const EdgeInsets.only(left: 16),
+              child: Text(
+                'What are you looking for?',
+                style: TextStyle(
+                  fontSize: 17,
+                  fontWeight: FontWeight.w800,
+                  color: AppTheme.textPrimary,
                 ),
               ),
             ),
           ),
+          const SliverToBoxAdapter(child: SizedBox(height: 16)),
+          SliverToBoxAdapter(
+            child: SizedBox(
+              height: 96,
+              child: ListView.builder(
+                scrollDirection: Axis.horizontal,
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                itemCount: categories.length,
+                itemBuilder: (context, i) {
+                  final c = categories[i];
+                  return _CategoryIconItem(category: c);
+                },
+              ),
+            ),
+          ),
 
-          // ── Section title ─────────────────────────────────────────
+          // ── Most booked ──────────────────────────────────────────────
+          const SliverToBoxAdapter(child: SizedBox(height: 28)),
           SliverToBoxAdapter(
             child: Padding(
-              padding: const EdgeInsets.fromLTRB(16, 24, 16, 12),
+              padding: const EdgeInsets.symmetric(horizontal: 16),
               child: Row(
                 children: [
-                  Text(
-                    'Our Services',
-                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                          fontWeight: FontWeight.w700,
-                        ),
+                  const Text(
+                    'Most booked services',
+                    style: TextStyle(
+                      fontSize: 17,
+                      fontWeight: FontWeight.w800,
+                      color: AppTheme.textPrimary,
+                    ),
                   ),
                   const Spacer(),
-                  Text(
-                    '${categories.length} services',
-                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          color: cs.onSurfaceVariant,
-                        ),
+                  GestureDetector(
+                    onTap: () {},
+                    child: const Text(
+                      'See all',
+                      style: TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                        color: AppTheme.primary,
+                      ),
+                    ),
                   ),
                 ],
               ),
             ),
           ),
-
-          // ── Category filter chips ─────────────────────────────────
+          const SliverToBoxAdapter(child: SizedBox(height: 14)),
           SliverToBoxAdapter(
             child: SizedBox(
-              height: 36,
+              height: 220,
+              child: ListView.builder(
+                scrollDirection: Axis.horizontal,
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                itemCount: _mostBooked.length,
+                itemBuilder: (context, i) {
+                  return _MostBookedCard(
+                    item: _mostBooked[i],
+                    onTap: () => context.push(
+                      '/book/${Uri.encodeComponent(_mostBooked[i].label)}',
+                    ),
+                  );
+                },
+              ),
+            ),
+          ),
+
+          // ── All services ─────────────────────────────────────────────
+          const SliverToBoxAdapter(child: SizedBox(height: 28)),
+          SliverToBoxAdapter(
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: const Text(
+                'All services',
+                style: TextStyle(
+                  fontSize: 17,
+                  fontWeight: FontWeight.w800,
+                  color: AppTheme.textPrimary,
+                ),
+              ),
+            ),
+          ),
+          const SliverToBoxAdapter(child: SizedBox(height: 14)),
+          SliverToBoxAdapter(
+            child: SizedBox(
+              height: 38,
               child: ListView(
                 scrollDirection: Axis.horizontal,
                 padding: const EdgeInsets.symmetric(horizontal: 16),
                 children: [
-                  _FilterChip(
+                  _UCFilterChip(
                     label: 'All',
                     selected: selectedCategory == null,
-                    onTap: () =>
-                        ref.read(_selectedCategoryProvider.notifier).state = null,
+                    onTap: () => ref
+                        .read(_selectedCategoryProvider.notifier)
+                        .state = null,
                   ),
                   const SizedBox(width: 8),
                   ...categories.map(
                     (c) => Padding(
                       padding: const EdgeInsets.only(right: 8),
-                      child: _FilterChip(
+                      child: _UCFilterChip(
                         label: c.name,
                         selected: selectedCategory == c.name,
                         onTap: () => ref
@@ -242,10 +806,7 @@ class CustomerDashboardScreen extends ConsumerWidget {
               ),
             ),
           ),
-
-          const SliverToBoxAdapter(child: SizedBox(height: 16)),
-
-          // ── Service cards grid ────────────────────────────────────
+          const SliverToBoxAdapter(child: SizedBox(height: 14)),
           SliverPadding(
             padding: const EdgeInsets.symmetric(horizontal: 16),
             sliver: SliverGrid(
@@ -253,31 +814,31 @@ class CustomerDashboardScreen extends ConsumerWidget {
                 crossAxisCount: 2,
                 crossAxisSpacing: 12,
                 mainAxisSpacing: 12,
-                childAspectRatio: 0.78,
+                childAspectRatio: 0.75,
               ),
               delegate: SliverChildBuilderDelegate(
-                (context, index) {
-                  final category = filtered[index];
-                  return _ServiceCard(category: category);
-                },
+                (context, i) => _ServiceGridCard(category: filtered[i]),
                 childCount: filtered.length,
               ),
             ),
           ),
 
-          // ── My Bookings ───────────────────────────────────────────
-          SliverToBoxAdapter(
+          // ── My Bookings ──────────────────────────────────────────────
+          const SliverToBoxAdapter(child: SizedBox(height: 32)),
+          const SliverToBoxAdapter(
             child: Padding(
-              padding: const EdgeInsets.fromLTRB(16, 28, 16, 12),
+              padding: EdgeInsets.symmetric(horizontal: 16),
               child: Text(
-                'My Bookings',
-                style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                      fontWeight: FontWeight.w700,
-                    ),
+                'My bookings',
+                style: TextStyle(
+                  fontSize: 17,
+                  fontWeight: FontWeight.w800,
+                  color: AppTheme.textPrimary,
+                ),
               ),
             ),
           ),
-
+          const SliverToBoxAdapter(child: SizedBox(height: 12)),
           SliverToBoxAdapter(
             child: bookings.when(
               data: (items) {
@@ -287,19 +848,29 @@ class CustomerDashboardScreen extends ConsumerWidget {
                     child: Container(
                       padding: const EdgeInsets.all(24),
                       decoration: BoxDecoration(
-                        color: cs.surfaceContainerHighest.withOpacity(0.4),
-                        borderRadius: BorderRadius.circular(16),
+                        color: AppTheme.surface,
+                        borderRadius: BorderRadius.circular(14),
+                        border: Border.all(color: AppTheme.divider),
                       ),
                       child: Column(
                         children: [
                           Icon(Icons.receipt_long_outlined,
-                              size: 40, color: cs.onSurfaceVariant),
-                          const SizedBox(height: 8),
-                          Text(
+                              size: 40, color: AppTheme.textHint),
+                          const SizedBox(height: 10),
+                          const Text(
                             'No bookings yet',
-                            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                                  color: cs.onSurfaceVariant,
-                                ),
+                            style: TextStyle(
+                              color: AppTheme.textSecondary,
+                              fontWeight: FontWeight.w500,
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          const Text(
+                            'Book a service to get started',
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: AppTheme.textHint,
+                            ),
                           ),
                         ],
                       ),
@@ -309,7 +880,8 @@ class CustomerDashboardScreen extends ConsumerWidget {
                 return Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 16),
                   child: Column(
-                    children: items.map((b) => _BookingTile(booking: b)).toList(),
+                    children:
+                        items.map((b) => _BookingTile(booking: b)).toList(),
                   ),
                 );
               },
@@ -324,105 +896,446 @@ class CustomerDashboardScreen extends ConsumerWidget {
             ),
           ),
 
-          const SliverToBoxAdapter(child: SizedBox(height: 32)),
+          const SliverToBoxAdapter(child: SizedBox(height: 40)),
         ],
       ),
     );
   }
 }
 
-// ── Service card ──────────────────────────────────────────────────────────────
+// ── Hero section ──────────────────────────────────────────────────────────────
 
-class _ServiceCard extends StatelessWidget {
-  const _ServiceCard({required this.category});
+class _HeroSection extends StatelessWidget {
+  const _HeroSection({required this.user, required this.onWhatsapp});
+  final dynamic user;
+  final VoidCallback onWhatsapp;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      color: AppTheme.background,
+      padding: const EdgeInsets.fromLTRB(16, 20, 16, 0),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'Home services\nat your doorstep',
+                  style: TextStyle(
+                    fontSize: 26,
+                    fontWeight: FontWeight.w900,
+                    color: AppTheme.textPrimary,
+                    height: 1.2,
+                  ),
+                ),
+                const SizedBox(height: 14),
+                Row(
+                  children: [
+                    const Icon(Icons.star, size: 14, color: AppTheme.starColor),
+                    const SizedBox(width: 3),
+                    const Text('4.8',
+                        style: TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w700,
+                            color: AppTheme.textPrimary)),
+                    const SizedBox(width: 12),
+                    const Icon(Icons.people_outline,
+                        size: 14, color: AppTheme.textSecondary),
+                    const SizedBox(width: 3),
+                    const Text('12M+',
+                        style: TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w700,
+                            color: AppTheme.textPrimary)),
+                  ],
+                ),
+                const SizedBox(height: 16),
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 12, vertical: 8),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFFFF3EB),
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(color: const Color(0xFFFFD5B2)),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Icon(Icons.local_offer,
+                          size: 14, color: AppTheme.badgeOrange),
+                      const SizedBox(width: 6),
+                      Flexible(
+                        child: RichText(
+                          text: const TextSpan(
+                            style: TextStyle(fontSize: 12),
+                            children: [
+                              TextSpan(
+                                text: 'Flat 20% off ',
+                                style: TextStyle(
+                                    fontWeight: FontWeight.w700,
+                                    color: AppTheme.badgeOrange),
+                              ),
+                              TextSpan(
+                                text: 'on first booking',
+                                style:
+                                    TextStyle(color: AppTheme.textSecondary),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 12),
+          Column(
+            children: [
+              Row(
+                children: [
+                  _HeroImageTile(
+                      color: const Color(0xFFE8EAF6),
+                      icon: Icons.build_outlined,
+                      label: 'Maintenance'),
+                  const SizedBox(width: 6),
+                  _HeroImageTile(
+                      color: const Color(0xFFE8F5E9),
+                      icon: Icons.cleaning_services_outlined,
+                      label: 'Cleaning'),
+                ],
+              ),
+              const SizedBox(height: 6),
+              Row(
+                children: [
+                  _HeroImageTile(
+                      color: const Color(0xFFE3F2FD),
+                      icon: Icons.ac_unit,
+                      label: 'AC'),
+                  const SizedBox(width: 6),
+                  _HeroImageTile(
+                      color: const Color(0xFFFFF3E0),
+                      icon: Icons.electrical_services,
+                      label: 'Electric'),
+                ],
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _HeroImageTile extends StatelessWidget {
+  const _HeroImageTile(
+      {required this.color, required this.icon, required this.label});
+  final Color color;
+  final IconData icon;
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: 72,
+      height: 72,
+      decoration: BoxDecoration(
+          color: color, borderRadius: BorderRadius.circular(12)),
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(icon, size: 28, color: AppTheme.primary),
+          const SizedBox(height: 3),
+          Text(label,
+              style: const TextStyle(
+                  fontSize: 9,
+                  fontWeight: FontWeight.w600,
+                  color: AppTheme.textPrimary)),
+        ],
+      ),
+    );
+  }
+}
+
+// ── Category icon item ────────────────────────────────────────────────────────
+
+class _CategoryIconItem extends StatelessWidget {
+  const _CategoryIconItem({required this.category});
   final ApplianceCategory category;
 
   @override
-  Widget build(BuildContext context, ) {
-    final cs = Theme.of(context).colorScheme;
-
+  Widget build(BuildContext context) {
     return GestureDetector(
-      onTap: () => context.push('/book/${Uri.encodeComponent(category.name)}'),
+      onTap: () =>
+          context.push('/book/${Uri.encodeComponent(category.name)}'),
       child: Container(
+        width: 76,
+        margin: const EdgeInsets.only(right: 12),
+        child: Column(
+          children: [
+            Container(
+              width: 60,
+              height: 60,
+              decoration: BoxDecoration(
+                color: AppTheme.surface,
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(color: AppTheme.divider),
+              ),
+              child: Icon(_iconFor(category.name),
+                  size: 28, color: AppTheme.primary),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              category.name,
+              maxLines: 2,
+              textAlign: TextAlign.center,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                  fontSize: 10,
+                  fontWeight: FontWeight.w600,
+                  color: AppTheme.textPrimary,
+                  height: 1.2),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  IconData _iconFor(String name) => switch (name) {
+        'Air Conditioner' => Icons.ac_unit,
+        'Refrigerator' => Icons.kitchen,
+        'Washing Machine' => Icons.local_laundry_service,
+        'Microwave' => Icons.microwave,
+        'Water Purifier' => Icons.water_drop,
+        'Television' => Icons.tv,
+        'Fan' => Icons.air,
+        _ => Icons.home_repair_service,
+      };
+}
+
+// ── Most booked card ──────────────────────────────────────────────────────────
+
+class _MostBookedItem {
+  final String label;
+  final String price;
+  final String? originalPrice;
+  final double rating;
+  final bool isInstant;
+  final Color imagePlaceholderColor;
+  final IconData iconData;
+
+  const _MostBookedItem({
+    required this.label,
+    required this.price,
+    required this.originalPrice,
+    required this.rating,
+    required this.imagePlaceholderColor,
+    required this.iconData,
+    this.isInstant = false,
+  });
+}
+
+class _MostBookedCard extends StatelessWidget {
+  const _MostBookedCard({required this.item, required this.onTap});
+  final _MostBookedItem item;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        width: 150,
+        margin: const EdgeInsets.only(right: 12),
         decoration: BoxDecoration(
-          color: cs.surface,
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: cs.outlineVariant.withOpacity(0.3)),
+          color: AppTheme.cardBg,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: AppTheme.divider),
           boxShadow: [
             BoxShadow(
-              color: cs.shadow.withOpacity(0.05),
-              blurRadius: 8,
-              offset: const Offset(0, 2),
+                color: Colors.black.withOpacity(0.04),
+                blurRadius: 6,
+                offset: const Offset(0, 2))
+          ],
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            ClipRRect(
+              borderRadius:
+                  const BorderRadius.vertical(top: Radius.circular(12)),
+              child: Container(
+                height: 120,
+                color: item.imagePlaceholderColor,
+                child: Stack(
+                  children: [
+                    Center(
+                      child: Icon(item.iconData,
+                          size: 48,
+                          color: AppTheme.primary.withOpacity(0.5)),
+                    ),
+                    if (item.isInstant)
+                      Positioned(
+                        bottom: 8,
+                        left: 8,
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 7, vertical: 3),
+                          decoration: BoxDecoration(
+                            color: AppTheme.instantGreen,
+                            borderRadius: BorderRadius.circular(6),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: const [
+                              Icon(Icons.bolt, size: 10, color: Colors.white),
+                              SizedBox(width: 2),
+                              Text('Instant',
+                                  style: TextStyle(
+                                      fontSize: 9,
+                                      fontWeight: FontWeight.w700,
+                                      color: Colors.white)),
+                            ],
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
+              ),
             ),
+            Padding(
+              padding: const EdgeInsets.all(10),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(item.label,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w700,
+                          color: AppTheme.textPrimary,
+                          height: 1.3)),
+                  const SizedBox(height: 4),
+                  Row(
+                    children: [
+                      const Icon(Icons.star,
+                          size: 11, color: AppTheme.starColor),
+                      const SizedBox(width: 2),
+                      Text(item.rating.toStringAsFixed(2),
+                          style: const TextStyle(
+                              fontSize: 11,
+                              fontWeight: FontWeight.w600,
+                              color: AppTheme.textPrimary)),
+                    ],
+                  ),
+                  const SizedBox(height: 4),
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.baseline,
+                    textBaseline: TextBaseline.alphabetic,
+                    children: [
+                      Text(item.price,
+                          style: const TextStyle(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w800,
+                              color: AppTheme.textPrimary)),
+                      if (item.originalPrice != null) ...[
+                        const SizedBox(width: 4),
+                        Text(item.originalPrice!,
+                            style: const TextStyle(
+                                fontSize: 10,
+                                color: AppTheme.textHint,
+                                decoration: TextDecoration.lineThrough)),
+                      ],
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// ── Service grid card ─────────────────────────────────────────────────────────
+
+class _ServiceGridCard extends StatelessWidget {
+  const _ServiceGridCard({required this.category});
+  final ApplianceCategory category;
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: () =>
+          context.push('/book/${Uri.encodeComponent(category.name)}'),
+      child: Container(
+        decoration: BoxDecoration(
+          color: AppTheme.cardBg,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: AppTheme.divider),
+          boxShadow: [
+            BoxShadow(
+                color: Colors.black.withOpacity(0.03),
+                blurRadius: 6,
+                offset: const Offset(0, 2))
           ],
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            // Image block ─ drop your asset here
             Expanded(
               child: ClipRRect(
                 borderRadius:
-                    const BorderRadius.vertical(top: Radius.circular(16)),
+                    const BorderRadius.vertical(top: Radius.circular(14)),
                 child: Stack(
                   fit: StackFit.expand,
                   children: [
-                    // ── Replace this Container with Image.asset(category.assetName) ──
                     Container(
-                      color: cs.primaryContainer,
-                      child: Icon(
-                        _iconFor(category.name),
-                        size: 52,
-                        color: cs.onPrimaryContainer,
-                      ),
+                      color: _bgFor(category.name),
+                      child: Icon(_iconFor(category.name),
+                          size: 54,
+                          color: AppTheme.primary.withOpacity(0.45)),
                     ),
-                    // Discount badge
                     Positioned(
-                      top: 8,
-                      left: 8,
+                      top: 10, left: 10,
                       child: Container(
                         padding: const EdgeInsets.symmetric(
                             horizontal: 8, vertical: 3),
                         decoration: BoxDecoration(
-                          color: Colors.orange.shade700,
-                          borderRadius: BorderRadius.circular(20),
-                        ),
-                        child: Text(
-                          '20% OFF',
-                          style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                            color: AppTheme.badgeOrange,
+                            borderRadius: BorderRadius.circular(20)),
+                        child: const Text('20% OFF',
+                            style: TextStyle(
                                 color: Colors.white,
-                                fontWeight: FontWeight.w700,
-                              ),
-                        ),
+                                fontSize: 9,
+                                fontWeight: FontWeight.w700)),
                       ),
                     ),
-                    // Rating badge
                     Positioned(
-                      top: 8,
-                      right: 8,
+                      top: 10, right: 10,
                       child: Container(
                         padding: const EdgeInsets.symmetric(
                             horizontal: 6, vertical: 3),
                         decoration: BoxDecoration(
-                          color: Colors.black.withOpacity(0.55),
-                          borderRadius: BorderRadius.circular(20),
-                        ),
+                            color: Colors.black.withOpacity(0.6),
+                            borderRadius: BorderRadius.circular(20)),
                         child: Row(
                           mainAxisSize: MainAxisSize.min,
-                          children: [
-                            const Icon(Icons.star_rounded,
-                                size: 11, color: Colors.amber),
-                            const SizedBox(width: 2),
-                            Text(
-                              '4.8',
-                              style: Theme.of(context)
-                                  .textTheme
-                                  .labelSmall
-                                  ?.copyWith(
+                          children: const [
+                            Icon(Icons.star, size: 9, color: AppTheme.starColor),
+                            SizedBox(width: 2),
+                            Text('4.8',
+                                style: TextStyle(
                                     color: Colors.white,
-                                    fontWeight: FontWeight.w600,
-                                  ),
-                            ),
+                                    fontSize: 9,
+                                    fontWeight: FontWeight.w600)),
                           ],
                         ),
                       ),
@@ -431,40 +1344,38 @@ class _ServiceCard extends StatelessWidget {
                 ),
               ),
             ),
-            // Info block
             Padding(
               padding: const EdgeInsets.fromLTRB(10, 10, 10, 10),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(
-                    category.name,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                  Text(category.name,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                          fontSize: 13,
                           fontWeight: FontWeight.w700,
-                        ),
-                  ),
+                          color: AppTheme.textPrimary)),
                   const SizedBox(height: 2),
-                  Text(
-                    category.startingPrice,
-                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          color: cs.primary,
+                  Text(category.startingPrice,
+                      style: const TextStyle(
+                          fontSize: 11,
                           fontWeight: FontWeight.w600,
-                        ),
-                  ),
+                          color: AppTheme.accent)),
                   const SizedBox(height: 8),
                   SizedBox(
                     width: double.infinity,
                     height: 34,
-                    child: FilledButton(
-                      style: FilledButton.styleFrom(
+                    child: ElevatedButton(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: AppTheme.primary,
+                        foregroundColor: Colors.white,
+                        elevation: 0,
                         shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(10),
-                        ),
+                            borderRadius: BorderRadius.circular(8)),
                         padding: EdgeInsets.zero,
                         textStyle: const TextStyle(
-                            fontSize: 13, fontWeight: FontWeight.w600),
+                            fontSize: 12, fontWeight: FontWeight.w700),
                       ),
                       onPressed: () => context
                           .push('/book/${Uri.encodeComponent(category.name)}'),
@@ -480,55 +1391,57 @@ class _ServiceCard extends StatelessWidget {
     );
   }
 
-  IconData _iconFor(String name) {
-    return switch (name) {
-      'Air Conditioner' => Icons.ac_unit,
-      'Refrigerator' => Icons.kitchen,
-      'Washing Machine' => Icons.local_laundry_service,
-      'Microwave' => Icons.microwave,
-      'Water Purifier' => Icons.water_drop,
-      'Television' => Icons.tv,
-      'Fan' => Icons.air,
-      _ => Icons.home_repair_service,
-    };
-  }
+  Color _bgFor(String name) => switch (name) {
+        'Air Conditioner' => const Color(0xFFE8F4FD),
+        'Refrigerator' => const Color(0xFFE8F5E9),
+        'Washing Machine' => const Color(0xFFE3F2FD),
+        'Microwave' => const Color(0xFFFFF3E0),
+        'Water Purifier' => const Color(0xFFE0F7FA),
+        'Television' => const Color(0xFFF3E5F5),
+        'Fan' => const Color(0xFFFFF8E1),
+        _ => const Color(0xFFF5F5F5),
+      };
+
+  IconData _iconFor(String name) => switch (name) {
+        'Air Conditioner' => Icons.ac_unit,
+        'Refrigerator' => Icons.kitchen,
+        'Washing Machine' => Icons.local_laundry_service,
+        'Microwave' => Icons.microwave,
+        'Water Purifier' => Icons.water_drop,
+        'Television' => Icons.tv,
+        'Fan' => Icons.air,
+        _ => Icons.home_repair_service,
+      };
 }
 
 // ── Filter chip ───────────────────────────────────────────────────────────────
 
-class _FilterChip extends StatelessWidget {
-  const _FilterChip({
-    required this.label,
-    required this.selected,
-    required this.onTap,
-  });
-
+class _UCFilterChip extends StatelessWidget {
+  const _UCFilterChip(
+      {required this.label, required this.selected, required this.onTap});
   final String label;
   final bool selected;
   final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
     return GestureDetector(
       onTap: onTap,
       child: AnimatedContainer(
-        duration: const Duration(milliseconds: 200),
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+        duration: const Duration(milliseconds: 180),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
         decoration: BoxDecoration(
-          color: selected ? cs.primary : cs.surfaceContainerHighest.withOpacity(0.5),
+          color: selected ? AppTheme.primary : AppTheme.surface,
           borderRadius: BorderRadius.circular(20),
           border: Border.all(
-            color: selected ? cs.primary : cs.outlineVariant.withOpacity(0.4),
-          ),
+              color: selected ? AppTheme.primary : AppTheme.divider),
         ),
-        child: Text(
-          label,
-          style: Theme.of(context).textTheme.labelMedium?.copyWith(
-                color: selected ? cs.onPrimary : cs.onSurfaceVariant,
-                fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
-              ),
-        ),
+        child: Text(label,
+            style: TextStyle(
+                fontSize: 12,
+                fontWeight:
+                    selected ? FontWeight.w700 : FontWeight.w500,
+                color: selected ? Colors.white : AppTheme.textSecondary)),
       ),
     );
   }
@@ -538,18 +1451,16 @@ class _FilterChip extends StatelessWidget {
 
 class _BookingTile extends StatelessWidget {
   const _BookingTile({required this.booking});
-  final Booking booking;
+  final dynamic booking;
 
   @override
   Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
-
     Color statusColor() {
-      final s = booking.status.name;
+      final s = (booking.status.name as String);
       if (s == 'closed') return Colors.green;
-      if (s.contains('service') || s.contains('bill')) return cs.primary;
-      if (s == 'booked') return Colors.orange;
-      return cs.tertiary;
+      if (s.contains('service') || s.contains('bill')) return AppTheme.accent;
+      if (s == 'booked') return AppTheme.badgeOrange;
+      return AppTheme.primary;
     }
 
     return GestureDetector(
@@ -558,73 +1469,406 @@ class _BookingTile extends StatelessWidget {
         margin: const EdgeInsets.only(bottom: 10),
         padding: const EdgeInsets.all(14),
         decoration: BoxDecoration(
-          color: cs.surface,
+          color: AppTheme.cardBg,
           borderRadius: BorderRadius.circular(14),
-          border: Border.all(color: cs.outlineVariant.withOpacity(0.3)),
+          border: Border.all(color: AppTheme.divider),
           boxShadow: [
             BoxShadow(
-              color: cs.shadow.withOpacity(0.04),
-              blurRadius: 6,
-              offset: const Offset(0, 2),
-            ),
+                color: Colors.black.withOpacity(0.03),
+                blurRadius: 6,
+                offset: const Offset(0, 2))
           ],
         ),
         child: Row(
           children: [
             Container(
-              width: 44,
-              height: 44,
+              width: 46, height: 46,
               decoration: BoxDecoration(
-                color: cs.primaryContainer,
-                borderRadius: BorderRadius.circular(10),
-              ),
-              child: Icon(
-                Icons.home_repair_service_outlined,
-                color: cs.onPrimaryContainer,
-                size: 22,
-              ),
+                  color: AppTheme.surface,
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(color: AppTheme.divider)),
+              child: const Icon(Icons.home_repair_service_outlined,
+                  color: AppTheme.primary, size: 22),
             ),
             const SizedBox(width: 12),
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(
-                    booking.applianceType,
-                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                  Text(booking.applianceType as String,
+                      style: const TextStyle(
+                          fontSize: 13,
                           fontWeight: FontWeight.w700,
-                        ),
-                  ),
-                  const SizedBox(height: 2),
-                  Text(
-                    booking.preferredTime,
-                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          color: cs.onSurfaceVariant,
-                        ),
-                  ),
+                          color: AppTheme.textPrimary)),
+                  const SizedBox(height: 3),
+                  Text(booking.preferredTime as String,
+                      style: const TextStyle(
+                          fontSize: 11, color: AppTheme.textSecondary)),
                 ],
               ),
             ),
             Container(
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
               decoration: BoxDecoration(
-                color: statusColor().withOpacity(0.12),
+                color: statusColor().withOpacity(0.1),
                 borderRadius: BorderRadius.circular(20),
+                border: Border.all(color: statusColor().withOpacity(0.3)),
               ),
-              child: Text(
-                booking.status.label,
-                style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                      color: statusColor(),
+              child: Text(booking.status.label as String,
+                  style: TextStyle(
+                      fontSize: 10,
                       fontWeight: FontWeight.w700,
-                    ),
-              ),
+                      color: statusColor())),
             ),
             const SizedBox(width: 6),
-            Icon(Icons.chevron_right, color: cs.onSurfaceVariant, size: 18),
+            const Icon(Icons.chevron_right,
+                color: AppTheme.textHint, size: 18),
           ],
         ),
       ),
     );
   }
+}
+
+// ── Bottom nav ────────────────────────────────────────────────────────────────
+
+class _UCBottomNav extends StatelessWidget {
+  const _UCBottomNav({required this.index, required this.onTap});
+  final int index;
+  final ValueChanged<int> onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      decoration: const BoxDecoration(
+        color: AppTheme.background,
+        border: Border(top: BorderSide(color: AppTheme.divider)),
+      ),
+      child: BottomNavigationBar(
+        currentIndex: index,
+        onTap: onTap,
+        backgroundColor: AppTheme.background,
+        selectedItemColor: AppTheme.primary,
+        unselectedItemColor: AppTheme.textHint,
+        elevation: 0,
+        type: BottomNavigationBarType.fixed,
+        selectedFontSize: 11,
+        unselectedFontSize: 11,
+        items: const [
+          BottomNavigationBarItem(
+              icon: Icon(Icons.home_outlined),
+              activeIcon: Icon(Icons.home),
+              label: 'Home'),
+          BottomNavigationBarItem(
+              icon: Icon(Icons.receipt_long_outlined),
+              activeIcon: Icon(Icons.receipt_long),
+              label: 'Bookings'),
+          BottomNavigationBarItem(
+              icon: Icon(Icons.explore_outlined),
+              activeIcon: Icon(Icons.explore),
+              label: 'Explore'),
+          BottomNavigationBarItem(
+              icon: Icon(Icons.person_outline),
+              activeIcon: Icon(Icons.person),
+              label: 'Profile'),
+        ],
+      ),
+    );
+  }
+}
+
+// ── Service search delegate ───────────────────────────────────────────────────
+
+class _ServiceSearchDelegate extends SearchDelegate<String> {
+  _ServiceSearchDelegate({required this.categories});
+  final List<ApplianceCategory> categories;
+
+  // All searchable items: category names + most booked labels
+  static const _bookedLabels = [
+    'Bathroom Cleaning',
+    'AC Repair',
+    'Foam-jet AC Service',
+    'Kitchen Cleaning',
+    'Fan Repair',
+  ];
+
+  List<String> get _allTerms => [
+        ..._bookedLabels,
+        ...categories.map((c) => c.name),
+      ];
+
+  List<String> _results(String q) {
+    if (q.trim().isEmpty) return [];
+    final lower = q.toLowerCase();
+    return _allTerms
+        .where((t) => t.toLowerCase().contains(lower))
+        .toList();
+  }
+
+  @override
+  String get searchFieldLabel => "Search for 'AC service'";
+
+  @override
+  TextStyle get searchFieldStyle => const TextStyle(
+        fontSize: 14,
+        fontWeight: FontWeight.w400,
+        color: AppTheme.textPrimary,
+      );
+
+  @override
+  ThemeData appBarTheme(BuildContext context) {
+    return Theme.of(context).copyWith(
+      appBarTheme: AppBarTheme(
+        backgroundColor: AppTheme.background,
+        elevation: 0,
+        iconTheme: const IconThemeData(color: AppTheme.primary),
+        titleTextStyle: const TextStyle(
+          color: AppTheme.textPrimary,
+          fontSize: 16,
+        ),
+      ),
+      inputDecorationTheme: const InputDecorationTheme(
+        border: InputBorder.none,
+        hintStyle: TextStyle(color: AppTheme.textHint, fontSize: 14),
+      ),
+    );
+  }
+
+  @override
+  List<Widget> buildActions(BuildContext context) => [
+        if (query.isNotEmpty)
+          IconButton(
+            icon: const Icon(Icons.clear, size: 20),
+            onPressed: () => query = '',
+          ),
+      ];
+
+  @override
+  Widget buildLeading(BuildContext context) => IconButton(
+        icon: const Icon(Icons.arrow_back),
+        onPressed: () => close(context, ''),
+      );
+
+  @override
+  Widget buildResults(BuildContext context) => _buildList(context, query);
+
+  @override
+  Widget buildSuggestions(BuildContext context) => _buildList(context, query);
+
+  Widget _buildList(BuildContext context, String q) {
+    final results = _results(q);
+
+    if (q.trim().isEmpty) {
+      // Show recent / popular when no query
+      return _SuggestionsView(
+        categories: categories,
+        onTap: (name) {
+          query = name;
+          showResults(context);
+        },
+      );
+    }
+
+    if (results.isEmpty) {
+      return Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.search_off, size: 48, color: AppTheme.textHint),
+            const SizedBox(height: 12),
+            Text(
+              'No results for "$q"',
+              style: const TextStyle(
+                fontSize: 15,
+                fontWeight: FontWeight.w600,
+                color: AppTheme.textSecondary,
+              ),
+            ),
+            const SizedBox(height: 6),
+            const Text(
+              'Try a different keyword',
+              style: TextStyle(fontSize: 13, color: AppTheme.textHint),
+            ),
+          ],
+        ),
+      );
+    }
+
+    return ListView.separated(
+      padding: const EdgeInsets.symmetric(vertical: 8),
+      itemCount: results.length,
+      separatorBuilder: (_, __) =>
+          const Divider(height: 1, indent: 56, color: AppTheme.divider),
+      itemBuilder: (context, i) {
+        final name = results[i];
+        return ListTile(
+          leading: Container(
+            width: 38,
+            height: 38,
+            decoration: BoxDecoration(
+              color: AppTheme.surface,
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: AppTheme.divider),
+            ),
+            child: Icon(
+              _iconFor(name),
+              size: 18,
+              color: AppTheme.primary,
+            ),
+          ),
+          title: Text(
+            name,
+            style: const TextStyle(
+              fontSize: 14,
+              fontWeight: FontWeight.w600,
+              color: AppTheme.textPrimary,
+            ),
+          ),
+          trailing: const Icon(Icons.arrow_forward_ios,
+              size: 13, color: AppTheme.textHint),
+          onTap: () {
+            close(context, name);
+            context.push('/book/${Uri.encodeComponent(name)}');
+          },
+        );
+      },
+    );
+  }
+
+  IconData _iconFor(String name) => switch (name) {
+        'Air Conditioner' || 'AC Repair' || 'Foam-jet AC Service' =>
+          Icons.ac_unit,
+        'Refrigerator' => Icons.kitchen,
+        'Washing Machine' => Icons.local_laundry_service,
+        'Microwave' => Icons.microwave,
+        'Water Purifier' => Icons.water_drop,
+        'Television' => Icons.tv,
+        'Fan' || 'Fan Repair' => Icons.air,
+        'Bathroom Cleaning' => Icons.bathtub_outlined,
+        'Kitchen Cleaning' => Icons.kitchen,
+        _ => Icons.home_repair_service,
+      };
+}
+
+// ── Suggestions view shown when search is empty ───────────────────────────────
+
+class _SuggestionsView extends StatelessWidget {
+  const _SuggestionsView(
+      {required this.categories, required this.onTap});
+  final List<ApplianceCategory> categories;
+  final void Function(String) onTap;
+
+  static const _popular = [
+    'AC Repair',
+    'Bathroom Cleaning',
+    'Fan Repair',
+    'Kitchen Cleaning',
+  ];
+
+  @override
+  Widget build(BuildContext context) {
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
+      children: [
+        const Text(
+          'Popular searches',
+          style: TextStyle(
+            fontSize: 13,
+            fontWeight: FontWeight.w700,
+            color: AppTheme.textSecondary,
+            letterSpacing: 0.3,
+          ),
+        ),
+        const SizedBox(height: 10),
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: _popular
+              .map(
+                (label) => GestureDetector(
+                  onTap: () => onTap(label),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 14, vertical: 8),
+                    decoration: BoxDecoration(
+                      color: AppTheme.surface,
+                      borderRadius: BorderRadius.circular(20),
+                      border: Border.all(color: AppTheme.divider),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Icon(Icons.trending_up,
+                            size: 13, color: AppTheme.badgeOrange),
+                        const SizedBox(width: 5),
+                        Text(
+                          label,
+                          style: const TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                            color: AppTheme.textPrimary,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              )
+              .toList(),
+        ),
+        const SizedBox(height: 24),
+        const Text(
+          'Browse categories',
+          style: TextStyle(
+            fontSize: 13,
+            fontWeight: FontWeight.w700,
+            color: AppTheme.textSecondary,
+            letterSpacing: 0.3,
+          ),
+        ),
+        const SizedBox(height: 10),
+        ...categories.map(
+          (c) => ListTile(
+            contentPadding: EdgeInsets.zero,
+            leading: Container(
+              width: 38,
+              height: 38,
+              decoration: BoxDecoration(
+                color: AppTheme.surface,
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: AppTheme.divider),
+              ),
+              child: Icon(
+                _iconFor(c.name),
+                size: 18,
+                color: AppTheme.primary,
+              ),
+            ),
+            title: Text(
+              c.name,
+              style: const TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.w600,
+                color: AppTheme.textPrimary,
+              ),
+            ),
+            trailing: const Icon(Icons.arrow_forward_ios,
+                size: 13, color: AppTheme.textHint),
+            onTap: () => onTap(c.name),
+          ),
+        ),
+      ],
+    );
+  }
+
+  IconData _iconFor(String name) => switch (name) {
+        'Air Conditioner' => Icons.ac_unit,
+        'Refrigerator' => Icons.kitchen,
+        'Washing Machine' => Icons.local_laundry_service,
+        'Microwave' => Icons.microwave,
+        'Water Purifier' => Icons.water_drop,
+        'Television' => Icons.tv,
+        'Fan' => Icons.air,
+        _ => Icons.home_repair_service,
+      };
 }
