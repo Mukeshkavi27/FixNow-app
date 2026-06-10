@@ -14,9 +14,17 @@ class AppConstants {
 }
 
 class ApplianceCategory {
-  const ApplianceCategory(this.name, this.startingPrice, this.assetName);
+  const ApplianceCategory(
+    this.name,
+    this.startingPrice,
+    this.assetName, {
+    this.imageUrl,
+    this.startingPriceValue,
+  });
 
   final String name;
   final String startingPrice;
   final String assetName;
+  final String? imageUrl;
+  final double? startingPriceValue;
 }

@@ -25,7 +25,17 @@ class TechnicianRepository {
         .set(location.toJson(), SetOptions(merge: true));
   }
 
-  Stream<List<QueryDocumentSnapshot<Map<String, dynamic>>>> watchActiveLocations() {
-    return _firestore.collection('technician_locations').snapshots().map((snap) => snap.docs);
+  Stream<TechnicianLocation?> watchLocation(String technicianId) {
+    return _firestore
+        .collection('technician_locations')
+        .doc(technicianId)
+        .snapshots()
+        .map((doc) => doc.exists ? TechnicianLocation.fromFirestore(doc) : null);
+  }
+
+  Stream<List<TechnicianLocation>> watchActiveLocations() {
+    return _firestore.collection('technician_locations').snapshots().map(
+          (snap) => snap.docs.map(TechnicianLocation.fromFirestore).toList(),
+        );
   }
 }

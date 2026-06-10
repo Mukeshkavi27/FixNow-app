@@ -8,6 +8,8 @@ class Attendance {
     required this.latitude,
     required this.longitude,
     required this.timestamp,
+    this.faceMatchPassed = false,
+    this.geofencePassed = false,
   });
 
   final String id;
@@ -16,6 +18,8 @@ class Attendance {
   final double latitude;
   final double longitude;
   final DateTime timestamp;
+  final bool faceMatchPassed;
+  final bool geofencePassed;
 
   Map<String, dynamic> toJson() => {
         'technicianId': technicianId,
@@ -23,5 +27,7 @@ class Attendance {
         'latitude': latitude,
         'longitude': longitude,
         'timestamp': Timestamp.fromDate(timestamp),
+        'faceMatchPassed': faceMatchPassed,
+        'geofencePassed': geofencePassed,
       };
 }

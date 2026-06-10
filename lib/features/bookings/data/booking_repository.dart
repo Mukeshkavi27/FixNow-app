@@ -18,18 +18,18 @@ class BookingRepository {
     return _firestore
         .collection('bookings')
         .where('customerId', isEqualTo: customerId)
-        .orderBy('createdAt', descending: true)
         .snapshots()
-        .map((snapshot) => snapshot.docs.map(Booking.fromFirestore).toList());
+        .map((snapshot) => _sortNewestFirst(
+            snapshot.docs.map(Booking.fromFirestore).toList()));
   }
 
   Stream<List<Booking>> watchTechnicianBookings(String technicianId) {
     return _firestore
         .collection('bookings')
         .where('technicianId', isEqualTo: technicianId)
-        .orderBy('createdAt', descending: true)
         .snapshots()
-        .map((snapshot) => snapshot.docs.map(Booking.fromFirestore).toList());
+        .map((snapshot) => _sortNewestFirst(
+            snapshot.docs.map(Booking.fromFirestore).toList()));
   }
 
   Stream<List<Booking>> watchAllBookings() {
@@ -38,6 +38,11 @@ class BookingRepository {
         .orderBy('createdAt', descending: true)
         .snapshots()
         .map((snapshot) => snapshot.docs.map(Booking.fromFirestore).toList());
+  }
+
+  List<Booking> _sortNewestFirst(List<Booking> bookings) {
+    bookings.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+    return bookings;
   }
 
   Stream<Booking?> watchBooking(String id) {
@@ -52,7 +57,8 @@ class BookingRepository {
     await _firestore.collection('notifications').add({
       'role': 'admin',
       'title': 'New Booking',
-      'body': '${booking.applianceType} service requested by ${booking.customerName}',
+      'body':
+          '${booking.applianceType} service requested by ${booking.customerName}',
       'bookingId': doc.id,
       'createdAt': FieldValue.serverTimestamp(),
       'isRead': false,
@@ -61,7 +67,26 @@ class BookingRepository {
   }
 
   Future<void> updateStatus(String bookingId, BookingStatus status) {
-    return _firestore.collection('bookings').doc(bookingId).update({'status': status.name});
+    return _firestore
+        .collection('bookings')
+        .doc(bookingId)
+        .update({'status': status.name});
+  }
+
+  Future<void> addServicePhoto({
+    required String bookingId,
+    required String stage,
+    required String url,
+  }) {
+    return _firestore.collection('bookings').doc(bookingId).update({
+      'servicePhotos': FieldValue.arrayUnion([
+        {
+          'stage': stage,
+          'url': url,
+          'uploadedAt': Timestamp.fromDate(DateTime.now()),
+        }
+      ]),
+    });
   }
 
   Future<void> assignTechnician({

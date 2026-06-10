@@ -20,6 +20,7 @@ class Booking {
     this.technicianName,
     this.latitude,
     this.longitude,
+    this.servicePhotos = const [],
   });
 
   final String id;
@@ -38,6 +39,7 @@ class Booking {
   final String? technicianName;
   final double? latitude;
   final double? longitude;
+  final List<ServicePhoto> servicePhotos;
 
   factory Booking.fromFirestore(DocumentSnapshot<Map<String, dynamic>> doc) {
     final data = doc.data() ?? {};
@@ -58,6 +60,10 @@ class Booking {
       technicianName: data['technicianName'] as String?,
       latitude: (data['latitude'] as num?)?.toDouble(),
       longitude: (data['longitude'] as num?)?.toDouble(),
+      servicePhotos: (data['servicePhotos'] as List<dynamic>? ?? const [])
+          .whereType<Map<String, dynamic>>()
+          .map(ServicePhoto.fromJson)
+          .toList(),
     );
   }
 
@@ -78,6 +84,33 @@ class Booking {
       'technicianName': technicianName,
       'latitude': latitude,
       'longitude': longitude,
+      'servicePhotos': servicePhotos.map((photo) => photo.toJson()).toList(),
     };
   }
+}
+
+class ServicePhoto {
+  const ServicePhoto({
+    required this.stage,
+    required this.url,
+    required this.uploadedAt,
+  });
+
+  final String stage;
+  final String url;
+  final DateTime uploadedAt;
+
+  factory ServicePhoto.fromJson(Map<String, dynamic> data) {
+    return ServicePhoto(
+      stage: data['stage'] as String? ?? '',
+      url: data['url'] as String? ?? '',
+      uploadedAt: (data['uploadedAt'] as Timestamp?)?.toDate() ?? DateTime.now(),
+    );
+  }
+
+  Map<String, dynamic> toJson() => {
+        'stage': stage,
+        'url': url,
+        'uploadedAt': Timestamp.fromDate(uploadedAt),
+      };
 }

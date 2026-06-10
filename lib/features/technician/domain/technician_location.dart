@@ -15,6 +15,19 @@ class TechnicianLocation {
   final DateTime updatedAt;
   final String? activeBookingId;
 
+  factory TechnicianLocation.fromFirestore(
+    DocumentSnapshot<Map<String, dynamic>> doc,
+  ) {
+    final data = doc.data() ?? {};
+    return TechnicianLocation(
+      technicianId: data['technicianId'] as String? ?? doc.id,
+      latitude: (data['latitude'] as num?)?.toDouble() ?? 0,
+      longitude: (data['longitude'] as num?)?.toDouble() ?? 0,
+      updatedAt: (data['updatedAt'] as Timestamp?)?.toDate() ?? DateTime.now(),
+      activeBookingId: data['activeBookingId'] as String?,
+    );
+  }
+
   Map<String, dynamic> toJson() => {
         'technicianId': technicianId,
         'latitude': latitude,
