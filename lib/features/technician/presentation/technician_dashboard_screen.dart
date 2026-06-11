@@ -1,5 +1,6 @@
 import 'dart:io';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:geolocator/geolocator.dart';
@@ -330,21 +331,30 @@ class _TechnicianJobCard extends ConsumerWidget {
   }
 
   Future<void> _uploadServicePhoto(BuildContext context, WidgetRef ref, String stage) async {
-    final source = await showModalBottomSheet<ImageSource>(
-      context: context,
-      builder: (sheetContext) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            ListTile(leading: const Icon(Icons.photo_camera), title: const Text('Camera'), onTap: () => Navigator.pop(sheetContext, ImageSource.camera)),
-            ListTile(leading: const Icon(Icons.photo_library), title: const Text('Gallery'), onTap: () => Navigator.pop(sheetContext, ImageSource.gallery)),
-          ],
+    XFile? image;
+
+    if (kIsWeb) {
+      // On web, camera source is unreliable — use gallery (file picker) instead
+      image = await ImagePicker().pickImage(source: ImageSource.gallery, imageQuality: 75);
+    } else {
+      final source = await showModalBottomSheet<ImageSource>(
+        context: context,
+        builder: (sheetContext) => SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              ListTile(leading: const Icon(Icons.photo_camera), title: const Text('Camera'), onTap: () => Navigator.pop(sheetContext, ImageSource.camera)),
+              ListTile(leading: const Icon(Icons.photo_library), title: const Text('Gallery'), onTap: () => Navigator.pop(sheetContext, ImageSource.gallery)),
+            ],
+          ),
         ),
-      ),
-    );
-    if (source == null) return;
-    final image = await ImagePicker().pickImage(source: source, imageQuality: 75);
+      );
+      if (source == null) return;
+      image = await ImagePicker().pickImage(source: source, imageQuality: 75);
+    }
+
     if (image == null) return;
+
     final url = await ref.read(storageRepositoryProvider).uploadFile(
           file: File(image.path),
           folder: 'bookings/${booking.id}/$stage',
@@ -399,14 +409,46 @@ class _AttendanceViewState extends ConsumerState<_AttendanceView> {
     setState(() => _loading = true);
     try {
       final user = ref.read(currentUserProvider).valueOrNull;
-      final position = await TechnicianDashboardScreen._position();
-      final image = await ImagePicker().pickImage(source: ImageSource.camera, imageQuality: 70);
-      if (user == null || position == null || image == null) return;
+      if (user == null) {
+        setState(() => _result = 'Not signed in.');
+        return;
+      }
 
-      const branchLatitude = 13.0827;
-      const branchLongitude = 80.2707;
-      final distance = Geolocator.distanceBetween(position.latitude, position.longitude, branchLatitude, branchLongitude);
-      final geofencePassed = distance <= 250;
+      // On web, location may not be available — handle gracefully
+      Position? position;
+      try {
+        position = await TechnicianDashboardScreen._position();
+      } catch (_) {
+        position = null;
+      }
+
+      // On web, camera is not supported — use gallery (file picker) instead
+      final image = await ImagePicker().pickImage(
+        source: kIsWeb ? ImageSource.gallery : ImageSource.camera,
+        imageQuality: 70,
+      );
+
+      if (image == null) {
+        setState(() => _result = 'No photo selected. Please try again.');
+        return;
+      }
+
+      bool geofencePassed = false;
+      if (position != null) {
+        const branchLatitude = 13.0827;
+        const branchLongitude = 80.2707;
+        final distance = Geolocator.distanceBetween(
+          position.latitude,
+          position.longitude,
+          branchLatitude,
+          branchLongitude,
+        );
+        geofencePassed = distance <= 250;
+      } else {
+        // Web / location unavailable — skip geo-fence, mark as requires review
+        geofencePassed = false;
+      }
+
       const faceMatchPassed = true;
 
       final url = await ref.read(storageRepositoryProvider).uploadFile(
@@ -414,22 +456,30 @@ class _AttendanceViewState extends ConsumerState<_AttendanceView> {
             folder: 'attendance',
             fileName: '${user.uid}_${DateTime.now().millisecondsSinceEpoch}.jpg',
           );
+
       await ref.read(technicianRepositoryProvider).markAttendance(
             Attendance(
               id: '',
               technicianId: user.uid,
               selfieUrl: url,
-              latitude: position.latitude,
-              longitude: position.longitude,
+              latitude: position?.latitude ?? 0,
+              longitude: position?.longitude ?? 0,
               timestamp: DateTime.now(),
               faceMatchPassed: faceMatchPassed,
               geofencePassed: geofencePassed,
             ),
           );
+
       setState(() {
         _marked = true;
-        _result = geofencePassed ? 'Verified at 9:30 attendance checkpoint' : 'Selfie saved, geo-fence review required';
+        _result = geofencePassed
+            ? 'Verified at 9:30 attendance checkpoint'
+            : kIsWeb
+                ? 'Selfie saved. Location check skipped on web — admin review required.'
+                : 'Selfie saved, geo-fence review required';
       });
+    } catch (e) {
+      setState(() => _result = 'Error: ${e.toString()}');
     } finally {
       if (mounted) setState(() => _loading = false);
     }
@@ -453,6 +503,29 @@ class _AttendanceViewState extends ConsumerState<_AttendanceView> {
           ),
         ),
         const SizedBox(height: 16),
+        // Web notice banner
+        if (kIsWeb)
+          Container(
+            margin: const EdgeInsets.only(bottom: 12),
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: Colors.amber.shade50,
+              border: Border.all(color: Colors.amber.shade300),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Row(
+              children: [
+                Icon(Icons.info_outline, color: Colors.amber.shade800, size: 18),
+                const SizedBox(width: 8),
+                const Expanded(
+                  child: Text(
+                    'You are on a laptop/web browser. Please select a selfie photo from your files. For full geo-fence verification, use the mobile app.',
+                    style: TextStyle(fontSize: 13),
+                  ),
+                ),
+              ],
+            ),
+          ),
         Card(
           child: Padding(
             padding: const EdgeInsets.all(16),
@@ -465,13 +538,15 @@ class _AttendanceViewState extends ConsumerState<_AttendanceView> {
                 Text(_result ?? (_isWindowOpen ? 'Window open: 9:15 - 9:45 AM' : 'Attendance window: 9:15 - 9:45 AM'), textAlign: TextAlign.center),
                 const SizedBox(height: 16),
                 _CheckRow(label: 'Face visible for AI match', passed: true),
-                _CheckRow(label: 'Inside branch geo-fence', passed: true),
+                _CheckRow(label: 'Inside branch geo-fence', passed: !kIsWeb),
                 _CheckRow(label: '9:30 AM window', passed: _isWindowOpen),
                 const SizedBox(height: 16),
                 FilledButton.icon(
                   onPressed: _loading || !_isWindowOpen ? null : _markAttendance,
-                  icon: _loading ? const SizedBox.square(dimension: 18, child: CircularProgressIndicator(strokeWidth: 2)) : const Icon(Icons.photo_camera),
-                  label: Text(_loading ? 'Verifying...' : 'Take selfie'),
+                  icon: _loading
+                      ? const SizedBox.square(dimension: 18, child: CircularProgressIndicator(strokeWidth: 2))
+                      : Icon(kIsWeb ? Icons.upload_file : Icons.photo_camera),
+                  label: Text(_loading ? 'Verifying...' : kIsWeb ? 'Upload selfie photo' : 'Take selfie'),
                 ),
               ],
             ),

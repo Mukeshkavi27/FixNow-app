@@ -9,6 +9,7 @@ import '../../bookings/data/booking_repository.dart';
 import '../../bookings/domain/booking.dart';
 import '../data/admin_repository.dart';
 import '../../technician/data/technician_repository.dart';
+import '../../technician/domain/technician_location.dart';
 
 final allBookingsProvider = StreamProvider.autoDispose<List<Booking>>((ref) {
   return ref.watch(bookingRepositoryProvider).watchAllBookings();
@@ -69,7 +70,7 @@ class AdminDashboardScreen extends ConsumerWidget {
               const SizedBox(height: 24),
               Text('Live Monitoring', style: Theme.of(context).textTheme.titleLarge),
               const SizedBox(height: 12),
-              SizedBox(height: 260, child: const _TechnicianMap()),
+              const SizedBox(height: 260, child: _TechnicianMap()),
               const SizedBox(height: 24),
               Text('Technician Management', style: Theme.of(context).textTheme.titleLarge),
               const SizedBox(height: 12),
@@ -141,24 +142,29 @@ class _TechnicianMap extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    // watchActiveLocations() returns Stream<List<TechnicianLocation>>
     final locations = ref.watch(technicianRepositoryProvider).watchActiveLocations();
-    return StreamBuilder(
+    return StreamBuilder<List<TechnicianLocation>>(
       stream: locations,
       builder: (context, snapshot) {
-        final docs = snapshot.data ?? [];
-        final markers = docs.map((doc) {
-          final data = doc.data();
+        final docs = snapshot.data ?? <TechnicianLocation>[];
+        final markers = docs.map((loc) {
           return Marker(
-            markerId: MarkerId(doc.id),
-            position: LatLng((data['latitude'] as num).toDouble(), (data['longitude'] as num).toDouble()),
-            infoWindow: InfoWindow(title: doc.id),
+            markerId: MarkerId(loc.technicianId),
+            position: LatLng(loc.latitude, loc.longitude),
+            infoWindow: InfoWindow(title: loc.technicianId),
           );
         }).toSet();
-        final center = markers.isEmpty ? const LatLng(20.5937, 78.9629) : markers.first.position;
+        final center = markers.isEmpty
+            ? const LatLng(20.5937, 78.9629)
+            : markers.first.position;
         return ClipRRect(
           borderRadius: BorderRadius.circular(8),
           child: GoogleMap(
-            initialCameraPosition: CameraPosition(target: center, zoom: markers.isEmpty ? 4 : 12),
+            initialCameraPosition: CameraPosition(
+              target: center,
+              zoom: markers.isEmpty ? 4 : 12,
+            ),
             markers: markers,
           ),
         );
@@ -179,7 +185,8 @@ class _TechnicianTile extends ConsumerWidget {
         title: Text(technician.name),
         subtitle: Text('${technician.phone} • ${technician.email}'),
         value: technician.isActive,
-        onChanged: (value) => ref.read(adminRepositoryProvider).setTechnicianActive(technician.uid, value),
+        onChanged: (value) =>
+            ref.read(adminRepositoryProvider).setTechnicianActive(technician.uid, value),
       ),
     );
   }
