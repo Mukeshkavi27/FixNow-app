@@ -1,5 +1,3 @@
-import 'dart:io';
-
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -10,21 +8,37 @@ import 'package:url_launcher/url_launcher.dart';
 import 'package:uuid/uuid.dart';
 
 import '../../../app/theme/app_theme.dart';
+import '../../../core/data/app_config_repository.dart';
 import '../../../core/enums/booking_status.dart';
+import '../../../core/services/location_tracking_service.dart';
 import '../../auth/data/auth_repository.dart';
 import '../../bookings/data/booking_repository.dart';
 import '../../bookings/domain/booking.dart';
 import '../../estimates/data/estimate_repository.dart';
 import '../../estimates/domain/estimate.dart';
+import '../../shared/data/bill_repository.dart';
 import '../../shared/data/storage_repository.dart';
+import '../../shared/domain/bill.dart';
 import '../data/technician_repository.dart';
 import '../domain/attendance.dart';
 import '../domain/technician_location.dart';
 
-final technicianBookingsProvider = StreamProvider.autoDispose<List<Booking>>((ref) {
+final technicianBookingsProvider =
+    StreamProvider.autoDispose<List<Booking>>((ref) {
   final user = ref.watch(currentUserProvider).valueOrNull;
   if (user == null) return Stream.value(<Booking>[]);
   return ref.watch(bookingRepositoryProvider).watchTechnicianBookings(user.uid);
+});
+
+final technicianBillsProvider = StreamProvider.autoDispose<List<Bill>>((ref) {
+  final user = ref.watch(currentUserProvider).valueOrNull;
+  if (user == null) return Stream.value(<Bill>[]);
+  return ref.watch(billRepositoryProvider).watchTechnicianBills(user.uid);
+});
+
+final technicianEstimateProvider =
+    StreamProvider.autoDispose.family<Estimate?, String>((ref, bookingId) {
+  return ref.watch(estimateRepositoryProvider).watchForBooking(bookingId);
 });
 
 final _technicianTabProvider = StateProvider.autoDispose<int>((ref) => 0);
@@ -64,11 +78,21 @@ class TechnicianDashboardScreen extends ConsumerWidget {
       ),
       bottomNavigationBar: NavigationBar(
         selectedIndex: tab,
-        onDestinationSelected: (index) => ref.read(_technicianTabProvider.notifier).state = index,
+        onDestinationSelected: (index) =>
+            ref.read(_technicianTabProvider.notifier).state = index,
         destinations: const [
-          NavigationDestination(icon: Icon(Icons.work_outline), selectedIcon: Icon(Icons.work), label: 'Jobs'),
-          NavigationDestination(icon: Icon(Icons.how_to_reg_outlined), selectedIcon: Icon(Icons.how_to_reg), label: 'Attendance'),
-          NavigationDestination(icon: Icon(Icons.payments_outlined), selectedIcon: Icon(Icons.payments), label: 'Earnings'),
+          NavigationDestination(
+              icon: Icon(Icons.work_outline),
+              selectedIcon: Icon(Icons.work),
+              label: 'Jobs'),
+          NavigationDestination(
+              icon: Icon(Icons.how_to_reg_outlined),
+              selectedIcon: Icon(Icons.how_to_reg),
+              label: 'Attendance'),
+          NavigationDestination(
+              icon: Icon(Icons.payments_outlined),
+              selectedIcon: Icon(Icons.payments),
+              label: 'Earnings'),
         ],
       ),
     );
@@ -76,12 +100,18 @@ class TechnicianDashboardScreen extends ConsumerWidget {
 
   static Future<Position?> _position() async {
     var permission = await Geolocator.checkPermission();
-    if (permission == LocationPermission.denied) permission = await Geolocator.requestPermission();
-    if (permission == LocationPermission.denied || permission == LocationPermission.deniedForever) return null;
+    if (permission == LocationPermission.denied) {
+      permission = await Geolocator.requestPermission();
+    }
+    if (permission == LocationPermission.denied ||
+        permission == LocationPermission.deniedForever) {
+      return null;
+    }
     return Geolocator.getCurrentPosition();
   }
 
-  static Future<void> _shareLocation(BuildContext context, WidgetRef ref, String? bookingId) async {
+  static Future<void> _shareLocation(
+      BuildContext context, WidgetRef ref, String? bookingId) async {
     final user = ref.read(currentUserProvider).valueOrNull;
     final position = await _position();
     if (user == null || position == null) return;
@@ -110,14 +140,19 @@ class _JobsView extends ConsumerWidget {
     final bookings = ref.watch(technicianBookingsProvider);
     return bookings.when(
       data: (items) {
-        final active = items.where((b) => b.status != BookingStatus.closed && b.status != BookingStatus.serviceCompleted).toList();
+        final active =
+            items.where((b) => b.status != BookingStatus.closed).toList();
         final done = items.length - active.length;
         return ListView(
           padding: const EdgeInsets.all(16),
           children: [
             _HeroPanel(active: active.length, done: done),
             const SizedBox(height: 18),
-            Text('Assigned jobs', style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w800)),
+            Text('Assigned jobs',
+                style: Theme.of(context)
+                    .textTheme
+                    .titleLarge
+                    ?.copyWith(fontWeight: FontWeight.w800)),
             const SizedBox(height: 10),
             if (active.isEmpty) const _EmptyJobsCard(),
             ...active.map((booking) => _TechnicianJobCard(booking: booking)),
@@ -147,9 +182,14 @@ class _HeroPanel extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text('Today route', style: TextStyle(color: Colors.white70, fontSize: 13)),
+          const Text('Today route',
+              style: TextStyle(color: Colors.white70, fontSize: 13)),
           const SizedBox(height: 6),
-          const Text('Accept, travel, estimate, repair', style: TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.w900)),
+          const Text('Accept, travel, estimate, repair',
+              style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 22,
+                  fontWeight: FontWeight.w900)),
           const SizedBox(height: 16),
           Row(
             children: [
@@ -174,6 +214,9 @@ class _TechnicianJobCard extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final repo = ref.read(bookingRepositoryProvider);
+    final user = ref.watch(currentUserProvider).valueOrNull;
+    final estimate =
+        ref.watch(technicianEstimateProvider(booking.id)).valueOrNull;
     return Card(
       margin: const EdgeInsets.only(bottom: 12),
       child: Padding(
@@ -187,19 +230,27 @@ class _TechnicianJobCard extends ConsumerWidget {
                 Container(
                   width: 48,
                   height: 48,
-                  decoration: BoxDecoration(color: AppTheme.surface, borderRadius: BorderRadius.circular(8)),
-                  child: Icon(_applianceIcon(booking.applianceType), color: AppTheme.primary),
+                  decoration: BoxDecoration(
+                      color: AppTheme.surface,
+                      borderRadius: BorderRadius.circular(8)),
+                  child: Icon(_applianceIcon(booking.applianceType),
+                      color: AppTheme.primary),
                 ),
                 const SizedBox(width: 12),
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(booking.applianceType, style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 16)),
+                      Text(booking.applianceType,
+                          style: const TextStyle(
+                              fontWeight: FontWeight.w800, fontSize: 16)),
                       const SizedBox(height: 3),
-                      Text(booking.customerName, style: const TextStyle(color: AppTheme.textSecondary)),
+                      Text(booking.customerName,
+                          style:
+                              const TextStyle(color: AppTheme.textSecondary)),
                       const SizedBox(height: 3),
-                      Text(booking.problemDescription, maxLines: 2, overflow: TextOverflow.ellipsis),
+                      Text(booking.problemDescription,
+                          maxLines: 2, overflow: TextOverflow.ellipsis),
                     ],
                   ),
                 ),
@@ -209,9 +260,19 @@ class _TechnicianJobCard extends ConsumerWidget {
             const SizedBox(height: 12),
             _StatusRail(status: booking.status),
             const SizedBox(height: 12),
-            _InfoRow(icon: Icons.place_outlined, text: booking.address, actionLabel: 'Map', onAction: () => _openMaps(context, booking)),
-            _InfoRow(icon: Icons.phone_outlined, text: booking.phone, actionLabel: 'WhatsApp', onAction: () => _openWhatsApp(context, booking)),
-            _InfoRow(icon: Icons.schedule, text: 'Preferred time: ${booking.preferredTime}'),
+            _InfoRow(
+                icon: Icons.place_outlined,
+                text: booking.address,
+                actionLabel: 'Map',
+                onAction: () => _openMaps(context, booking)),
+            _InfoRow(
+                icon: Icons.phone_outlined,
+                text: booking.phone,
+                actionLabel: 'WhatsApp',
+                onAction: () => _openWhatsApp(context, booking)),
+            _InfoRow(
+                icon: Icons.schedule,
+                text: 'Preferred time: ${booking.preferredTime}'),
             const SizedBox(height: 12),
             Wrap(
               spacing: 8,
@@ -219,12 +280,24 @@ class _TechnicianJobCard extends ConsumerWidget {
               children: [
                 if (booking.status == BookingStatus.technicianAssigned) ...[
                   FilledButton.tonalIcon(
-                    onPressed: () => repo.updateStatus(booking.id, BookingStatus.accepted),
+                    onPressed: user == null
+                        ? null
+                        : () => repo.transitionStatus(
+                              bookingId: booking.id,
+                              technicianId: user.uid,
+                              expected: BookingStatus.technicianAssigned,
+                              next: BookingStatus.accepted,
+                            ),
                     icon: const Icon(Icons.check_circle_outline),
                     label: const Text('Accept'),
                   ),
                   OutlinedButton.icon(
-                    onPressed: () => repo.updateStatus(booking.id, BookingStatus.booked),
+                    onPressed: user == null
+                        ? null
+                        : () => repo.rejectAssignment(
+                              bookingId: booking.id,
+                              technicianId: user.uid,
+                            ),
                     icon: const Icon(Icons.cancel_outlined),
                     label: const Text('Reject'),
                   ),
@@ -232,15 +305,39 @@ class _TechnicianJobCard extends ConsumerWidget {
                 if (booking.status == BookingStatus.accepted)
                   FilledButton.icon(
                     onPressed: () async {
-                      await repo.updateStatus(booking.id, BookingStatus.onTheWay);
-                      if (context.mounted) await TechnicianDashboardScreen._shareLocation(context, ref, booking.id);
+                      if (user == null) return;
+                      await repo.transitionStatus(
+                        bookingId: booking.id,
+                        technicianId: user.uid,
+                        expected: BookingStatus.accepted,
+                        next: BookingStatus.onTheWay,
+                      );
+                      await ref.read(locationTrackingServiceProvider).start(
+                            technicianId: user.uid,
+                            bookingId: booking.id,
+                          );
                     },
                     icon: const Icon(Icons.navigation),
                     label: const Text('Start journey'),
                   ),
                 if (booking.status == BookingStatus.onTheWay)
                   FilledButton.icon(
-                    onPressed: () => repo.updateStatus(booking.id, BookingStatus.arrived),
+                    onPressed: user == null
+                        ? null
+                        : () async {
+                            await repo.transitionStatus(
+                              bookingId: booking.id,
+                              technicianId: user.uid,
+                              expected: BookingStatus.onTheWay,
+                              next: BookingStatus.arrived,
+                            );
+                            await ref
+                                .read(locationTrackingServiceProvider)
+                                .stop();
+                            await ref
+                                .read(technicianRepositoryProvider)
+                                .stopSharingLocation(user.uid);
+                          },
                     icon: const Icon(Icons.location_on_outlined),
                     label: const Text('Arrived'),
                   ),
@@ -258,20 +355,66 @@ class _TechnicianJobCard extends ConsumerWidget {
                   ),
                 if (booking.status == BookingStatus.estimateApproved)
                   FilledButton.icon(
-                    onPressed: () => repo.updateStatus(booking.id, BookingStatus.serviceStarted),
+                    onPressed: user == null
+                        ? null
+                        : () => repo.transitionStatus(
+                              bookingId: booking.id,
+                              technicianId: user.uid,
+                              expected: BookingStatus.estimateApproved,
+                              next: BookingStatus.serviceStarted,
+                            ),
                     icon: const Icon(Icons.build_outlined),
                     label: const Text('Start work'),
                   ),
                 if (booking.status == BookingStatus.serviceStarted)
                   FilledButton.icon(
-                    onPressed: () => repo.updateStatus(booking.id, BookingStatus.serviceCompleted),
+                    onPressed: () async {
+                      if (user == null) return;
+                      await repo.transitionStatus(
+                        bookingId: booking.id,
+                        technicianId: user.uid,
+                        expected: BookingStatus.serviceStarted,
+                        next: BookingStatus.serviceCompleted,
+                      );
+                    },
                     icon: const Icon(Icons.done_all),
                     label: const Text('Complete'),
                   ),
-                OutlinedButton.icon(onPressed: () => _uploadServicePhoto(context, ref, 'before'), icon: const Icon(Icons.camera_alt_outlined), label: const Text('Before')),
-                OutlinedButton.icon(onPressed: () => _uploadServicePhoto(context, ref, 'during'), icon: const Icon(Icons.camera_outlined), label: const Text('During')),
-                OutlinedButton.icon(onPressed: () => _uploadServicePhoto(context, ref, 'after'), icon: const Icon(Icons.camera_enhance_outlined), label: const Text('After')),
-                TextButton.icon(onPressed: () => context.push('/booking/${booking.id}'), icon: const Icon(Icons.receipt_long_outlined), label: const Text('Details')),
+                if (booking.status == BookingStatus.serviceCompleted)
+                  FilledButton.icon(
+                    onPressed: user == null || estimate == null
+                        ? null
+                        : () => ref.read(billRepositoryProvider).generateBill(
+                              bookingId: booking.id,
+                              customerId: booking.customerId,
+                              technicianId: user.uid,
+                              amount: estimate.total,
+                            ),
+                    icon: const Icon(Icons.receipt_long),
+                    label: const Text('Generate bill'),
+                  ),
+                OutlinedButton.icon(
+                    onPressed: booking.status == BookingStatus.arrived
+                        ? () => _uploadServicePhoto(context, ref, 'before')
+                        : null,
+                    icon: const Icon(Icons.camera_alt_outlined),
+                    label: const Text('Before')),
+                OutlinedButton.icon(
+                    onPressed: booking.status == BookingStatus.serviceStarted
+                        ? () => _uploadServicePhoto(context, ref, 'during')
+                        : null,
+                    icon: const Icon(Icons.camera_outlined),
+                    label: const Text('During')),
+                OutlinedButton.icon(
+                    onPressed: booking.status == BookingStatus.serviceStarted
+                        ? () => _uploadServicePhoto(context, ref, 'after')
+                        : null,
+                    icon: const Icon(Icons.camera_enhance_outlined),
+                    label: const Text('After')),
+                TextButton.icon(
+                    onPressed: () => context.push('/booking/${booking.id}'),
+                    icon: const Icon(Icons.receipt_long_outlined),
+                    label: const Text('Details')),
               ],
             ),
           ],
@@ -291,25 +434,51 @@ class _TechnicianJobCard extends ConsumerWidget {
         content: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            TextField(controller: labour, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'Labour charge')),
+            TextField(
+                controller: labour,
+                keyboardType: TextInputType.number,
+                decoration: const InputDecoration(labelText: 'Labour charge')),
             const SizedBox(height: 12),
-            TextField(controller: parts, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'Parts charge')),
+            TextField(
+                controller: parts,
+                keyboardType: TextInputType.number,
+                decoration: const InputDecoration(labelText: 'Parts charge')),
             const SizedBox(height: 12),
-            TextField(controller: notes, maxLines: 3, decoration: const InputDecoration(labelText: 'Work notes')),
+            TextField(
+                controller: notes,
+                maxLines: 3,
+                decoration: const InputDecoration(labelText: 'Work notes')),
           ],
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(dialogContext), child: const Text('Cancel')),
+          TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('Cancel')),
           FilledButton(
             onPressed: () async {
-              final user = ref.read(currentUserProvider).valueOrNull!;
+              final user = ref.read(currentUserProvider).valueOrNull;
+              final labourValue = double.tryParse(labour.text);
+              final partsValue = double.tryParse(parts.text);
+              if (user == null ||
+                  labourValue == null ||
+                  partsValue == null ||
+                  labourValue < 0 ||
+                  partsValue < 0 ||
+                  labourValue + partsValue <= 0) {
+                ScaffoldMessenger.of(dialogContext).showSnackBar(
+                  const SnackBar(
+                    content: Text('Enter valid non-negative estimate charges.'),
+                  ),
+                );
+                return;
+              }
               await ref.read(estimateRepositoryProvider).createEstimate(
                     Estimate(
                       id: '',
                       bookingId: booking.id,
                       technicianId: user.uid,
-                      labourCharge: double.tryParse(labour.text) ?? 0,
-                      partsCharge: double.tryParse(parts.text) ?? 0,
+                      labourCharge: labourValue,
+                      partsCharge: partsValue,
                       notes: notes.text.trim(),
                       isApproved: false,
                       createdAt: DateTime.now(),
@@ -318,7 +487,9 @@ class _TechnicianJobCard extends ConsumerWidget {
               if (dialogContext.mounted) Navigator.pop(dialogContext);
               if (context.mounted) {
                 ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('Estimate sent. Customer can approve in app or via WhatsApp fallback.')),
+                  const SnackBar(
+                      content: Text(
+                          'Estimate sent. Customer can approve in app or via WhatsApp fallback.')),
                 );
                 await _openWhatsApp(context, booking);
               }
@@ -330,12 +501,14 @@ class _TechnicianJobCard extends ConsumerWidget {
     );
   }
 
-  Future<void> _uploadServicePhoto(BuildContext context, WidgetRef ref, String stage) async {
+  Future<void> _uploadServicePhoto(
+      BuildContext context, WidgetRef ref, String stage) async {
     XFile? image;
 
     if (kIsWeb) {
-      // On web, camera source is unreliable — use gallery (file picker) instead
-      image = await ImagePicker().pickImage(source: ImageSource.gallery, imageQuality: 75);
+      // On web, camera source is unreliable â€” use gallery (file picker) instead
+      image = await ImagePicker()
+          .pickImage(source: ImageSource.gallery, imageQuality: 75);
     } else {
       final source = await showModalBottomSheet<ImageSource>(
         context: context,
@@ -343,8 +516,15 @@ class _TechnicianJobCard extends ConsumerWidget {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              ListTile(leading: const Icon(Icons.photo_camera), title: const Text('Camera'), onTap: () => Navigator.pop(sheetContext, ImageSource.camera)),
-              ListTile(leading: const Icon(Icons.photo_library), title: const Text('Gallery'), onTap: () => Navigator.pop(sheetContext, ImageSource.gallery)),
+              ListTile(
+                  leading: const Icon(Icons.photo_camera),
+                  title: const Text('Camera'),
+                  onTap: () => Navigator.pop(sheetContext, ImageSource.camera)),
+              ListTile(
+                  leading: const Icon(Icons.photo_library),
+                  title: const Text('Gallery'),
+                  onTap: () =>
+                      Navigator.pop(sheetContext, ImageSource.gallery)),
             ],
           ),
         ),
@@ -355,14 +535,17 @@ class _TechnicianJobCard extends ConsumerWidget {
 
     if (image == null) return;
 
-    final url = await ref.read(storageRepositoryProvider).uploadFile(
-          file: File(image.path),
+    final url = await ref.read(storageRepositoryProvider).uploadXFile(
+          file: image,
           folder: 'bookings/${booking.id}/$stage',
           fileName: '${const Uuid().v4()}.jpg',
         );
-    await ref.read(bookingRepositoryProvider).addServicePhoto(bookingId: booking.id, stage: stage, url: url);
+    await ref
+        .read(bookingRepositoryProvider)
+        .addServicePhoto(bookingId: booking.id, stage: stage, url: url);
     if (context.mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$stage service photo uploaded')));
+      ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('$stage service photo uploaded')));
     }
   }
 
@@ -370,18 +553,25 @@ class _TechnicianJobCard extends ConsumerWidget {
     final query = booking.latitude != null && booking.longitude != null
         ? '${booking.latitude},${booking.longitude}'
         : Uri.encodeComponent(booking.address);
-    final uri = Uri.parse('https://www.google.com/maps/search/?api=1&query=$query');
-    if (!await launchUrl(uri, mode: LaunchMode.externalApplication) && context.mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Unable to open Google Maps')));
+    final uri =
+        Uri.parse('https://www.google.com/maps/search/?api=1&query=$query');
+    if (!await launchUrl(uri, mode: LaunchMode.externalApplication) &&
+        context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Unable to open Google Maps')));
     }
   }
 
   Future<void> _openWhatsApp(BuildContext context, Booking booking) async {
     final phone = booking.phone.replaceAll(RegExp(r'[^0-9]'), '');
-    final text = 'FixNow estimate approval for ${booking.applianceType}: please approve in the app, or reply APPROVE here to continue.';
-    final uri = Uri.parse('https://wa.me/$phone?text=${Uri.encodeComponent(text)}');
-    if (!await launchUrl(uri, mode: LaunchMode.externalApplication) && context.mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('WhatsApp fallback could not be opened')));
+    final text =
+        'FixNow estimate approval for ${booking.applianceType}: please approve in the app, or reply APPROVE here to continue.';
+    final uri =
+        Uri.parse('https://wa.me/$phone?text=${Uri.encodeComponent(text)}');
+    if (!await launchUrl(uri, mode: LaunchMode.externalApplication) &&
+        context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('WhatsApp fallback could not be opened')));
     }
   }
 }
@@ -398,10 +588,10 @@ class _AttendanceViewState extends ConsumerState<_AttendanceView> {
   bool _marked = false;
   String? _result;
 
-  bool get _isWindowOpen {
+  bool _isWindowOpen(OperationsConfig config) {
     final now = DateTime.now();
-    final start = DateTime(now.year, now.month, now.day, 9, 15);
-    final end = DateTime(now.year, now.month, now.day, 9, 45);
+    final start = config.startFor(now);
+    final end = config.endFor(now);
     return !now.isBefore(start) && !now.isAfter(end);
   }
 
@@ -414,7 +604,7 @@ class _AttendanceViewState extends ConsumerState<_AttendanceView> {
         return;
       }
 
-      // On web, location may not be available — handle gracefully
+      // On web, location may not be available â€” handle gracefully
       Position? position;
       try {
         position = await TechnicianDashboardScreen._position();
@@ -422,7 +612,7 @@ class _AttendanceViewState extends ConsumerState<_AttendanceView> {
         position = null;
       }
 
-      // On web, camera is not supported — use gallery (file picker) instead
+      // On web, camera is not supported â€” use gallery (file picker) instead
       final image = await ImagePicker().pickImage(
         source: kIsWeb ? ImageSource.gallery : ImageSource.camera,
         imageQuality: 70,
@@ -434,27 +624,28 @@ class _AttendanceViewState extends ConsumerState<_AttendanceView> {
       }
 
       bool geofencePassed = false;
+      final config = ref.read(operationsConfigProvider).valueOrNull ??
+          OperationsConfig.fromJson(const {});
       if (position != null) {
-        const branchLatitude = 13.0827;
-        const branchLongitude = 80.2707;
         final distance = Geolocator.distanceBetween(
           position.latitude,
           position.longitude,
-          branchLatitude,
-          branchLongitude,
+          config.branchLatitude,
+          config.branchLongitude,
         );
-        geofencePassed = distance <= 250;
+        geofencePassed = distance <= config.geofenceRadiusMeters;
       } else {
-        // Web / location unavailable — skip geo-fence, mark as requires review
+        // Web / location unavailable â€” skip geo-fence, mark as requires review
         geofencePassed = false;
       }
 
-      const faceMatchPassed = true;
+      const faceMatchPassed = false;
 
-      final url = await ref.read(storageRepositoryProvider).uploadFile(
-            file: File(image.path),
-            folder: 'attendance',
-            fileName: '${user.uid}_${DateTime.now().millisecondsSinceEpoch}.jpg',
+      final url = await ref.read(storageRepositoryProvider).uploadXFile(
+            file: image,
+            folder: 'attendance/${user.uid}',
+            fileName:
+                '${user.uid}_${DateTime.now().millisecondsSinceEpoch}.jpg',
           );
 
       await ref.read(technicianRepositoryProvider).markAttendance(
@@ -473,9 +664,9 @@ class _AttendanceViewState extends ConsumerState<_AttendanceView> {
       setState(() {
         _marked = true;
         _result = geofencePassed
-            ? 'Verified at 9:30 attendance checkpoint'
+            ? 'Geo-fence passed. Face verification is pending admin review.'
             : kIsWeb
-                ? 'Selfie saved. Location check skipped on web — admin review required.'
+                ? 'Selfie saved. Location check skipped on web â€” admin review required.'
                 : 'Selfie saved, geo-fence review required';
       });
     } catch (e) {
@@ -487,18 +678,27 @@ class _AttendanceViewState extends ConsumerState<_AttendanceView> {
 
   @override
   Widget build(BuildContext context) {
+    final config = ref.watch(operationsConfigProvider).valueOrNull ??
+        OperationsConfig.fromJson(const {});
+    final isWindowOpen = _isWindowOpen(config);
     return ListView(
       padding: const EdgeInsets.all(16),
       children: [
         Container(
           padding: const EdgeInsets.all(18),
-          decoration: BoxDecoration(color: AppTheme.primary, borderRadius: BorderRadius.circular(8)),
+          decoration: BoxDecoration(
+              color: AppTheme.primary, borderRadius: BorderRadius.circular(8)),
           child: const Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text('9:30 AM attendance', style: TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.w900)),
+              Text('9:30 AM attendance',
+                  style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 22,
+                      fontWeight: FontWeight.w900)),
               SizedBox(height: 6),
-              Text('Selfie, geo-fence, and AI face-match verification', style: TextStyle(color: Colors.white70)),
+              Text('Selfie, geo-fence, and AI face-match verification',
+                  style: TextStyle(color: Colors.white70)),
             ],
           ),
         ),
@@ -515,7 +715,8 @@ class _AttendanceViewState extends ConsumerState<_AttendanceView> {
             ),
             child: Row(
               children: [
-                Icon(Icons.info_outline, color: Colors.amber.shade800, size: 18),
+                Icon(Icons.info_outline,
+                    color: Colors.amber.shade800, size: 18),
                 const SizedBox(width: 8),
                 const Expanded(
                   child: Text(
@@ -531,22 +732,39 @@ class _AttendanceViewState extends ConsumerState<_AttendanceView> {
             padding: const EdgeInsets.all(16),
             child: Column(
               children: [
-                Icon(_marked ? Icons.verified : Icons.face_retouching_natural, size: 54, color: _marked ? AppTheme.accent : AppTheme.primary),
+                Icon(_marked ? Icons.verified : Icons.face_retouching_natural,
+                    size: 54,
+                    color: _marked ? AppTheme.accent : AppTheme.primary),
                 const SizedBox(height: 10),
-                Text(_marked ? 'Attendance marked' : 'Mark attendance', style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w800)),
+                Text(_marked ? 'Attendance marked' : 'Mark attendance',
+                    style: Theme.of(context)
+                        .textTheme
+                        .titleLarge
+                        ?.copyWith(fontWeight: FontWeight.w800)),
                 const SizedBox(height: 6),
-                Text(_result ?? (_isWindowOpen ? 'Window open: 9:15 - 9:45 AM' : 'Attendance window: 9:15 - 9:45 AM'), textAlign: TextAlign.center),
+                Text(
+                    _result ??
+                        (isWindowOpen
+                            ? 'Attendance window is open'
+                            : 'Attendance window is closed'),
+                    textAlign: TextAlign.center),
                 const SizedBox(height: 16),
-                _CheckRow(label: 'Face visible for AI match', passed: true),
+                const _CheckRow(label: 'Face match verified', passed: false),
                 _CheckRow(label: 'Inside branch geo-fence', passed: !kIsWeb),
-                _CheckRow(label: '9:30 AM window', passed: _isWindowOpen),
+                _CheckRow(label: 'Attendance window', passed: isWindowOpen),
                 const SizedBox(height: 16),
                 FilledButton.icon(
-                  onPressed: _loading || !_isWindowOpen ? null : _markAttendance,
+                  onPressed: _loading || !isWindowOpen ? null : _markAttendance,
                   icon: _loading
-                      ? const SizedBox.square(dimension: 18, child: CircularProgressIndicator(strokeWidth: 2))
+                      ? const SizedBox.square(
+                          dimension: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2))
                       : Icon(kIsWeb ? Icons.upload_file : Icons.photo_camera),
-                  label: Text(_loading ? 'Verifying...' : kIsWeb ? 'Upload selfie photo' : 'Take selfie'),
+                  label: Text(_loading
+                      ? 'Verifying...'
+                      : kIsWeb
+                          ? 'Upload selfie photo'
+                          : 'Take selfie'),
                 ),
               ],
             ),
@@ -562,10 +780,25 @@ class _EarningsView extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final bookings = ref.watch(technicianBookingsProvider).valueOrNull ?? const <Booking>[];
-    final completed = bookings.where((b) => b.status == BookingStatus.serviceCompleted || b.status == BookingStatus.closed).length;
-    final daily = completed * 450;
-    final monthly = 18400 + daily;
+    final bills =
+        ref.watch(technicianBillsProvider).valueOrNull ?? const <Bill>[];
+    final now = DateTime.now();
+    final daily = bills
+        .where((bill) =>
+            bill.isPaid &&
+            bill.createdAt.year == now.year &&
+            bill.createdAt.month == now.month &&
+            bill.createdAt.day == now.day)
+        .fold<double>(0, (sum, bill) => sum + bill.amount);
+    final monthly = bills
+        .where((bill) =>
+            bill.isPaid &&
+            bill.createdAt.year == now.year &&
+            bill.createdAt.month == now.month)
+        .fold<double>(0, (sum, bill) => sum + bill.amount);
+    final pending = bills
+        .where((bill) => !bill.isPaid)
+        .fold<double>(0, (sum, bill) => sum + bill.amount);
     return ListView(
       padding: const EdgeInsets.all(16),
       children: [
@@ -573,25 +806,42 @@ class _EarningsView extends ConsumerWidget {
           spacing: 12,
           runSpacing: 12,
           children: [
-            _MetricCard(label: 'Today', value: 'Rs. $daily'),
-            _MetricCard(label: 'Monthly payout', value: 'Rs. $monthly'),
-            const _MetricCard(label: 'Pending release', value: 'Rs. 3,200'),
+            _MetricCard(
+              label: 'Today',
+              value: 'Rs. ${daily.toStringAsFixed(0)}',
+            ),
+            _MetricCard(
+              label: 'Monthly payout',
+              value: 'Rs. ${monthly.toStringAsFixed(0)}',
+            ),
+            _MetricCard(
+              label: 'Pending release',
+              value: 'Rs. ${pending.toStringAsFixed(0)}',
+            ),
           ],
         ),
         const SizedBox(height: 16),
-        const Card(
+        Card(
           child: Padding(
-            padding: EdgeInsets.all(16),
+            padding: const EdgeInsets.all(16),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text('Payout summary', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800)),
-                SizedBox(height: 12),
-                _PayoutRow(label: 'Completed jobs incentive', value: 'Rs. 12,600'),
-                _PayoutRow(label: 'Parts commission', value: 'Rs. 4,100'),
-                _PayoutRow(label: 'Deductions', value: 'Rs. 700'),
-                Divider(height: 24),
-                _PayoutRow(label: 'Next payout', value: 'Rs. 16,000'),
+                const Text(
+                  'Payout summary',
+                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800),
+                ),
+                const SizedBox(height: 12),
+                _PayoutRow(
+                  label: 'Paid this month',
+                  value: 'Rs. ${monthly.toStringAsFixed(0)}',
+                ),
+                _PayoutRow(
+                  label: 'Pending release',
+                  value: 'Rs. ${pending.toStringAsFixed(0)}',
+                ),
+                const Divider(height: 24),
+                _PayoutRow(label: 'Recorded bills', value: '${bills.length}'),
               ],
             ),
           ),
@@ -626,7 +876,9 @@ class _StatusRail extends StatelessWidget {
           child: Container(
             height: 5,
             margin: EdgeInsets.only(right: i == steps.length - 1 ? 0 : 4),
-            decoration: BoxDecoration(color: passed ? AppTheme.accent : AppTheme.divider, borderRadius: BorderRadius.circular(20)),
+            decoration: BoxDecoration(
+                color: passed ? AppTheme.accent : AppTheme.divider,
+                borderRadius: BorderRadius.circular(20)),
           ),
         );
       }),
@@ -635,7 +887,11 @@ class _StatusRail extends StatelessWidget {
 }
 
 class _InfoRow extends StatelessWidget {
-  const _InfoRow({required this.icon, required this.text, this.actionLabel, this.onAction});
+  const _InfoRow(
+      {required this.icon,
+      required this.text,
+      this.actionLabel,
+      this.onAction});
 
   final IconData icon;
   final String text;
@@ -650,8 +906,11 @@ class _InfoRow extends StatelessWidget {
         children: [
           Icon(icon, size: 18, color: AppTheme.textSecondary),
           const SizedBox(width: 8),
-          Expanded(child: Text(text, style: const TextStyle(color: AppTheme.textSecondary))),
-          if (actionLabel != null) TextButton(onPressed: onAction, child: Text(actionLabel!)),
+          Expanded(
+              child: Text(text,
+                  style: const TextStyle(color: AppTheme.textSecondary))),
+          if (actionLabel != null)
+            TextButton(onPressed: onAction, child: Text(actionLabel!)),
         ],
       ),
     );
@@ -674,9 +933,14 @@ class _MetricCard extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(value, style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w900)),
+              Text(value,
+                  style: Theme.of(context)
+                      .textTheme
+                      .headlineSmall
+                      ?.copyWith(fontWeight: FontWeight.w900)),
               const SizedBox(height: 4),
-              Text(label, style: const TextStyle(color: AppTheme.textSecondary)),
+              Text(label,
+                  style: const TextStyle(color: AppTheme.textSecondary)),
             ],
           ),
         ),
@@ -696,12 +960,19 @@ class _InlineMetric extends StatelessWidget {
     return Expanded(
       child: Container(
         padding: const EdgeInsets.all(10),
-        decoration: BoxDecoration(color: Colors.white.withOpacity(0.12), borderRadius: BorderRadius.circular(8)),
+        decoration: BoxDecoration(
+            color: Colors.white.withValues(alpha: 0.12),
+            borderRadius: BorderRadius.circular(8)),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(value, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w900, fontSize: 18)),
-            Text(label, style: const TextStyle(color: Colors.white70, fontSize: 12)),
+            Text(value,
+                style: const TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.w900,
+                    fontSize: 18)),
+            Text(label,
+                style: const TextStyle(color: Colors.white70, fontSize: 12)),
           ],
         ),
       ),
@@ -721,7 +992,8 @@ class _CheckRow extends StatelessWidget {
       padding: const EdgeInsets.symmetric(vertical: 4),
       child: Row(
         children: [
-          Icon(passed ? Icons.check_circle : Icons.radio_button_unchecked, size: 18, color: passed ? AppTheme.accent : AppTheme.textHint),
+          Icon(passed ? Icons.check_circle : Icons.radio_button_unchecked,
+              size: 18, color: passed ? AppTheme.accent : AppTheme.textHint),
           const SizedBox(width: 8),
           Text(label),
         ],
@@ -763,7 +1035,9 @@ class _EmptyJobsCard extends StatelessWidget {
           children: [
             Icon(Icons.check_circle_outline, color: AppTheme.accent),
             SizedBox(width: 10),
-            Expanded(child: Text('No active assignments. New admin-assigned jobs will appear here.')),
+            Expanded(
+                child: Text(
+                    'No active assignments. New admin-assigned jobs will appear here.')),
           ],
         ),
       ),
@@ -773,9 +1047,12 @@ class _EmptyJobsCard extends StatelessWidget {
 
 IconData _applianceIcon(String appliance) {
   return switch (appliance.toLowerCase()) {
-    String s when s.contains('ac') || s.contains('conditioner') => Icons.ac_unit,
-    String s when s.contains('fridge') || s.contains('refrigerator') => Icons.kitchen,
-    String s when s.contains('washer') || s.contains('washing') => Icons.local_laundry_service,
+    String s when s.contains('ac') || s.contains('conditioner') =>
+      Icons.ac_unit,
+    String s when s.contains('fridge') || s.contains('refrigerator') =>
+      Icons.kitchen,
+    String s when s.contains('washer') || s.contains('washing') =>
+      Icons.local_laundry_service,
     String s when s.contains('tv') => Icons.tv,
     String s when s.contains('water') => Icons.water_drop,
     _ => Icons.home_repair_service,

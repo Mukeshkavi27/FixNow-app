@@ -28,19 +28,29 @@ final appRouterProvider = Provider<GoRouter>((ref) {
 
       if (firebaseUser == null) return location == '/login' ? null : '/login';
       if (appUser == null || !appUser.isActive) return '/login';
-      if (location == '/login' || location == '/splash') {
-        return switch (appUser.role) {
-          UserRole.customer => '/customer',
-          UserRole.technician => '/technician',
-          UserRole.admin => '/admin',
-        };
+      final home = switch (appUser.role) {
+        UserRole.customer => '/customer',
+        UserRole.technician => '/technician',
+        UserRole.admin => '/admin',
+      };
+      if (location == '/login' || location == '/splash') return home;
+
+      final isRoleDashboard = location == '/customer' ||
+          location == '/technician' ||
+          location == '/admin';
+      if (isRoleDashboard && location != home) return home;
+      if (location.startsWith('/book/') && appUser.role != UserRole.customer) {
+        return home;
       }
       return null;
     },
     routes: [
-      GoRoute(path: '/splash', builder: (context, state) => const SplashScreen()),
+      GoRoute(
+          path: '/splash', builder: (context, state) => const SplashScreen()),
       GoRoute(path: '/login', builder: (context, state) => const LoginScreen()),
-      GoRoute(path: '/customer', builder: (context, state) => const CustomerDashboardScreen()),
+      GoRoute(
+          path: '/customer',
+          builder: (context, state) => const CustomerDashboardScreen()),
       GoRoute(
         path: '/book/:appliance',
         builder: (context, state) => BookServiceScreen(
@@ -49,10 +59,15 @@ final appRouterProvider = Provider<GoRouter>((ref) {
       ),
       GoRoute(
         path: '/booking/:id',
-        builder: (context, state) => BookingDetailScreen(bookingId: state.pathParameters['id']!),
+        builder: (context, state) =>
+            BookingDetailScreen(bookingId: state.pathParameters['id']!),
       ),
-      GoRoute(path: '/technician', builder: (context, state) => const TechnicianDashboardScreen()),
-      GoRoute(path: '/admin', builder: (context, state) => const AdminDashboardScreen()),
+      GoRoute(
+          path: '/technician',
+          builder: (context, state) => const TechnicianDashboardScreen()),
+      GoRoute(
+          path: '/admin',
+          builder: (context, state) => const AdminDashboardScreen()),
     ],
     errorBuilder: (context, state) => Scaffold(
       appBar: AppBar(title: const Text('FixNow')),

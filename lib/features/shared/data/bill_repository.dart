@@ -14,6 +14,12 @@ class BillRepository {
 
   final FirebaseFirestore _firestore;
 
+  Stream<Bill?> watchForBooking(String bookingId) {
+    return _firestore.collection('bills').doc(bookingId).snapshots().map(
+          (doc) => doc.exists ? Bill.fromFirestore(doc) : null,
+        );
+  }
+
   Stream<List<Bill>> watchCustomerBills(String customerId) {
     return _firestore
         .collection('bills')
@@ -52,16 +58,50 @@ class BillRepository {
     required String technicianId,
     required double amount,
   }) async {
-    await _firestore.collection('bills').add({
-      'bookingId': bookingId,
-      'customerId': customerId,
-      'technicianId': technicianId,
-      'amount': amount,
-      'createdAt': FieldValue.serverTimestamp(),
-      'isPaid': false,
+    if (amount <= 0) throw ArgumentError('Bill amount must be positive.');
+    final billRef = _firestore.collection('bills').doc(bookingId);
+    final bookingRef = _firestore.collection('bookings').doc(bookingId);
+    await _firestore.runTransaction((transaction) async {
+      final booking = await transaction.get(bookingRef);
+      final data = booking.data();
+      if (data == null) throw StateError('Booking not found.');
+      if (data['status'] != BookingStatus.serviceCompleted.name ||
+          data['customerId'] != customerId ||
+          data['technicianId'] != technicianId) {
+        throw StateError('Bill details do not match the completed booking.');
+      }
+      transaction.set(billRef, {
+        'bookingId': bookingId,
+        'customerId': customerId,
+        'technicianId': technicianId,
+        'amount': amount,
+        'createdAt': FieldValue.serverTimestamp(),
+        'isPaid': false,
+      });
+      transaction.update(bookingRef, {
+        'status': BookingStatus.billGenerated.name,
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
     });
-    await _firestore.collection('bookings').doc(bookingId).update({
-      'status': BookingStatus.billGenerated.name,
+  }
+
+  Future<void> markPaid(String bookingId) async {
+    final billRef = _firestore.collection('bills').doc(bookingId);
+    final bookingRef = _firestore.collection('bookings').doc(bookingId);
+    await _firestore.runTransaction((transaction) async {
+      final bill = await transaction.get(billRef);
+      final booking = await transaction.get(bookingRef);
+      if (!bill.exists || !booking.exists) {
+        throw StateError('Bill or booking not found.');
+      }
+      transaction.update(billRef, {
+        'isPaid': true,
+        'paidAt': FieldValue.serverTimestamp(),
+      });
+      transaction.update(bookingRef, {
+        'status': BookingStatus.closed.name,
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
     });
   }
 }

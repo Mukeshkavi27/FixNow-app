@@ -7,7 +7,8 @@ import '../../../core/providers/firebase_providers.dart';
 import '../domain/app_user.dart';
 
 final authRepositoryProvider = Provider<AuthRepository>((ref) {
-  return AuthRepository(ref.watch(firebaseRefsProvider).auth, ref.watch(firebaseRefsProvider).firestore);
+  return AuthRepository(ref.watch(firebaseRefsProvider).auth,
+      ref.watch(firebaseRefsProvider).firestore);
 });
 
 final authStateProvider = StreamProvider<User?>((ref) {
@@ -44,20 +45,25 @@ class AuthRepository {
     required String email,
     required String password,
     required String phone,
-    UserRole role = UserRole.customer,
   }) async {
-    final credential = await _auth.createUserWithEmailAndPassword(email: email, password: password);
+    final credential = await _auth.createUserWithEmailAndPassword(
+        email: email, password: password);
     final uid = credential.user!.uid;
     final user = AppUser(
       uid: uid,
       name: name,
       email: email,
       phone: phone,
-      role: role,
+      role: UserRole.customer,
       createdAt: DateTime.now(),
       isActive: true,
     );
-    await _firestore.collection('users').doc(uid).set(user.toJson());
+    try {
+      await _firestore.collection('users').doc(uid).set(user.toJson());
+    } catch (_) {
+      await credential.user?.delete();
+      rethrow;
+    }
   }
 
   Future<void> signOut() => _auth.signOut();

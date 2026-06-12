@@ -6,7 +6,10 @@ import '../../../app/theme/app_theme.dart';
 import '../../../core/enums/booking_status.dart';
 import '../../auth/data/auth_repository.dart';
 import '../../estimates/data/estimate_repository.dart';
+import '../../shared/data/bill_repository.dart';
 import '../../shared/data/review_repository.dart';
+import '../../technician/data/technician_repository.dart';
+import '../../technician/domain/technician_location.dart';
 import '../data/booking_repository.dart';
 
 final bookingDetailProvider =
@@ -19,6 +22,20 @@ final bookingEstimateProvider =
   return ref.watch(estimateRepositoryProvider).watchForBooking(id);
 });
 
+final bookingBillProvider = StreamProvider.autoDispose.family((ref, String id) {
+  return ref.watch(billRepositoryProvider).watchForBooking(id);
+});
+
+final bookingReviewProvider =
+    StreamProvider.autoDispose.family((ref, String id) {
+  return ref.watch(reviewRepositoryProvider).watchForBooking(id);
+});
+
+final bookingTechnicianLocationProvider = StreamProvider.autoDispose
+    .family<TechnicianLocation?, String>((ref, technicianId) {
+  return ref.watch(technicianRepositoryProvider).watchLocation(technicianId);
+});
+
 class BookingDetailScreen extends ConsumerStatefulWidget {
   const BookingDetailScreen({required this.bookingId, super.key});
   final String bookingId;
@@ -28,8 +45,7 @@ class BookingDetailScreen extends ConsumerStatefulWidget {
       _BookingDetailScreenState();
 }
 
-class _BookingDetailScreenState
-    extends ConsumerState<BookingDetailScreen> {
+class _BookingDetailScreenState extends ConsumerState<BookingDetailScreen> {
   final _review = TextEditingController();
   int _rating = 5;
 
@@ -41,10 +57,10 @@ class _BookingDetailScreenState
 
   @override
   Widget build(BuildContext context) {
-    final bookingAsync =
-        ref.watch(bookingDetailProvider(widget.bookingId));
-    final estimateAsync =
-        ref.watch(bookingEstimateProvider(widget.bookingId));
+    final bookingAsync = ref.watch(bookingDetailProvider(widget.bookingId));
+    final estimateAsync = ref.watch(bookingEstimateProvider(widget.bookingId));
+    final billAsync = ref.watch(bookingBillProvider(widget.bookingId));
+    final reviewAsync = ref.watch(bookingReviewProvider(widget.bookingId));
     final user = ref.watch(currentUserProvider).valueOrNull;
 
     return Scaffold(
@@ -64,6 +80,13 @@ class _BookingDetailScreenState
           if (booking == null) {
             return const Center(child: Text('Booking not found'));
           }
+          final technicianLocation = booking.technicianId == null
+              ? null
+              : ref
+                  .watch(
+                    bookingTechnicianLocationProvider(booking.technicianId!),
+                  )
+                  .valueOrNull;
           final markers = <Marker>{};
           if (booking.latitude != null && booking.longitude != null) {
             markers.add(
@@ -71,6 +94,21 @@ class _BookingDetailScreenState
                 markerId: const MarkerId('service-location'),
                 position: LatLng(booking.latitude!, booking.longitude!),
                 infoWindow: InfoWindow(title: booking.address),
+              ),
+            );
+          }
+          if (technicianLocation != null) {
+            markers.add(
+              Marker(
+                markerId: const MarkerId('technician-location'),
+                position: LatLng(
+                  technicianLocation.latitude,
+                  technicianLocation.longitude,
+                ),
+                infoWindow: const InfoWindow(title: 'Technician'),
+                icon: BitmapDescriptor.defaultMarkerWithHue(
+                  BitmapDescriptor.hueAzure,
+                ),
               ),
             );
           }
@@ -106,8 +144,7 @@ class _BookingDetailScreenState
                         const SizedBox(width: 12),
                         Expanded(
                           child: Column(
-                            crossAxisAlignment:
-                                CrossAxisAlignment.start,
+                            crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
                               Text(
                                 booking.applianceType,
@@ -192,8 +229,75 @@ class _BookingDetailScreenState
                 ),
               ],
 
-              if (booking.latitude != null &&
-                  booking.longitude != null) ...[
+              if (booking.servicePhotos.isNotEmpty) ...[
+                const SizedBox(height: 14),
+                _UCCard(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        'Service photos',
+                        style: TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w700,
+                          color: AppTheme.textPrimary,
+                        ),
+                      ),
+                      const SizedBox(height: 10),
+                      SizedBox(
+                        height: 128,
+                        child: ListView.separated(
+                          scrollDirection: Axis.horizontal,
+                          itemCount: booking.servicePhotos.length,
+                          separatorBuilder: (_, __) =>
+                              const SizedBox(width: 10),
+                          itemBuilder: (context, index) {
+                            final photo = booking.servicePhotos[index];
+                            return SizedBox(
+                              width: 150,
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Expanded(
+                                    child: ClipRRect(
+                                      borderRadius: BorderRadius.circular(9),
+                                      child: Image.network(
+                                        photo.url,
+                                        width: 150,
+                                        fit: BoxFit.cover,
+                                        errorBuilder: (_, __, ___) =>
+                                            const ColoredBox(
+                                          color: AppTheme.surface,
+                                          child: Center(
+                                            child: Icon(
+                                              Icons.broken_image_outlined,
+                                            ),
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                  const SizedBox(height: 4),
+                                  Text(
+                                    photo.stage.toUpperCase(),
+                                    style: const TextStyle(
+                                      fontSize: 10,
+                                      fontWeight: FontWeight.w700,
+                                      color: AppTheme.textSecondary,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            );
+                          },
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+
+              if (markers.isNotEmpty) ...[
                 const SizedBox(height: 14),
                 ClipRRect(
                   borderRadius: BorderRadius.circular(14),
@@ -202,7 +306,9 @@ class _BookingDetailScreenState
                     child: GoogleMap(
                       initialCameraPosition: CameraPosition(
                         target: LatLng(
-                            booking.latitude!, booking.longitude!),
+                          technicianLocation?.latitude ?? booking.latitude!,
+                          technicianLocation?.longitude ?? booking.longitude!,
+                        ),
                         zoom: 14,
                       ),
                       markers: markers,
@@ -258,15 +364,15 @@ class _BookingDetailScreenState
                         _EstimateRow(
                             label: 'Labour charge',
                             value:
-                                '₹${estimate.labourCharge.toStringAsFixed(0)}'),
+                                'â‚¹${estimate.labourCharge.toStringAsFixed(0)}'),
                         _EstimateRow(
                             label: 'Parts charge',
                             value:
-                                '₹${estimate.partsCharge.toStringAsFixed(0)}'),
+                                'â‚¹${estimate.partsCharge.toStringAsFixed(0)}'),
                         const Divider(height: 20),
                         _EstimateRow(
                           label: 'Total',
-                          value: '₹${estimate.total.toStringAsFixed(0)}',
+                          value: 'â‚¹${estimate.total.toStringAsFixed(0)}',
                           bold: true,
                         ),
                         if (estimate.notes.isNotEmpty) ...[
@@ -299,7 +405,8 @@ class _BookingDetailScreenState
                               icon: const Icon(Icons.check_circle_outline,
                                   size: 18),
                               label: const Text('Approve Estimate',
-                                  style: TextStyle(fontWeight: FontWeight.w700)),
+                                  style:
+                                      TextStyle(fontWeight: FontWeight.w700)),
                             ),
                           ),
                         ],
@@ -311,105 +418,172 @@ class _BookingDetailScreenState
                 error: (e, _) => Text(e.toString()),
               ),
 
+              billAsync.when(
+                data: (bill) {
+                  if (bill == null) return const SizedBox.shrink();
+                  return Padding(
+                    padding: const EdgeInsets.only(top: 14),
+                    child: _UCCard(
+                      child: Row(
+                        children: [
+                          const Icon(
+                            Icons.receipt_long_outlined,
+                            color: AppTheme.primary,
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                const Text(
+                                  'Final bill',
+                                  style: TextStyle(
+                                    fontWeight: FontWeight.w800,
+                                    color: AppTheme.textPrimary,
+                                  ),
+                                ),
+                                Text(
+                                  'INR ${bill.amount.toStringAsFixed(0)}',
+                                  style: const TextStyle(
+                                    color: AppTheme.textSecondary,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          Chip(
+                            label: Text(bill.isPaid ? 'Paid' : 'Payment due'),
+                            backgroundColor: bill.isPaid
+                                ? Colors.green.shade50
+                                : Colors.orange.shade50,
+                          ),
+                        ],
+                      ),
+                    ),
+                  );
+                },
+                loading: () => const SizedBox.shrink(),
+                error: (error, _) => Padding(
+                  padding: const EdgeInsets.only(top: 8),
+                  child: Text('Unable to load bill: $error'),
+                ),
+              ),
+
               // Review section
-              if (booking.status == BookingStatus.serviceCompleted &&
+              if (booking.status.index >=
+                      BookingStatus.serviceCompleted.index &&
                   user?.uid == booking.customerId) ...[
                 const SizedBox(height: 14),
-                _UCCard(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Text(
-                        'Rate this service',
-                        style: TextStyle(
-                          fontSize: 15,
-                          fontWeight: FontWeight.w800,
-                          color: AppTheme.textPrimary,
+                if (reviewAsync.valueOrNull != null)
+                  _UCCard(
+                    child: Row(
+                      children: [
+                        const Icon(Icons.check_circle, color: Colors.green),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Text(
+                            'Review submitted: ${reviewAsync.valueOrNull!.rating}/5',
+                            style: const TextStyle(
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
                         ),
-                      ),
-                      const SizedBox(height: 12),
-                      // Star selector
-                      Row(
-                        children: List.generate(
-                          5,
-                          (i) => GestureDetector(
-                            onTap: () => setState(() => _rating = i + 1),
-                            child: Padding(
-                              padding:
-                                  const EdgeInsets.only(right: 4),
-                              child: Icon(
-                                i < _rating
-                                    ? Icons.star
-                                    : Icons.star_border,
-                                size: 32,
-                                color: i < _rating
-                                    ? AppTheme.starColor
-                                    : AppTheme.divider,
+                      ],
+                    ),
+                  )
+                else
+                  _UCCard(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text(
+                          'Rate this service',
+                          style: TextStyle(
+                            fontSize: 15,
+                            fontWeight: FontWeight.w800,
+                            color: AppTheme.textPrimary,
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+                        // Star selector
+                        Row(
+                          children: List.generate(
+                            5,
+                            (i) => GestureDetector(
+                              onTap: () => setState(() => _rating = i + 1),
+                              child: Padding(
+                                padding: const EdgeInsets.only(right: 4),
+                                child: Icon(
+                                  i < _rating ? Icons.star : Icons.star_border,
+                                  size: 32,
+                                  color: i < _rating
+                                      ? AppTheme.starColor
+                                      : AppTheme.divider,
+                                ),
                               ),
                             ),
                           ),
                         ),
-                      ),
-                      const SizedBox(height: 12),
-                      TextField(
-                        controller: _review,
-                        minLines: 2,
-                        maxLines: 4,
-                        style: const TextStyle(fontSize: 13),
-                        decoration: InputDecoration(
-                          hintText: 'Share your experience...',
-                          hintStyle: const TextStyle(
-                              color: AppTheme.textHint, fontSize: 13),
-                          filled: true,
-                          fillColor: AppTheme.surface,
-                          border: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(10),
-                            borderSide:
-                                const BorderSide(color: AppTheme.divider),
-                          ),
-                          enabledBorder: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(10),
-                            borderSide:
-                                const BorderSide(color: AppTheme.divider),
-                          ),
-                          focusedBorder: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(10),
-                            borderSide: const BorderSide(
-                                color: AppTheme.primary, width: 1.5),
-                          ),
-                        ),
-                      ),
-                      const SizedBox(height: 12),
-                      SizedBox(
-                        width: double.infinity,
-                        child: ElevatedButton.icon(
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: AppTheme.primary,
-                            foregroundColor: Colors.white,
-                            elevation: 0,
-                            shape: RoundedRectangleBorder(
+                        const SizedBox(height: 12),
+                        TextField(
+                          controller: _review,
+                          minLines: 2,
+                          maxLines: 4,
+                          style: const TextStyle(fontSize: 13),
+                          decoration: InputDecoration(
+                            hintText: 'Share your experience...',
+                            hintStyle: const TextStyle(
+                                color: AppTheme.textHint, fontSize: 13),
+                            filled: true,
+                            fillColor: AppTheme.surface,
+                            border: OutlineInputBorder(
                               borderRadius: BorderRadius.circular(10),
+                              borderSide:
+                                  const BorderSide(color: AppTheme.divider),
+                            ),
+                            enabledBorder: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(10),
+                              borderSide:
+                                  const BorderSide(color: AppTheme.divider),
+                            ),
+                            focusedBorder: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(10),
+                              borderSide: const BorderSide(
+                                  color: AppTheme.primary, width: 1.5),
                             ),
                           ),
-                          onPressed: booking.technicianId == null
-                              ? null
-                              : () => ref
-                                  .read(reviewRepositoryProvider)
-                                  .submitReview(
-                                    bookingId: booking.id,
-                                    technicianId: booking.technicianId!,
-                                    customerId: booking.customerId,
-                                    rating: _rating,
-                                    text: _review.text.trim(),
-                                  ),
-                          icon: const Icon(Icons.star_outline, size: 18),
-                          label: const Text('Submit Review',
-                              style: TextStyle(fontWeight: FontWeight.w700)),
                         ),
-                      ),
-                    ],
+                        const SizedBox(height: 12),
+                        SizedBox(
+                          width: double.infinity,
+                          child: ElevatedButton.icon(
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: AppTheme.primary,
+                              foregroundColor: Colors.white,
+                              elevation: 0,
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(10),
+                              ),
+                            ),
+                            onPressed: booking.technicianId == null
+                                ? null
+                                : () => ref
+                                    .read(reviewRepositoryProvider)
+                                    .submitReview(
+                                      bookingId: booking.id,
+                                      technicianId: booking.technicianId!,
+                                      customerId: booking.customerId,
+                                      rating: _rating,
+                                      text: _review.text.trim(),
+                                    ),
+                            icon: const Icon(Icons.star_outline, size: 18),
+                            label: const Text('Submit Review',
+                                style: TextStyle(fontWeight: FontWeight.w700)),
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
-                ),
               ],
 
               const SizedBox(height: 32),
@@ -438,7 +612,7 @@ class _UCCard extends StatelessWidget {
         border: Border.all(color: AppTheme.divider),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.03),
+            color: Colors.black.withValues(alpha: 0.03),
             blurRadius: 6,
             offset: const Offset(0, 2),
           ),
@@ -556,9 +730,9 @@ class _StatusBanner extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
       decoration: BoxDecoration(
-        color: color.withOpacity(0.08),
+        color: color.withValues(alpha: 0.08),
         borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: color.withOpacity(0.25)),
+        border: Border.all(color: color.withValues(alpha: 0.25)),
       ),
       child: Row(
         children: [

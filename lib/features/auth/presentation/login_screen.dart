@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../app/theme/app_theme.dart';
-import '../../../core/enums/user_role.dart';
 import '../data/auth_repository.dart';
 
 class LoginScreen extends ConsumerStatefulWidget {
@@ -21,7 +20,6 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
   bool _isRegister = false;
   bool _isLoading = false;
   bool _obscurePassword = true;
-  UserRole _role = UserRole.customer;
 
   @override
   void dispose() {
@@ -43,7 +41,6 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
           email: _email.text.trim(),
           password: _password.text,
           phone: _phone.text.trim(),
-          role: _role,
         );
       } else {
         await repo.signIn(_email.text.trim(), _password.text);
@@ -93,7 +90,8 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
             // ── Brand section ──────────────────────────────
             Container(
               color: AppTheme.primary,
-              padding: EdgeInsets.fromLTRB(formHPad, brandTopPad, formHPad, brandBottomPad),
+              padding: EdgeInsets.fromLTRB(
+                  formHPad, brandTopPad, formHPad, brandBottomPad),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
@@ -164,9 +162,8 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                         controller: _name,
                         label: 'Full name',
                         prefixIcon: Icons.person_outline,
-                        validator: (v) => v == null || v.trim().isEmpty
-                            ? 'Enter name'
-                            : null,
+                        validator: (v) =>
+                            v == null || v.trim().isEmpty ? 'Enter name' : null,
                       ),
                       SizedBox(height: fieldGap),
                       _UCTextField(
@@ -174,56 +171,16 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                         label: 'Phone number',
                         prefixIcon: Icons.phone_outlined,
                         keyboardType: TextInputType.phone,
-                        validator: (v) =>
-                            v == null || v.trim().length < 8
-                                ? 'Enter phone number'
-                                : null,
+                        validator: (v) => v == null || v.trim().length < 8
+                            ? 'Enter phone number'
+                            : null,
                       ),
                       SizedBox(height: fieldGap),
-                      // Role selector
-                      Container(
-                        decoration: BoxDecoration(
-                          color: AppTheme.surface,
-                          borderRadius: BorderRadius.circular(12),
-                          border: Border.all(color: AppTheme.divider),
-                        ),
-                        child: Row(
-                          children: UserRole.values
-                              .map(
-                                (role) => Expanded(
-                                  child: GestureDetector(
-                                    onTap: () =>
-                                        setState(() => _role = role),
-                                    child: AnimatedContainer(
-                                      duration:
-                                          const Duration(milliseconds: 180),
-                                      margin: const EdgeInsets.all(4),
-                                      padding: EdgeInsets.symmetric(
-                                          vertical: isSmall ? 8 : 10),
-                                      decoration: BoxDecoration(
-                                        color: _role == role
-                                            ? AppTheme.primary
-                                            : Colors.transparent,
-                                        borderRadius:
-                                            BorderRadius.circular(10),
-                                      ),
-                                      child: Text(
-                                        role.name[0].toUpperCase() +
-                                            role.name.substring(1),
-                                        textAlign: TextAlign.center,
-                                        style: TextStyle(
-                                          fontSize: 13,
-                                          fontWeight: FontWeight.w600,
-                                          color: _role == role
-                                              ? Colors.white
-                                              : AppTheme.textSecondary,
-                                        ),
-                                      ),
-                                    ),
-                                  ),
-                                ),
-                              )
-                              .toList(),
+                      const Text(
+                        'Technician and admin accounts are created by an administrator.',
+                        style: TextStyle(
+                          color: AppTheme.textSecondary,
+                          fontSize: 12,
                         ),
                       ),
                       SizedBox(height: fieldGap),
@@ -234,10 +191,9 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                       label: 'Email address',
                       prefixIcon: Icons.email_outlined,
                       keyboardType: TextInputType.emailAddress,
-                      validator: (v) =>
-                          v == null || !v.contains('@')
-                              ? 'Enter a valid email'
-                              : null,
+                      validator: (v) => v == null || !v.contains('@')
+                          ? 'Enter a valid email'
+                          : null,
                     ),
                     SizedBox(height: fieldGap),
                     _UCTextField(
@@ -256,10 +212,9 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                         onPressed: () => setState(
                             () => _obscurePassword = !_obscurePassword),
                       ),
-                      validator: (v) =>
-                          v == null || v.length < 6
-                              ? 'Minimum 6 characters'
-                              : null,
+                      validator: (v) => v == null || v.length < 6
+                          ? 'Minimum 6 characters'
+                          : null,
                     ),
 
                     SizedBox(height: isSmall ? 16 : 24),
@@ -289,9 +244,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                                   strokeWidth: 2.5,
                                 ),
                               )
-                            : Text(_isRegister
-                                ? 'Create Account'
-                                : 'Sign In'),
+                            : Text(_isRegister ? 'Create Account' : 'Sign In'),
                       ),
                     ),
 
@@ -302,8 +255,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                       child: GestureDetector(
                         onTap: _isLoading
                             ? null
-                            : () => setState(
-                                () => _isRegister = !_isRegister),
+                            : () => setState(() => _isRegister = !_isRegister),
                         child: RichText(
                           text: TextSpan(
                             style: const TextStyle(fontSize: 13),
@@ -316,9 +268,8 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                                     color: AppTheme.textSecondary),
                               ),
                               TextSpan(
-                                text: _isRegister
-                                    ? 'Sign in'
-                                    : 'Create account',
+                                text:
+                                    _isRegister ? 'Sign in' : 'Create account',
                                 style: const TextStyle(
                                   color: AppTheme.primary,
                                   fontWeight: FontWeight.w700,
@@ -358,7 +309,9 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     }
 
     return Scaffold(
-      backgroundColor: isWide ? AppTheme.background.withOpacity(0.92) : AppTheme.background,
+      backgroundColor: isWide
+          ? AppTheme.background.withValues(alpha: 0.92)
+          : AppTheme.background,
       body: body,
     );
   }
@@ -415,15 +368,14 @@ class _UCTextField extends StatelessWidget {
         ),
         focusedBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(12),
-          borderSide:
-              const BorderSide(color: AppTheme.primary, width: 1.5),
+          borderSide: const BorderSide(color: AppTheme.primary, width: 1.5),
         ),
         errorBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(12),
           borderSide: BorderSide(color: Colors.red.shade400),
         ),
-        contentPadding: const EdgeInsets.symmetric(
-            horizontal: 16, vertical: 14),
+        contentPadding:
+            const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
       ),
     );
   }

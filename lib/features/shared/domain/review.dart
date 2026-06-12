@@ -19,6 +19,21 @@ class Review {
   final String text;
   final DateTime createdAt;
 
+  factory Review.fromFirestore(
+    DocumentSnapshot<Map<String, dynamic>> doc,
+  ) {
+    final data = doc.data() ?? {};
+    return Review(
+      id: doc.id,
+      bookingId: data['bookingId'] as String? ?? '',
+      technicianId: data['technicianId'] as String? ?? '',
+      customerId: data['customerId'] as String? ?? '',
+      rating: (data['rating'] as num?)?.toInt() ?? 0,
+      text: data['text'] as String? ?? '',
+      createdAt: (data['createdAt'] as Timestamp?)?.toDate() ?? DateTime.now(),
+    );
+  }
+
   Map<String, dynamic> toJson() => {
         'bookingId': bookingId,
         'technicianId': technicianId,

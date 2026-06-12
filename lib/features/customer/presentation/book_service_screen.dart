@@ -1,5 +1,3 @@
-import 'dart:io';
-
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:geolocator/geolocator.dart';
@@ -31,7 +29,7 @@ class _BookServiceScreenState extends ConsumerState<BookServiceScreen> {
   final _problem = TextEditingController();
   DateTime _date = DateTime.now().add(const Duration(days: 1));
   TimeOfDay _time = const TimeOfDay(hour: 10, minute: 0);
-  File? _image;
+  XFile? _image;
   bool _isSaving = false;
 
   @override
@@ -44,29 +42,36 @@ class _BookServiceScreenState extends ConsumerState<BookServiceScreen> {
   }
 
   Future<void> _pickImage() async {
-    final image = await ImagePicker().pickImage(source: ImageSource.gallery, imageQuality: 75);
-    if (image != null) setState(() => _image = File(image.path));
+    final image = await ImagePicker()
+        .pickImage(source: ImageSource.gallery, imageQuality: 75);
+    if (image != null) setState(() => _image = image);
   }
 
   Future<Position?> _position() async {
     final enabled = await Geolocator.isLocationServiceEnabled();
     if (!enabled) return null;
     var permission = await Geolocator.checkPermission();
-    if (permission == LocationPermission.denied) permission = await Geolocator.requestPermission();
-    if (permission == LocationPermission.denied || permission == LocationPermission.deniedForever) return null;
+    if (permission == LocationPermission.denied) {
+      permission = await Geolocator.requestPermission();
+    }
+    if (permission == LocationPermission.denied ||
+        permission == LocationPermission.deniedForever) {
+      return null;
+    }
     return Geolocator.getCurrentPosition();
   }
 
   Future<void> _submit() async {
     if (!_formKey.currentState!.validate()) return;
+    final preferredTime = _time.format(context);
     setState(() => _isSaving = true);
     try {
       final user = ref.read(currentUserProvider).valueOrNull!;
       String? imageUrl;
       if (_image != null) {
-        imageUrl = await ref.read(storageRepositoryProvider).uploadFile(
+        imageUrl = await ref.read(storageRepositoryProvider).uploadXFile(
               file: _image!,
-              folder: 'before_service',
+              folder: 'customer_uploads/${user.uid}',
               fileName: '${const Uuid().v4()}.jpg',
             );
       }
@@ -81,7 +86,7 @@ class _BookServiceScreenState extends ConsumerState<BookServiceScreen> {
               applianceType: widget.appliance,
               problemDescription: _problem.text.trim(),
               preferredDate: _date,
-              preferredTime: _time.format(context),
+              preferredTime: preferredTime,
               status: BookingStatus.booked,
               createdAt: DateTime.now(),
               imageUrl: imageUrl,
@@ -92,7 +97,10 @@ class _BookServiceScreenState extends ConsumerState<BookServiceScreen> {
       if (!mounted) return;
       context.go('/booking/$id');
     } catch (error) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error.toString())));
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(error.toString())));
+      }
     } finally {
       if (mounted) setState(() => _isSaving = false);
     }
@@ -130,7 +138,8 @@ class _BookServiceScreenState extends ConsumerState<BookServiceScreen> {
             const SizedBox(height: 12),
             TextFormField(
               controller: _problem,
-              decoration: const InputDecoration(labelText: 'Problem Description'),
+              decoration:
+                  const InputDecoration(labelText: 'Problem Description'),
               minLines: 3,
               maxLines: 5,
               validator: _required,
@@ -157,14 +166,17 @@ class _BookServiceScreenState extends ConsumerState<BookServiceScreen> {
               subtitle: Text(_time.format(context)),
               trailing: const Icon(Icons.schedule),
               onTap: () async {
-                final picked = await showTimePicker(context: context, initialTime: _time);
+                final picked =
+                    await showTimePicker(context: context, initialTime: _time);
                 if (picked != null) setState(() => _time = picked);
               },
             ),
             OutlinedButton.icon(
               onPressed: _pickImage,
               icon: const Icon(Icons.photo_camera),
-              label: Text(_image == null ? 'Upload Appliance Image' : 'Change Appliance Image'),
+              label: Text(_image == null
+                  ? 'Upload Appliance Image'
+                  : 'Change Appliance Image'),
             ),
             const SizedBox(height: 20),
             FilledButton.icon(
@@ -178,5 +190,6 @@ class _BookServiceScreenState extends ConsumerState<BookServiceScreen> {
     );
   }
 
-  String? _required(String? value) => value == null || value.trim().isEmpty ? 'Required' : null;
+  String? _required(String? value) =>
+      value == null || value.trim().isEmpty ? 'Required' : null;
 }

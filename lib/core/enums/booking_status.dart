@@ -20,4 +20,20 @@ enum BookingStatus {
       orElse: () => BookingStatus.booked,
     );
   }
+
+  bool canTransitionTo(BookingStatus next) {
+    return switch (this) {
+      BookingStatus.booked => next == BookingStatus.technicianAssigned,
+      BookingStatus.technicianAssigned => next == BookingStatus.accepted,
+      BookingStatus.accepted => next == BookingStatus.onTheWay,
+      BookingStatus.onTheWay => next == BookingStatus.arrived,
+      BookingStatus.arrived => next == BookingStatus.estimateSent,
+      BookingStatus.estimateSent => next == BookingStatus.estimateApproved,
+      BookingStatus.estimateApproved => next == BookingStatus.serviceStarted,
+      BookingStatus.serviceStarted => next == BookingStatus.serviceCompleted,
+      BookingStatus.serviceCompleted => next == BookingStatus.billGenerated,
+      BookingStatus.billGenerated => next == BookingStatus.closed,
+      BookingStatus.closed => false,
+    };
+  }
 }

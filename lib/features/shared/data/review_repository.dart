@@ -13,6 +13,12 @@ class ReviewRepository {
 
   final FirebaseFirestore _firestore;
 
+  Stream<Review?> watchForBooking(String bookingId) {
+    return _firestore.collection('reviews').doc(bookingId).snapshots().map(
+          (doc) => doc.exists ? Review.fromFirestore(doc) : null,
+        );
+  }
+
   Future<void> submitReview({
     required String bookingId,
     required String technicianId,
@@ -20,15 +26,21 @@ class ReviewRepository {
     required int rating,
     required String text,
   }) {
+    if (rating < 1 || rating > 5) {
+      throw ArgumentError('Rating must be between 1 and 5.');
+    }
     final review = Review(
-      id: '',
+      id: bookingId,
       bookingId: bookingId,
       technicianId: technicianId,
       customerId: customerId,
       rating: rating,
-      text: text,
+      text: text.trim(),
       createdAt: DateTime.now(),
     );
-    return _firestore.collection('reviews').add(review.toJson());
+    return _firestore.collection('reviews').doc(bookingId).set({
+      ...review.toJson(),
+      'createdAt': FieldValue.serverTimestamp(),
+    });
   }
 }

@@ -2,16 +2,67 @@ rules_version = '2';
 
 service firebase.storage {
   match /b/{bucket}/o {
-    match /{folder}/{fileName} {
-      allow read: if request.auth != null;
-      allow write: if request.auth != null
-        && folder in [
-          'attendance',
-          'before_service',
-          'during_service',
-          'after_service',
-          'profile_photos'
-        ];
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function user() {
+      return firestore.get(
+        /databases/(default)/documents/users/$(request.auth.uid)
+      ).data;
+    }
+
+    function isAdmin() {
+      return signedIn() && user().role == 'admin' && user().isActive == true;
+    }
+
+    function booking(bookingId) {
+      return firestore.get(
+        /databases/(default)/documents/bookings/$(bookingId)
+      ).data;
+    }
+
+    function canReadBooking(bookingId) {
+      return signedIn()
+        && (isAdmin()
+          || booking(bookingId).customerId == request.auth.uid
+          || booking(bookingId).technicianId == request.auth.uid);
+    }
+
+    function isImageUpload() {
+      return request.resource != null
+        && request.resource.size < 10 * 1024 * 1024
+        && request.resource.contentType.matches('image/.*');
+    }
+
+    match /customer_uploads/{userId}/{fileName} {
+      allow read: if signedIn() && (request.auth.uid == userId || isAdmin());
+      allow write: if signedIn()
+        && request.auth.uid == userId
+        && isImageUpload();
+    }
+
+    match /attendance/{technicianId}/{fileName} {
+      allow read: if signedIn()
+        && (request.auth.uid == technicianId || isAdmin());
+      allow write: if signedIn()
+        && request.auth.uid == technicianId
+        && isImageUpload();
+    }
+
+    match /bookings/{bookingId}/{stage}/{fileName} {
+      allow read: if canReadBooking(bookingId);
+      allow write: if signedIn()
+        && booking(bookingId).technicianId == request.auth.uid
+        && stage in ['before', 'during', 'after']
+        && isImageUpload();
+    }
+
+    match /profile_photos/{userId}/{fileName} {
+      allow read: if signedIn() && (request.auth.uid == userId || isAdmin());
+      allow write: if signedIn()
+        && request.auth.uid == userId
+        && isImageUpload();
     }
   }
 }

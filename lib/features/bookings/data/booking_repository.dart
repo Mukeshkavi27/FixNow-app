@@ -53,24 +53,41 @@ class BookingRepository {
   }
 
   Future<String> createBooking(Booking booking) async {
-    final doc = await _firestore.collection('bookings').add(booking.toJson());
-    await _firestore.collection('notifications').add({
-      'role': 'admin',
-      'title': 'New Booking',
-      'body':
-          '${booking.applianceType} service requested by ${booking.customerName}',
-      'bookingId': doc.id,
+    final doc = _firestore.collection('bookings').doc();
+    await doc.set({
+      ...booking.toJson(),
       'createdAt': FieldValue.serverTimestamp(),
-      'isRead': false,
     });
     return doc.id;
   }
 
-  Future<void> updateStatus(String bookingId, BookingStatus status) {
-    return _firestore
-        .collection('bookings')
-        .doc(bookingId)
-        .update({'status': status.name});
+  Future<void> transitionStatus({
+    required String bookingId,
+    required String technicianId,
+    required BookingStatus expected,
+    required BookingStatus next,
+  }) {
+    if (!expected.canTransitionTo(next)) {
+      throw StateError('Invalid booking transition: $expected -> $next');
+    }
+    final bookingRef = _firestore.collection('bookings').doc(bookingId);
+    return _firestore.runTransaction((transaction) async {
+      final snapshot = await transaction.get(bookingRef);
+      final data = snapshot.data();
+      if (data == null) throw StateError('Booking not found.');
+      if (data['technicianId'] != technicianId) {
+        throw StateError('This booking is not assigned to this technician.');
+      }
+      final current =
+          BookingStatus.fromString(data['status'] as String? ?? 'booked');
+      if (current != expected) {
+        throw StateError('Booking is already ${current.label}.');
+      }
+      transaction.update(bookingRef, {
+        'status': next.name,
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+    });
   }
 
   Future<void> addServicePhoto({
@@ -83,7 +100,7 @@ class BookingRepository {
         {
           'stage': stage,
           'url': url,
-          'uploadedAt': Timestamp.fromDate(DateTime.now()),
+          'uploadedAt': Timestamp.now(),
         }
       ]),
     });
@@ -94,18 +111,42 @@ class BookingRepository {
     required String technicianId,
     required String technicianName,
   }) async {
-    await _firestore.collection('bookings').doc(bookingId).update({
-      'technicianId': technicianId,
-      'technicianName': technicianName,
-      'status': BookingStatus.technicianAssigned.name,
+    final bookingRef = _firestore.collection('bookings').doc(bookingId);
+    await _firestore.runTransaction((transaction) async {
+      final snapshot = await transaction.get(bookingRef);
+      final data = snapshot.data();
+      if (data == null) throw StateError('Booking not found.');
+      if (data['status'] != BookingStatus.booked.name) {
+        throw StateError('Only unassigned bookings can be assigned.');
+      }
+      transaction.update(bookingRef, {
+        'technicianId': technicianId,
+        'technicianName': technicianName,
+        'status': BookingStatus.technicianAssigned.name,
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
     });
-    await _firestore.collection('notifications').add({
-      'userId': technicianId,
-      'title': 'New Assignment',
-      'body': 'You have a new service booking.',
-      'bookingId': bookingId,
-      'createdAt': FieldValue.serverTimestamp(),
-      'isRead': false,
+  }
+
+  Future<void> rejectAssignment({
+    required String bookingId,
+    required String technicianId,
+  }) {
+    final bookingRef = _firestore.collection('bookings').doc(bookingId);
+    return _firestore.runTransaction((transaction) async {
+      final snapshot = await transaction.get(bookingRef);
+      final data = snapshot.data();
+      if (data == null) throw StateError('Booking not found.');
+      if (data['technicianId'] != technicianId ||
+          data['status'] != BookingStatus.technicianAssigned.name) {
+        throw StateError('This assignment can no longer be rejected.');
+      }
+      transaction.update(bookingRef, {
+        'technicianId': FieldValue.delete(),
+        'technicianName': FieldValue.delete(),
+        'status': BookingStatus.booked.name,
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
     });
   }
 }

@@ -15,32 +15,59 @@ class EstimateRepository {
   final FirebaseFirestore _firestore;
 
   Stream<Estimate?> watchForBooking(String bookingId) {
-    return _firestore
-        .collection('estimates')
-        .where('bookingId', isEqualTo: bookingId)
-        .limit(1)
-        .snapshots()
-        .map((snapshot) => snapshot.docs.isEmpty ? null : Estimate.fromFirestore(snapshot.docs.first));
+    return _firestore.collection('estimates').doc(bookingId).snapshots().map(
+        (snapshot) =>
+            snapshot.exists ? Estimate.fromFirestore(snapshot) : null);
   }
 
   Future<void> createEstimate(Estimate estimate) async {
-    await _firestore.collection('estimates').add(estimate.toJson());
-    await _firestore.collection('bookings').doc(estimate.bookingId).update({
-      'status': BookingStatus.estimateSent.name,
-    });
-    await _firestore.collection('notifications').add({
-      'title': 'Estimate Sent',
-      'body': 'Please review and approve the service estimate.',
-      'bookingId': estimate.bookingId,
-      'createdAt': FieldValue.serverTimestamp(),
-      'isRead': false,
+    if (estimate.total <= 0) {
+      throw ArgumentError('Estimate total must be greater than zero.');
+    }
+    final estimateRef =
+        _firestore.collection('estimates').doc(estimate.bookingId);
+    final bookingRef =
+        _firestore.collection('bookings').doc(estimate.bookingId);
+    await _firestore.runTransaction((transaction) async {
+      final booking = await transaction.get(bookingRef);
+      final data = booking.data();
+      if (data == null) throw StateError('Booking not found.');
+      if (data['technicianId'] != estimate.technicianId ||
+          data['status'] != BookingStatus.arrived.name) {
+        throw StateError('Estimate cannot be created for this booking.');
+      }
+      transaction.set(estimateRef, {
+        ...estimate.toJson(),
+        'createdAt': FieldValue.serverTimestamp(),
+      });
+      transaction.update(bookingRef, {
+        'status': BookingStatus.estimateSent.name,
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
     });
   }
 
   Future<void> approve(String estimateId, String bookingId) async {
-    await _firestore.collection('estimates').doc(estimateId).update({'isApproved': true});
-    await _firestore.collection('bookings').doc(bookingId).update({
-      'status': BookingStatus.estimateApproved.name,
+    final estimateRef = _firestore.collection('estimates').doc(estimateId);
+    final bookingRef = _firestore.collection('bookings').doc(bookingId);
+    await _firestore.runTransaction((transaction) async {
+      final estimate = await transaction.get(estimateRef);
+      final booking = await transaction.get(bookingRef);
+      if (!estimate.exists || !booking.exists) {
+        throw StateError('Estimate or booking not found.');
+      }
+      if (estimate.data()?['isApproved'] == true ||
+          booking.data()?['status'] != BookingStatus.estimateSent.name) {
+        throw StateError('This estimate can no longer be approved.');
+      }
+      transaction.update(estimateRef, {
+        'isApproved': true,
+        'approvedAt': FieldValue.serverTimestamp(),
+      });
+      transaction.update(bookingRef, {
+        'status': BookingStatus.estimateApproved.name,
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
     });
   }
 }

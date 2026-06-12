@@ -4,7 +4,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/constants/app_constants.dart';
 import '../../../core/providers/firebase_providers.dart';
 
-final serviceCatalogRepositoryProvider = Provider<ServiceCatalogRepository>((ref) {
+final serviceCatalogRepositoryProvider =
+    Provider<ServiceCatalogRepository>((ref) {
   return ServiceCatalogRepository(ref.watch(firebaseRefsProvider).firestore);
 });
 
@@ -32,7 +33,7 @@ class ServiceCatalogRepository {
               'Starting at Rs. ${(data['startingPrice'] as num?)?.toInt() ?? 0}',
           data['assetName'] as String? ?? '',
           imageUrl: data['imageUrl'] as String?,
-          startingPrice: (data['startingPrice'] as num?)?.toDouble(),
+          startingPriceValue: (data['startingPrice'] as num?)?.toDouble(),
         );
       }).toList()
         ..sort((a, b) => a.name.compareTo(b.name));

@@ -3,8 +3,8 @@ import 'package:flutter/services.dart';
 
 class AppTheme {
   // Urban Company palette
-  static const Color primary = Color(0xFF1F2C3A);      // deep navy
-  static const Color accent = Color(0xFF31C48D);        // UC green CTA
+  static const Color primary = Color(0xFF1F2C3A); // deep navy
+  static const Color accent = Color(0xFF31C48D); // UC green CTA
   static const Color accentDark = Color(0xFF27A374);
   static const Color background = Color(0xFFFFFFFF);
   static const Color surface = Color(0xFFF7F8FA);

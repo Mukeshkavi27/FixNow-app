@@ -1,6 +1,6 @@
 # FixNow
 
-Production-ready Flutter starter for a home appliance service management platform.
+Flutter/Firebase foundation for a home appliance service management platform.
 
 ## What is included
 
@@ -14,6 +14,14 @@ Production-ready Flutter starter for a home appliance service management platfor
 - Firebase Storage upload paths for profile, attendance, and service photos.
 - Firebase Cloud Messaging token registration and notification records.
 - Android and iOS deployment notes.
+
+## Current release blockers
+
+- Generate Android and iOS Firebase app credentials with `flutterfire configure`.
+- Replace the Android Maps placeholder and configure the iOS Maps SDK key.
+- Deploy the included Firestore and Storage rules and verify them with the Firebase Emulator Suite.
+- Add trusted Cloud Functions for push notifications, nearest-technician assignment, WhatsApp webhooks, analytics aggregation, and idle-alert delivery.
+- Integrate a reviewed face-verification provider. Attendance currently stores face matching as pending.
 
 ## Setup
 

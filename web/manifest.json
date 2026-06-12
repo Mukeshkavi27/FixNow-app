@@ -1,12 +1,11 @@
 {
-    "name": "fixnow",
-    "short_name": "fixnow",
+    "name": "FixNow Home Services",
+    "short_name": "FixNow",
     "start_url": ".",
     "display": "standalone",
-    "background_color": "#0175C2",
-    "theme_color": "#0175C2",
-    "description": "A new Flutter project.",
-    "orientation": "portrait-primary",
+    "background_color": "#F8FAFC",
+    "theme_color": "#12355B",
+    "description": "Book and track trusted home appliance service.",
     "prefer_related_applications": false,
     "icons": [
         {

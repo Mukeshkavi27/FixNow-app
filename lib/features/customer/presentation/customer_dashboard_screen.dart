@@ -11,32 +11,44 @@ import '../../../core/constants/app_constants.dart';
 import '../../auth/data/auth_repository.dart';
 import '../../bookings/data/booking_repository.dart';
 import '../../bookings/domain/booking.dart';
+import '../../services/data/service_catalog_repository.dart';
+import '../../shared/data/bill_repository.dart';
+import '../../shared/domain/bill.dart';
 
-final customerBookingsProvider = StreamProvider.autoDispose<List<Booking>>((ref) {
+final customerBookingsProvider =
+    StreamProvider.autoDispose<List<Booking>>((ref) {
   final user = ref.watch(currentUserProvider).valueOrNull;
   if (user == null) return Stream.value(<Booking>[]);
   return ref.watch(bookingRepositoryProvider).watchCustomerBookings(user.uid);
 });
 
-final _selectedCategoryProvider = StateProvider.autoDispose<String?>((ref) => null);
+final customerBillsProvider = StreamProvider.autoDispose<List<Bill>>((ref) {
+  final user = ref.watch(currentUserProvider).valueOrNull;
+  if (user == null) return Stream.value(<Bill>[]);
+  return ref.watch(billRepositoryProvider).watchCustomerBills(user.uid);
+});
+
+final _selectedCategoryProvider =
+    StateProvider.autoDispose<String?>((ref) => null);
 final _bottomNavIndexProvider = StateProvider.autoDispose<int>((ref) => 0);
 
 /// Holds the currently selected address label shown in the top bar
-final _selectedLocationProvider = StateProvider.autoDispose<String?>((ref) => null);
+final _selectedLocationProvider =
+    StateProvider.autoDispose<String?>((ref) => null);
 
 // Most booked services data
 const _mostBooked = [
   _MostBookedItem(
     label: 'Bathroom Cleaning',
-    price: '₹979',
-    originalPrice: '₹1,058',
+    price: 'â‚¹979',
+    originalPrice: 'â‚¹1,058',
     rating: 4.80,
     imagePlaceholderColor: Color(0xFFE8F4FD),
     iconData: Icons.bathtub_outlined,
   ),
   _MostBookedItem(
     label: 'AC Repair',
-    price: '₹299',
+    price: 'â‚¹299',
     originalPrice: null,
     rating: 4.73,
     isInstant: true,
@@ -45,7 +57,7 @@ const _mostBooked = [
   ),
   _MostBookedItem(
     label: 'Foam-jet AC Service',
-    price: '₹999',
+    price: 'â‚¹999',
     originalPrice: null,
     rating: 4.76,
     isInstant: true,
@@ -54,15 +66,15 @@ const _mostBooked = [
   ),
   _MostBookedItem(
     label: 'Kitchen Cleaning',
-    price: '₹1,429',
-    originalPrice: '₹1,587',
+    price: 'â‚¹1,429',
+    originalPrice: 'â‚¹1,587',
     rating: 4.80,
     imagePlaceholderColor: Color(0xFFFFF0F0),
     iconData: Icons.kitchen,
   ),
   _MostBookedItem(
     label: 'Fan Repair',
-    price: '₹109',
+    price: 'â‚¹109',
     originalPrice: null,
     rating: 4.80,
     imagePlaceholderColor: Color(0xFFF0F0FF),
@@ -70,13 +82,14 @@ const _mostBooked = [
   ),
 ];
 
-// ── Location picker bottom sheet ──────────────────────────────────────────────
+// â”€â”€ Location picker bottom sheet â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 class _LocationPickerSheet extends ConsumerStatefulWidget {
   const _LocationPickerSheet();
 
   @override
-  ConsumerState<_LocationPickerSheet> createState() => _LocationPickerSheetState();
+  ConsumerState<_LocationPickerSheet> createState() =>
+      _LocationPickerSheetState();
 }
 
 class _LocationPickerSheetState extends ConsumerState<_LocationPickerSheet> {
@@ -84,19 +97,7 @@ class _LocationPickerSheetState extends ConsumerState<_LocationPickerSheet> {
   String? _error;
   final _searchController = TextEditingController();
 
-  // Simulated saved addresses (replace with real user addresses from Firestore)
-  final List<Map<String, dynamic>> _savedAddresses = [
-    {
-      'label': 'Home',
-      'address': '12, Gandhi Nagar, Coimbatore',
-      'icon': Icons.home_outlined,
-    },
-    {
-      'label': 'Work',
-      'address': 'Tidel Park, Elcot SEZ, Coimbatore',
-      'icon': Icons.work_outline,
-    },
-  ];
+  final List<Map<String, dynamic>> _savedAddresses = const [];
 
   @override
   void dispose() {
@@ -105,7 +106,10 @@ class _LocationPickerSheetState extends ConsumerState<_LocationPickerSheet> {
   }
 
   Future<void> _detectLocation() async {
-    setState(() { _detecting = true; _error = null; });
+    setState(() {
+      _detecting = true;
+      _error = null;
+    });
 
     try {
       // 1. Check if location services are enabled
@@ -132,7 +136,8 @@ class _LocationPickerSheetState extends ConsumerState<_LocationPickerSheet> {
       }
       if (permission == LocationPermission.deniedForever) {
         setState(() {
-          _error = 'Location permission permanently denied. Enable it in Settings.';
+          _error =
+              'Location permission permanently denied. Enable it in Settings.';
           _detecting = false;
         });
         return;
@@ -140,7 +145,9 @@ class _LocationPickerSheetState extends ConsumerState<_LocationPickerSheet> {
 
       // 3. Get position
       final position = await Geolocator.getCurrentPosition(
-        desiredAccuracy: LocationAccuracy.high,
+        locationSettings: const LocationSettings(
+          accuracy: LocationAccuracy.high,
+        ),
       );
 
       // 4. Reverse geocode via OpenStreetMap Nominatim (works on web + mobile)
@@ -154,7 +161,7 @@ class _LocationPickerSheetState extends ConsumerState<_LocationPickerSheet> {
       final response = await http.get(
         url,
         headers: {'Accept-Language': 'en', 'User-Agent': 'FixNowApp/1.0'},
-      );
+      ).timeout(const Duration(seconds: 12));
 
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body) as Map<String, dynamic>;
@@ -245,7 +252,7 @@ class _LocationPickerSheetState extends ConsumerState<_LocationPickerSheet> {
                 color: AppTheme.textPrimary,
               ),
               decoration: InputDecoration(
-                hintText: 'Search area, street name…',
+                hintText: 'Search area, street nameâ€¦',
                 hintStyle: const TextStyle(
                   color: AppTheme.textHint,
                   fontSize: 14,
@@ -258,8 +265,8 @@ class _LocationPickerSheetState extends ConsumerState<_LocationPickerSheet> {
                 ),
                 filled: true,
                 fillColor: AppTheme.surface,
-                contentPadding: const EdgeInsets.symmetric(
-                    horizontal: 16, vertical: 14),
+                contentPadding:
+                    const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
                 border: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(12),
                   borderSide: const BorderSide(color: AppTheme.divider),
@@ -285,8 +292,8 @@ class _LocationPickerSheetState extends ConsumerState<_LocationPickerSheet> {
               onTap: _detecting ? null : _detectLocation,
               borderRadius: BorderRadius.circular(12),
               child: Container(
-                padding: const EdgeInsets.symmetric(
-                    horizontal: 16, vertical: 14),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
                 decoration: BoxDecoration(
                   color: AppTheme.surface,
                   borderRadius: BorderRadius.circular(12),
@@ -298,7 +305,7 @@ class _LocationPickerSheetState extends ConsumerState<_LocationPickerSheet> {
                       width: 36,
                       height: 36,
                       decoration: BoxDecoration(
-                        color: AppTheme.primary.withOpacity(0.08),
+                        color: AppTheme.primary.withValues(alpha: 0.08),
                         borderRadius: BorderRadius.circular(8),
                       ),
                       child: _detecting
@@ -321,7 +328,7 @@ class _LocationPickerSheetState extends ConsumerState<_LocationPickerSheet> {
                       children: [
                         Text(
                           _detecting
-                              ? 'Detecting location…'
+                              ? 'Detecting locationâ€¦'
                               : 'Use current location',
                           style: const TextStyle(
                             fontSize: 14,
@@ -353,8 +360,7 @@ class _LocationPickerSheetState extends ConsumerState<_LocationPickerSheet> {
               padding: const EdgeInsets.fromLTRB(20, 8, 20, 0),
               child: Row(
                 children: [
-                  const Icon(Icons.error_outline,
-                      size: 14, color: Colors.red),
+                  const Icon(Icons.error_outline, size: 14, color: Colors.red),
                   const SizedBox(width: 6),
                   Expanded(
                     child: Text(
@@ -385,8 +391,8 @@ class _LocationPickerSheetState extends ConsumerState<_LocationPickerSheet> {
             ),
             ..._savedAddresses.map(
               (addr) => Padding(
-                padding: const EdgeInsets.symmetric(
-                    horizontal: 16, vertical: 4),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
                 child: InkWell(
                   onTap: () => _selectAddress(addr['address'] as String),
                   borderRadius: BorderRadius.circular(12),
@@ -404,7 +410,7 @@ class _LocationPickerSheetState extends ConsumerState<_LocationPickerSheet> {
                           width: 36,
                           height: 36,
                           decoration: BoxDecoration(
-                            color: AppTheme.primary.withOpacity(0.08),
+                            color: AppTheme.primary.withValues(alpha: 0.08),
                             borderRadius: BorderRadius.circular(8),
                           ),
                           child: Icon(
@@ -456,7 +462,7 @@ class _LocationPickerSheetState extends ConsumerState<_LocationPickerSheet> {
   }
 }
 
-// ── Main dashboard ────────────────────────────────────────────────────────────
+// â”€â”€ Main dashboard â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 class CustomerDashboardScreen extends ConsumerStatefulWidget {
   const CustomerDashboardScreen({super.key});
@@ -495,115 +501,193 @@ class _CustomerDashboardScreenState
     );
   }
 
+  void _handleNavigation(int index) {
+    ref.read(_bottomNavIndexProvider.notifier).state = index;
+    final target = switch (index) {
+      0 => 0.0,
+      1 => _scrollController.position.maxScrollExtent,
+      2 => (_scrollController.position.maxScrollExtent * 0.5),
+      _ => null,
+    };
+    if (target != null) {
+      _scrollController.animateTo(
+        target,
+        duration: const Duration(milliseconds: 450),
+        curve: Curves.easeOutCubic,
+      );
+      return;
+    }
+    showModalBottomSheet<void>(
+      context: context,
+      builder: (context) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.all(20),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text(
+                ref.read(currentUserProvider).valueOrNull?.name ?? 'Customer',
+                style: Theme.of(context).textTheme.titleLarge,
+              ),
+              const SizedBox(height: 8),
+              Text(ref.read(currentUserProvider).valueOrNull?.email ?? ''),
+              const SizedBox(height: 20),
+              OutlinedButton.icon(
+                onPressed: () {
+                  Navigator.pop(context);
+                  ref.read(authRepositoryProvider).signOut();
+                },
+                icon: const Icon(Icons.logout),
+                label: const Text('Sign out'),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final bookings = ref.watch(customerBookingsProvider);
+    final bills = ref.watch(customerBillsProvider);
+    final catalog = ref.watch(serviceCatalogProvider);
     final user = ref.watch(currentUserProvider).valueOrNull;
     final navIndex = ref.watch(_bottomNavIndexProvider);
     final selectedCategory = ref.watch(_selectedCategoryProvider);
     final selectedLocation = ref.watch(_selectedLocationProvider);
-    final categories = AppConstants.applianceCategories;
+    final categories = catalog.valueOrNull ?? AppConstants.applianceCategories;
     final filtered = selectedCategory == null
         ? categories
         : categories.where((c) => c.name == selectedCategory).toList();
+    final screenWidth = MediaQuery.sizeOf(context).width;
+    final isDesktop = screenWidth >= 900;
+    final serviceColumnCount = switch (screenWidth) {
+      >= 1180 => 5,
+      >= 850 => 4,
+      >= 600 => 3,
+      _ => 2,
+    };
+    final horizontalPadding = isDesktop ? 24.0 : 16.0;
 
     return Scaffold(
       backgroundColor: AppTheme.background,
-      bottomNavigationBar: _UCBottomNav(
-        index: navIndex,
-        onTap: (i) => ref.read(_bottomNavIndexProvider.notifier).state = i,
+      bottomNavigationBar: Center(
+        heightFactor: 1,
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 720),
+          child: _UCBottomNav(
+            index: navIndex,
+            onTap: _handleNavigation,
+          ),
+        ),
       ),
-      body: CustomScrollView(
-        controller: _scrollController,
-        slivers: [
-          // ── Sticky top bar ──────────────────────────────────────────
-          SliverAppBar(
-            pinned: true,
-            floating: false,
-            backgroundColor: AppTheme.background,
-            elevation: 0,
-            scrolledUnderElevation: 1,
-            shadowColor: const Color(0x18000000),
-            titleSpacing: 0,
-            toolbarHeight: 60,
-            title: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16),
-              child: Row(
-                children: [
-                  // Logo
-                  Container(
-                    width: 34,
-                    height: 34,
-                    decoration: BoxDecoration(
-                      color: AppTheme.primary,
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: const Center(
-                      child: Text(
-                        'FN',
-                        style: TextStyle(
-                          color: Colors.white,
-                          fontSize: 12,
-                          fontWeight: FontWeight.w800,
-                        ),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 10),
-
-                  // ── Location pill (tappable) ──
-                  Expanded(
-                    child: GestureDetector(
-                      onTap: _openLocationPicker,
-                      child: Container(
-                        height: 38,
-                        padding: const EdgeInsets.symmetric(horizontal: 12),
-                        decoration: BoxDecoration(
-                          color: AppTheme.surface,
-                          borderRadius: BorderRadius.circular(10),
-                          border: Border.all(color: AppTheme.divider),
-                        ),
-                        child: Row(
-                          children: [
-                            Icon(
-                              selectedLocation != null
-                                  ? Icons.location_on
-                                  : Icons.location_on_outlined,
-                              size: 14,
-                              color: AppTheme.primary,
-                            ),
-                            const SizedBox(width: 4),
-                            Expanded(
-                              child: Text(
-                                selectedLocation ?? 'Select your location',
-                                style: TextStyle(
-                                  fontSize: 12,
-                                  color: selectedLocation != null
-                                      ? AppTheme.textPrimary
-                                      : AppTheme.textSecondary,
-                                  fontWeight: selectedLocation != null
-                                      ? FontWeight.w600
-                                      : FontWeight.w500,
-                                ),
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                            ),
-                            const Icon(Icons.keyboard_arrow_down,
-                                size: 16, color: AppTheme.textSecondary),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-
-                  // Cart
-                  Stack(
+      body: Align(
+        alignment: Alignment.topCenter,
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 1180),
+          child: CustomScrollView(
+            controller: _scrollController,
+            slivers: [
+              // â”€â”€ Sticky top bar â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+              SliverAppBar(
+                pinned: true,
+                floating: false,
+                backgroundColor: AppTheme.background,
+                elevation: 0,
+                scrolledUnderElevation: 1,
+                shadowColor: const Color(0x18000000),
+                titleSpacing: 0,
+                toolbarHeight: 60,
+                title: Padding(
+                  padding: EdgeInsets.symmetric(horizontal: horizontalPadding),
+                  child: Row(
                     children: [
+                      // Logo
+                      Container(
+                        width: 34,
+                        height: 34,
+                        decoration: BoxDecoration(
+                          color: AppTheme.primary,
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: const Center(
+                          child: Text(
+                            'FN',
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 12,
+                              fontWeight: FontWeight.w800,
+                            ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+
+                      // â”€â”€ Location pill (tappable) â”€â”€
+                      Expanded(
+                        child: GestureDetector(
+                          onTap: _openLocationPicker,
+                          child: Container(
+                            height: 38,
+                            padding: const EdgeInsets.symmetric(horizontal: 12),
+                            decoration: BoxDecoration(
+                              color: AppTheme.surface,
+                              borderRadius: BorderRadius.circular(10),
+                              border: Border.all(color: AppTheme.divider),
+                            ),
+                            child: Row(
+                              children: [
+                                Icon(
+                                  selectedLocation != null
+                                      ? Icons.location_on
+                                      : Icons.location_on_outlined,
+                                  size: 14,
+                                  color: AppTheme.primary,
+                                ),
+                                const SizedBox(width: 4),
+                                Expanded(
+                                  child: Text(
+                                    selectedLocation ?? 'Select your location',
+                                    style: TextStyle(
+                                      fontSize: 12,
+                                      color: selectedLocation != null
+                                          ? AppTheme.textPrimary
+                                          : AppTheme.textSecondary,
+                                      fontWeight: selectedLocation != null
+                                          ? FontWeight.w600
+                                          : FontWeight.w500,
+                                    ),
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ),
+                                const Icon(Icons.keyboard_arrow_down,
+                                    size: 16, color: AppTheme.textSecondary),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+
+                      // Cart
                       IconButton(
-                        onPressed: () {},
-                        icon: const Icon(Icons.shopping_cart_outlined,
+                        tooltip: 'My bookings',
+                        onPressed: () => _handleNavigation(1),
+                        icon: const Icon(Icons.receipt_long_outlined,
+                            color: AppTheme.primary),
+                        padding: EdgeInsets.zero,
+                        constraints:
+                            const BoxConstraints(minWidth: 36, minHeight: 36),
+                      ),
+
+                      // Profile / sign out
+                      IconButton(
+                        onPressed: () =>
+                            ref.read(authRepositoryProvider).signOut(),
+                        icon: const Icon(Icons.person_outline,
                             color: AppTheme.primary),
                         padding: EdgeInsets.zero,
                         constraints:
@@ -611,299 +695,366 @@ class _CustomerDashboardScreenState
                       ),
                     ],
                   ),
-
-                  // Profile / sign out
-                  IconButton(
-                    onPressed: () =>
-                        ref.read(authRepositoryProvider).signOut(),
-                    icon: const Icon(Icons.person_outline,
-                        color: AppTheme.primary),
-                    padding: EdgeInsets.zero,
-                    constraints:
-                        const BoxConstraints(minWidth: 36, minHeight: 36),
-                  ),
-                ],
-              ),
-            ),
-          ),
-
-          // ── Hero section ─────────────────────────────────────────────
-          SliverToBoxAdapter(
-            child: _HeroSection(user: user, onWhatsapp: _openWhatsapp),
-          ),
-
-          // ── Search bar ───────────────────────────────────────────────
-          SliverToBoxAdapter(
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(16, 20, 16, 0),
-              child: GestureDetector(
-                onTap: () => showSearch(
-                  context: context,
-                  delegate: _ServiceSearchDelegate(
-                    categories: AppConstants.applianceCategories,
-                  ),
                 ),
-                child: Container(
-                  height: 50,
-                  decoration: BoxDecoration(
-                    color: AppTheme.surface,
-                    borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: AppTheme.divider),
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.black.withOpacity(0.04),
-                        blurRadius: 8,
-                        offset: const Offset(0, 2),
+              ),
+
+              // â”€â”€ Hero section â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+              SliverToBoxAdapter(
+                child: _HeroSection(user: user, onWhatsapp: _openWhatsapp),
+              ),
+
+              // â”€â”€ Search bar â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+              SliverToBoxAdapter(
+                child: Padding(
+                  padding: EdgeInsets.fromLTRB(
+                    horizontalPadding,
+                    20,
+                    horizontalPadding,
+                    0,
+                  ),
+                  child: GestureDetector(
+                    onTap: () => showSearch(
+                      context: context,
+                      delegate: _ServiceSearchDelegate(
+                        categories: AppConstants.applianceCategories,
                       ),
-                    ],
-                  ),
-                  child: Row(
-                    children: [
-                      const SizedBox(width: 14),
-                      Icon(Icons.search, color: AppTheme.textHint, size: 20),
-                      const SizedBox(width: 10),
-                      Text(
-                        "Search for 'AC service'",
-                        style: TextStyle(
-                          color: AppTheme.textHint,
-                          fontSize: 14,
-                          fontWeight: FontWeight.w400,
-                        ),
+                    ),
+                    child: Container(
+                      height: 50,
+                      decoration: BoxDecoration(
+                        color: AppTheme.surface,
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: AppTheme.divider),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withValues(alpha: 0.04),
+                            blurRadius: 8,
+                            offset: const Offset(0, 2),
+                          ),
+                        ],
                       ),
-                    ],
+                      child: Row(
+                        children: [
+                          const SizedBox(width: 14),
+                          Icon(Icons.search,
+                              color: AppTheme.textHint, size: 20),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: Text(
+                              "Search for 'AC service'",
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                color: AppTheme.textHint,
+                                fontSize: 14,
+                                fontWeight: FontWeight.w400,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
                   ),
                 ),
               ),
-            ),
-          ),
 
-          // ── Service categories ───────────────────────────────────────
-          const SliverToBoxAdapter(child: SizedBox(height: 24)),
-          SliverToBoxAdapter(
-            child: Padding(
-              padding: const EdgeInsets.only(left: 16),
-              child: Text(
-                'What are you looking for?',
-                style: TextStyle(
-                  fontSize: 17,
-                  fontWeight: FontWeight.w800,
-                  color: AppTheme.textPrimary,
-                ),
-              ),
-            ),
-          ),
-          const SliverToBoxAdapter(child: SizedBox(height: 16)),
-          SliverToBoxAdapter(
-            child: SizedBox(
-              height: 96,
-              child: ListView.builder(
-                scrollDirection: Axis.horizontal,
-                padding: const EdgeInsets.symmetric(horizontal: 16),
-                itemCount: categories.length,
-                itemBuilder: (context, i) {
-                  final c = categories[i];
-                  return _CategoryIconItem(category: c);
-                },
-              ),
-            ),
-          ),
-
-          // ── Most booked ──────────────────────────────────────────────
-          const SliverToBoxAdapter(child: SizedBox(height: 28)),
-          SliverToBoxAdapter(
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16),
-              child: Row(
-                children: [
-                  const Text(
-                    'Most booked services',
+              // â”€â”€ Service categories â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+              const SliverToBoxAdapter(child: SizedBox(height: 24)),
+              SliverToBoxAdapter(
+                child: Padding(
+                  padding: EdgeInsets.only(left: horizontalPadding),
+                  child: Text(
+                    'What are you looking for?',
                     style: TextStyle(
                       fontSize: 17,
                       fontWeight: FontWeight.w800,
                       color: AppTheme.textPrimary,
                     ),
                   ),
-                  const Spacer(),
-                  GestureDetector(
-                    onTap: () {},
-                    child: const Text(
-                      'See all',
-                      style: TextStyle(
-                        fontSize: 13,
-                        fontWeight: FontWeight.w600,
-                        color: AppTheme.primary,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-          const SliverToBoxAdapter(child: SizedBox(height: 14)),
-          SliverToBoxAdapter(
-            child: SizedBox(
-              height: 220,
-              child: ListView.builder(
-                scrollDirection: Axis.horizontal,
-                padding: const EdgeInsets.symmetric(horizontal: 16),
-                itemCount: _mostBooked.length,
-                itemBuilder: (context, i) {
-                  return _MostBookedCard(
-                    item: _mostBooked[i],
-                    onTap: () => context.push(
-                      '/book/${Uri.encodeComponent(_mostBooked[i].label)}',
-                    ),
-                  );
-                },
-              ),
-            ),
-          ),
-
-          // ── All services ─────────────────────────────────────────────
-          const SliverToBoxAdapter(child: SizedBox(height: 28)),
-          SliverToBoxAdapter(
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16),
-              child: const Text(
-                'All services',
-                style: TextStyle(
-                  fontSize: 17,
-                  fontWeight: FontWeight.w800,
-                  color: AppTheme.textPrimary,
                 ),
               ),
-            ),
-          ),
-          const SliverToBoxAdapter(child: SizedBox(height: 14)),
-          SliverToBoxAdapter(
-            child: SizedBox(
-              height: 38,
-              child: ListView(
-                scrollDirection: Axis.horizontal,
-                padding: const EdgeInsets.symmetric(horizontal: 16),
-                children: [
-                  _UCFilterChip(
-                    label: 'All',
-                    selected: selectedCategory == null,
-                    onTap: () => ref
-                        .read(_selectedCategoryProvider.notifier)
-                        .state = null,
+              const SliverToBoxAdapter(child: SizedBox(height: 16)),
+              SliverToBoxAdapter(
+                child: SizedBox(
+                  height: 88,
+                  child: ListView.builder(
+                    scrollDirection: Axis.horizontal,
+                    padding:
+                        EdgeInsets.symmetric(horizontal: horizontalPadding),
+                    itemCount: categories.length,
+                    itemBuilder: (context, i) {
+                      final c = categories[i];
+                      return _CategoryIconItem(category: c);
+                    },
                   ),
-                  const SizedBox(width: 8),
-                  ...categories.map(
-                    (c) => Padding(
-                      padding: const EdgeInsets.only(right: 8),
-                      child: _UCFilterChip(
-                        label: c.name,
-                        selected: selectedCategory == c.name,
+                ),
+              ),
+
+              // â”€â”€ Most booked â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+              const SliverToBoxAdapter(child: SizedBox(height: 28)),
+              SliverToBoxAdapter(
+                child: Padding(
+                  padding: EdgeInsets.symmetric(horizontal: horizontalPadding),
+                  child: Row(
+                    children: [
+                      const Expanded(
+                        child: Text(
+                          'Most booked services',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: 17,
+                            fontWeight: FontWeight.w800,
+                            color: AppTheme.textPrimary,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      GestureDetector(
+                        onTap: () {},
+                        child: const Text(
+                          'See all',
+                          style: TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w600,
+                            color: AppTheme.primary,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              const SliverToBoxAdapter(child: SizedBox(height: 14)),
+              SliverToBoxAdapter(
+                child: SizedBox(
+                  height: 214,
+                  child: ListView.builder(
+                    scrollDirection: Axis.horizontal,
+                    padding:
+                        EdgeInsets.symmetric(horizontal: horizontalPadding),
+                    itemCount: _mostBooked.length,
+                    itemBuilder: (context, i) {
+                      return _MostBookedCard(
+                        item: _mostBooked[i],
+                        onTap: () => context.push(
+                          '/book/${Uri.encodeComponent(_mostBooked[i].label)}',
+                        ),
+                      );
+                    },
+                  ),
+                ),
+              ),
+
+              // â”€â”€ All services â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+              const SliverToBoxAdapter(child: SizedBox(height: 28)),
+              SliverToBoxAdapter(
+                child: Padding(
+                  padding: EdgeInsets.symmetric(horizontal: horizontalPadding),
+                  child: const Text(
+                    'All services',
+                    style: TextStyle(
+                      fontSize: 17,
+                      fontWeight: FontWeight.w800,
+                      color: AppTheme.textPrimary,
+                    ),
+                  ),
+                ),
+              ),
+              const SliverToBoxAdapter(child: SizedBox(height: 14)),
+              SliverToBoxAdapter(
+                child: SizedBox(
+                  height: 36,
+                  child: ListView(
+                    scrollDirection: Axis.horizontal,
+                    padding:
+                        EdgeInsets.symmetric(horizontal: horizontalPadding),
+                    children: [
+                      _UCFilterChip(
+                        label: 'All',
+                        selected: selectedCategory == null,
                         onTap: () => ref
                             .read(_selectedCategoryProvider.notifier)
-                            .state = c.name,
+                            .state = null,
                       ),
-                    ),
+                      const SizedBox(width: 8),
+                      ...categories.map(
+                        (c) => Padding(
+                          padding: const EdgeInsets.only(right: 8),
+                          child: _UCFilterChip(
+                            label: c.name,
+                            selected: selectedCategory == c.name,
+                            onTap: () => ref
+                                .read(_selectedCategoryProvider.notifier)
+                                .state = c.name,
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
-                ],
-              ),
-            ),
-          ),
-          const SliverToBoxAdapter(child: SizedBox(height: 14)),
-          SliverPadding(
-            padding: const EdgeInsets.symmetric(horizontal: 16),
-            sliver: SliverGrid(
-              gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                crossAxisCount: 2,
-                crossAxisSpacing: 12,
-                mainAxisSpacing: 12,
-                childAspectRatio: 0.75,
-              ),
-              delegate: SliverChildBuilderDelegate(
-                (context, i) => _ServiceGridCard(category: filtered[i]),
-                childCount: filtered.length,
-              ),
-            ),
-          ),
-
-          // ── My Bookings ──────────────────────────────────────────────
-          const SliverToBoxAdapter(child: SizedBox(height: 32)),
-          const SliverToBoxAdapter(
-            child: Padding(
-              padding: EdgeInsets.symmetric(horizontal: 16),
-              child: Text(
-                'My bookings',
-                style: TextStyle(
-                  fontSize: 17,
-                  fontWeight: FontWeight.w800,
-                  color: AppTheme.textPrimary,
                 ),
               ),
-            ),
-          ),
-          const SliverToBoxAdapter(child: SizedBox(height: 12)),
-          SliverToBoxAdapter(
-            child: bookings.when(
-              data: (items) {
-                if (items.isEmpty) {
-                  return Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 16),
-                    child: Container(
-                      padding: const EdgeInsets.all(24),
-                      decoration: BoxDecoration(
-                        color: AppTheme.surface,
-                        borderRadius: BorderRadius.circular(14),
-                        border: Border.all(color: AppTheme.divider),
-                      ),
-                      child: Column(
-                        children: [
-                          Icon(Icons.receipt_long_outlined,
-                              size: 40, color: AppTheme.textHint),
-                          const SizedBox(height: 10),
-                          const Text(
-                            'No bookings yet',
-                            style: TextStyle(
-                              color: AppTheme.textSecondary,
-                              fontWeight: FontWeight.w500,
-                            ),
-                          ),
-                          const SizedBox(height: 4),
-                          const Text(
-                            'Book a service to get started',
-                            style: TextStyle(
-                              fontSize: 12,
-                              color: AppTheme.textHint,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  );
-                }
-                return Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 16),
-                  child: Column(
-                    children:
-                        items.map((b) => _BookingTile(booking: b)).toList(),
+              const SliverToBoxAdapter(child: SizedBox(height: 14)),
+              SliverPadding(
+                padding: EdgeInsets.symmetric(horizontal: horizontalPadding),
+                sliver: SliverGrid(
+                  gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                    crossAxisCount: serviceColumnCount,
+                    crossAxisSpacing: 12,
+                    mainAxisSpacing: 12,
+                    mainAxisExtent: isDesktop ? 210 : 220,
                   ),
-                );
-              },
-              loading: () => const Padding(
-                padding: EdgeInsets.all(32),
-                child: Center(child: CircularProgressIndicator()),
+                  delegate: SliverChildBuilderDelegate(
+                    (context, i) => _ServiceGridCard(category: filtered[i]),
+                    childCount: filtered.length,
+                  ),
+                ),
               ),
-              error: (e, _) => Padding(
-                padding: const EdgeInsets.all(16),
-                child: Text(e.toString()),
-              ),
-            ),
-          ),
 
-          const SliverToBoxAdapter(child: SizedBox(height: 40)),
-        ],
+              // â”€â”€ My Bookings â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+              const SliverToBoxAdapter(child: SizedBox(height: 32)),
+              const SliverToBoxAdapter(
+                child: Padding(
+                  padding: EdgeInsets.symmetric(horizontal: 16),
+                  child: Text(
+                    'My bookings',
+                    style: TextStyle(
+                      fontSize: 17,
+                      fontWeight: FontWeight.w800,
+                      color: AppTheme.textPrimary,
+                    ),
+                  ),
+                ),
+              ),
+              const SliverToBoxAdapter(child: SizedBox(height: 12)),
+              SliverToBoxAdapter(
+                child: bookings.when(
+                  data: (items) {
+                    if (items.isEmpty) {
+                      return Padding(
+                        padding:
+                            EdgeInsets.symmetric(horizontal: horizontalPadding),
+                        child: Container(
+                          padding: const EdgeInsets.all(24),
+                          decoration: BoxDecoration(
+                            color: AppTheme.surface,
+                            borderRadius: BorderRadius.circular(14),
+                            border: Border.all(color: AppTheme.divider),
+                          ),
+                          child: Column(
+                            children: [
+                              Icon(Icons.receipt_long_outlined,
+                                  size: 40, color: AppTheme.textHint),
+                              const SizedBox(height: 10),
+                              const Text(
+                                'No bookings yet',
+                                style: TextStyle(
+                                  color: AppTheme.textSecondary,
+                                  fontWeight: FontWeight.w500,
+                                ),
+                              ),
+                              const SizedBox(height: 4),
+                              const Text(
+                                'Book a service to get started',
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: AppTheme.textHint,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      );
+                    }
+                    return Padding(
+                      padding:
+                          EdgeInsets.symmetric(horizontal: horizontalPadding),
+                      child: Column(
+                        children:
+                            items.map((b) => _BookingTile(booking: b)).toList(),
+                      ),
+                    );
+                  },
+                  loading: () => const Padding(
+                    padding: EdgeInsets.all(32),
+                    child: Center(child: CircularProgressIndicator()),
+                  ),
+                  error: (e, _) => Padding(
+                    padding: const EdgeInsets.all(16),
+                    child: Text(e.toString()),
+                  ),
+                ),
+              ),
+
+              const SliverToBoxAdapter(child: SizedBox(height: 28)),
+              SliverToBoxAdapter(
+                child: Padding(
+                  padding: EdgeInsets.symmetric(horizontal: horizontalPadding),
+                  child: const Text(
+                    'Bill history',
+                    style: TextStyle(
+                      fontSize: 17,
+                      fontWeight: FontWeight.w800,
+                      color: AppTheme.textPrimary,
+                    ),
+                  ),
+                ),
+              ),
+              const SliverToBoxAdapter(child: SizedBox(height: 12)),
+              SliverToBoxAdapter(
+                child: bills.when(
+                  data: (items) => Padding(
+                    padding:
+                        EdgeInsets.symmetric(horizontal: horizontalPadding),
+                    child: items.isEmpty
+                        ? const Text(
+                            'No bills generated yet.',
+                            style: TextStyle(color: AppTheme.textSecondary),
+                          )
+                        : Column(
+                            children: items
+                                .map(
+                                  (bill) => ListTile(
+                                    contentPadding: EdgeInsets.zero,
+                                    leading: const Icon(
+                                      Icons.receipt_long_outlined,
+                                      color: AppTheme.primary,
+                                    ),
+                                    title: Text(
+                                      'INR ${bill.amount.toStringAsFixed(0)}',
+                                      style: const TextStyle(
+                                        fontWeight: FontWeight.w700,
+                                      ),
+                                    ),
+                                    subtitle: Text(
+                                      bill.isPaid ? 'Paid' : 'Payment due',
+                                    ),
+                                    trailing: const Icon(Icons.chevron_right),
+                                    onTap: () => context
+                                        .push('/booking/${bill.bookingId}'),
+                                  ),
+                                )
+                                .toList(),
+                          ),
+                  ),
+                  loading: () => const LinearProgressIndicator(),
+                  error: (error, _) => Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 16),
+                    child: Text('Unable to load bills: $error'),
+                  ),
+                ),
+              ),
+
+              const SliverToBoxAdapter(child: SizedBox(height: 40)),
+            ],
+          ),
+        ),
       ),
     );
   }
 }
 
-// ── Hero section ──────────────────────────────────────────────────────────────
+// â”€â”€ Hero section â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 class _HeroSection extends StatelessWidget {
   const _HeroSection({required this.user, required this.onWhatsapp});
@@ -912,121 +1063,138 @@ class _HeroSection extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      color: AppTheme.background,
-      padding: const EdgeInsets.fromLTRB(16, 20, 16, 0),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final isWide = constraints.maxWidth >= 720;
+        final content = Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Home services\nat your doorstep',
+              style: TextStyle(
+                fontSize: 26,
+                fontWeight: FontWeight.w900,
+                color: AppTheme.textPrimary,
+                height: 1.2,
+              ),
+            ),
+            const SizedBox(height: 14),
+            const Row(
+              mainAxisSize: MainAxisSize.min,
               children: [
-                const Text(
-                  'Home services\nat your doorstep',
+                Icon(Icons.star, size: 14, color: AppTheme.starColor),
+                SizedBox(width: 3),
+                Text(
+                  '4.8',
                   style: TextStyle(
-                    fontSize: 26,
-                    fontWeight: FontWeight.w900,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
                     color: AppTheme.textPrimary,
-                    height: 1.2,
                   ),
                 ),
-                const SizedBox(height: 14),
-                Row(
-                  children: [
-                    const Icon(Icons.star, size: 14, color: AppTheme.starColor),
-                    const SizedBox(width: 3),
-                    const Text('4.8',
-                        style: TextStyle(
-                            fontSize: 13,
-                            fontWeight: FontWeight.w700,
-                            color: AppTheme.textPrimary)),
-                    const SizedBox(width: 12),
-                    const Icon(Icons.people_outline,
-                        size: 14, color: AppTheme.textSecondary),
-                    const SizedBox(width: 3),
-                    const Text('12M+',
-                        style: TextStyle(
-                            fontSize: 13,
-                            fontWeight: FontWeight.w700,
-                            color: AppTheme.textPrimary)),
-                  ],
+                SizedBox(width: 12),
+                Icon(
+                  Icons.people_outline,
+                  size: 14,
+                  color: AppTheme.textSecondary,
                 ),
-                const SizedBox(height: 16),
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: 12, vertical: 8),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFFFFF3EB),
-                    borderRadius: BorderRadius.circular(10),
-                    border: Border.all(color: const Color(0xFFFFD5B2)),
-                  ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      const Icon(Icons.local_offer,
-                          size: 14, color: AppTheme.badgeOrange),
-                      const SizedBox(width: 6),
-                      Flexible(
-                        child: RichText(
-                          text: const TextSpan(
-                            style: TextStyle(fontSize: 12),
-                            children: [
-                              TextSpan(
-                                text: 'Flat 20% off ',
-                                style: TextStyle(
-                                    fontWeight: FontWeight.w700,
-                                    color: AppTheme.badgeOrange),
-                              ),
-                              TextSpan(
-                                text: 'on first booking',
-                                style:
-                                    TextStyle(color: AppTheme.textSecondary),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
-                    ],
+                SizedBox(width: 3),
+                Text(
+                  '12M+',
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                    color: AppTheme.textPrimary,
                   ),
                 ),
               ],
             ),
-          ),
-          const SizedBox(width: 12),
-          Column(
-            children: [
-              Row(
+            const SizedBox(height: 16),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              decoration: BoxDecoration(
+                color: const Color(0xFFFFF3EB),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: const Color(0xFFFFD5B2)),
+              ),
+              child: const Row(
+                mainAxisSize: MainAxisSize.min,
                 children: [
-                  _HeroImageTile(
-                      color: const Color(0xFFE8EAF6),
-                      icon: Icons.build_outlined,
-                      label: 'Maintenance'),
-                  const SizedBox(width: 6),
-                  _HeroImageTile(
-                      color: const Color(0xFFE8F5E9),
-                      icon: Icons.cleaning_services_outlined,
-                      label: 'Cleaning'),
+                  Icon(
+                    Icons.local_offer,
+                    size: 14,
+                    color: AppTheme.badgeOrange,
+                  ),
+                  SizedBox(width: 6),
+                  Flexible(
+                    child: Text(
+                      'Flat 20% off on first booking',
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                        color: AppTheme.badgeOrange,
+                      ),
+                    ),
+                  ),
                 ],
               ),
-              const SizedBox(height: 6),
-              Row(
-                children: [
-                  _HeroImageTile(
-                      color: const Color(0xFFE3F2FD),
-                      icon: Icons.ac_unit,
-                      label: 'AC'),
-                  const SizedBox(width: 6),
-                  _HeroImageTile(
-                      color: const Color(0xFFFFF3E0),
-                      icon: Icons.electrical_services,
-                      label: 'Electric'),
-                ],
-              ),
-            ],
+            ),
+          ],
+        );
+        final tiles = Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: const [
+            _HeroImageTile(
+              color: Color(0xFFE8EAF6),
+              icon: Icons.build_outlined,
+              label: 'Maintenance',
+            ),
+            _HeroImageTile(
+              color: Color(0xFFE8F5E9),
+              icon: Icons.cleaning_services_outlined,
+              label: 'Cleaning',
+            ),
+            _HeroImageTile(
+              color: Color(0xFFE3F2FD),
+              icon: Icons.ac_unit,
+              label: 'AC',
+            ),
+            _HeroImageTile(
+              color: Color(0xFFFFF3E0),
+              icon: Icons.electrical_services,
+              label: 'Electric',
+            ),
+          ],
+        );
+
+        return Container(
+          color: AppTheme.background,
+          padding: EdgeInsets.fromLTRB(
+            isWide ? 24 : 16,
+            20,
+            isWide ? 24 : 16,
+            0,
           ),
-        ],
-      ),
+          child: isWide
+              ? Row(
+                  crossAxisAlignment: CrossAxisAlignment.center,
+                  children: [
+                    Expanded(child: content),
+                    const SizedBox(width: 32),
+                    SizedBox(width: 312, child: tiles),
+                  ],
+                )
+              : Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    content,
+                    const SizedBox(height: 18),
+                    tiles,
+                  ],
+                ),
+        );
+      },
     );
   }
 }
@@ -1041,14 +1209,14 @@ class _HeroImageTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      width: 72,
-      height: 72,
-      decoration: BoxDecoration(
-          color: color, borderRadius: BorderRadius.circular(12)),
+      width: 70,
+      height: 64,
+      decoration:
+          BoxDecoration(color: color, borderRadius: BorderRadius.circular(12)),
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Icon(icon, size: 28, color: AppTheme.primary),
+          Icon(icon, size: 24, color: AppTheme.primary),
           const SizedBox(height: 3),
           Text(label,
               style: const TextStyle(
@@ -1061,7 +1229,7 @@ class _HeroImageTile extends StatelessWidget {
   }
 }
 
-// ── Category icon item ────────────────────────────────────────────────────────
+// â”€â”€ Category icon item â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 class _CategoryIconItem extends StatelessWidget {
   const _CategoryIconItem({required this.category});
@@ -1070,23 +1238,25 @@ class _CategoryIconItem extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return GestureDetector(
-      onTap: () =>
-          context.push('/book/${Uri.encodeComponent(category.name)}'),
+      onTap: () => context.push('/book/${Uri.encodeComponent(category.name)}'),
       child: Container(
-        width: 76,
+        width: 70,
         margin: const EdgeInsets.only(right: 12),
         child: Column(
           children: [
             Container(
-              width: 60,
-              height: 60,
+              width: 52,
+              height: 52,
               decoration: BoxDecoration(
                 color: AppTheme.surface,
                 borderRadius: BorderRadius.circular(14),
                 border: Border.all(color: AppTheme.divider),
               ),
-              child: Icon(_iconFor(category.name),
-                  size: 28, color: AppTheme.primary),
+              child: Icon(
+                _iconFor(category.name),
+                size: 24,
+                color: AppTheme.primary,
+              ),
             ),
             const SizedBox(height: 6),
             Text(
@@ -1118,7 +1288,7 @@ class _CategoryIconItem extends StatelessWidget {
       };
 }
 
-// ── Most booked card ──────────────────────────────────────────────────────────
+// â”€â”€ Most booked card â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 class _MostBookedItem {
   final String label;
@@ -1150,7 +1320,7 @@ class _MostBookedCard extends StatelessWidget {
     return GestureDetector(
       onTap: onTap,
       child: Container(
-        width: 150,
+        width: 142,
         margin: const EdgeInsets.only(right: 12),
         decoration: BoxDecoration(
           color: AppTheme.cardBg,
@@ -1158,7 +1328,7 @@ class _MostBookedCard extends StatelessWidget {
           border: Border.all(color: AppTheme.divider),
           boxShadow: [
             BoxShadow(
-                color: Colors.black.withOpacity(0.04),
+                color: Colors.black.withValues(alpha: 0.04),
                 blurRadius: 6,
                 offset: const Offset(0, 2))
           ],
@@ -1170,14 +1340,14 @@ class _MostBookedCard extends StatelessWidget {
               borderRadius:
                   const BorderRadius.vertical(top: Radius.circular(12)),
               child: Container(
-                height: 120,
+                height: 104,
                 color: item.imagePlaceholderColor,
                 child: Stack(
                   children: [
                     Center(
                       child: Icon(item.iconData,
-                          size: 48,
-                          color: AppTheme.primary.withOpacity(0.5)),
+                          size: 42,
+                          color: AppTheme.primary.withValues(alpha: 0.5)),
                     ),
                     if (item.isInstant)
                       Positioned(
@@ -1209,7 +1379,7 @@ class _MostBookedCard extends StatelessWidget {
               ),
             ),
             Padding(
-              padding: const EdgeInsets.all(10),
+              padding: const EdgeInsets.all(9),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
@@ -1235,9 +1405,9 @@ class _MostBookedCard extends StatelessWidget {
                     ],
                   ),
                   const SizedBox(height: 4),
-                  Row(
-                    crossAxisAlignment: CrossAxisAlignment.baseline,
-                    textBaseline: TextBaseline.alphabetic,
+                  Wrap(
+                    spacing: 4,
+                    crossAxisAlignment: WrapCrossAlignment.center,
                     children: [
                       Text(item.price,
                           style: const TextStyle(
@@ -1245,7 +1415,6 @@ class _MostBookedCard extends StatelessWidget {
                               fontWeight: FontWeight.w800,
                               color: AppTheme.textPrimary)),
                       if (item.originalPrice != null) ...[
-                        const SizedBox(width: 4),
                         Text(item.originalPrice!,
                             style: const TextStyle(
                                 fontSize: 10,
@@ -1264,7 +1433,7 @@ class _MostBookedCard extends StatelessWidget {
   }
 }
 
-// ── Service grid card ─────────────────────────────────────────────────────────
+// â”€â”€ Service grid card â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 class _ServiceGridCard extends StatelessWidget {
   const _ServiceGridCard({required this.category});
@@ -1273,8 +1442,7 @@ class _ServiceGridCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return GestureDetector(
-      onTap: () =>
-          context.push('/book/${Uri.encodeComponent(category.name)}'),
+      onTap: () => context.push('/book/${Uri.encodeComponent(category.name)}'),
       child: Container(
         decoration: BoxDecoration(
           color: AppTheme.cardBg,
@@ -1282,7 +1450,7 @@ class _ServiceGridCard extends StatelessWidget {
           border: Border.all(color: AppTheme.divider),
           boxShadow: [
             BoxShadow(
-                color: Colors.black.withOpacity(0.03),
+                color: Colors.black.withValues(alpha: 0.03),
                 blurRadius: 6,
                 offset: const Offset(0, 2))
           ],
@@ -1290,7 +1458,8 @@ class _ServiceGridCard extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Expanded(
+            SizedBox(
+              height: 104,
               child: ClipRRect(
                 borderRadius:
                     const BorderRadius.vertical(top: Radius.circular(14)),
@@ -1299,12 +1468,15 @@ class _ServiceGridCard extends StatelessWidget {
                   children: [
                     Container(
                       color: _bgFor(category.name),
-                      child: Icon(_iconFor(category.name),
-                          size: 54,
-                          color: AppTheme.primary.withOpacity(0.45)),
+                      child: Icon(
+                        _iconFor(category.name),
+                        size: 42,
+                        color: AppTheme.primary.withValues(alpha: 0.45),
+                      ),
                     ),
                     Positioned(
-                      top: 10, left: 10,
+                      top: 10,
+                      left: 10,
                       child: Container(
                         padding: const EdgeInsets.symmetric(
                             horizontal: 8, vertical: 3),
@@ -1319,17 +1491,19 @@ class _ServiceGridCard extends StatelessWidget {
                       ),
                     ),
                     Positioned(
-                      top: 10, right: 10,
+                      top: 10,
+                      right: 10,
                       child: Container(
                         padding: const EdgeInsets.symmetric(
                             horizontal: 6, vertical: 3),
                         decoration: BoxDecoration(
-                            color: Colors.black.withOpacity(0.6),
+                            color: Colors.black.withValues(alpha: 0.6),
                             borderRadius: BorderRadius.circular(20)),
                         child: Row(
                           mainAxisSize: MainAxisSize.min,
                           children: const [
-                            Icon(Icons.star, size: 9, color: AppTheme.starColor),
+                            Icon(Icons.star,
+                                size: 9, color: AppTheme.starColor),
                             SizedBox(width: 2),
                             Text('4.8',
                                 style: TextStyle(
@@ -1345,7 +1519,7 @@ class _ServiceGridCard extends StatelessWidget {
               ),
             ),
             Padding(
-              padding: const EdgeInsets.fromLTRB(10, 10, 10, 10),
+              padding: const EdgeInsets.fromLTRB(10, 8, 10, 9),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
@@ -1362,10 +1536,10 @@ class _ServiceGridCard extends StatelessWidget {
                           fontSize: 11,
                           fontWeight: FontWeight.w600,
                           color: AppTheme.accent)),
-                  const SizedBox(height: 8),
+                  const SizedBox(height: 6),
                   SizedBox(
                     width: double.infinity,
-                    height: 34,
+                    height: 32,
                     child: ElevatedButton(
                       style: ElevatedButton.styleFrom(
                         backgroundColor: AppTheme.primary,
@@ -1414,7 +1588,7 @@ class _ServiceGridCard extends StatelessWidget {
       };
 }
 
-// ── Filter chip ───────────────────────────────────────────────────────────────
+// â”€â”€ Filter chip â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 class _UCFilterChip extends StatelessWidget {
   const _UCFilterChip(
@@ -1433,21 +1607,20 @@ class _UCFilterChip extends StatelessWidget {
         decoration: BoxDecoration(
           color: selected ? AppTheme.primary : AppTheme.surface,
           borderRadius: BorderRadius.circular(20),
-          border: Border.all(
-              color: selected ? AppTheme.primary : AppTheme.divider),
+          border:
+              Border.all(color: selected ? AppTheme.primary : AppTheme.divider),
         ),
         child: Text(label,
             style: TextStyle(
                 fontSize: 12,
-                fontWeight:
-                    selected ? FontWeight.w700 : FontWeight.w500,
+                fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
                 color: selected ? Colors.white : AppTheme.textSecondary)),
       ),
     );
   }
 }
 
-// ── Booking tile ──────────────────────────────────────────────────────────────
+// â”€â”€ Booking tile â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 class _BookingTile extends StatelessWidget {
   const _BookingTile({required this.booking});
@@ -1474,7 +1647,7 @@ class _BookingTile extends StatelessWidget {
           border: Border.all(color: AppTheme.divider),
           boxShadow: [
             BoxShadow(
-                color: Colors.black.withOpacity(0.03),
+                color: Colors.black.withValues(alpha: 0.03),
                 blurRadius: 6,
                 offset: const Offset(0, 2))
           ],
@@ -1482,7 +1655,8 @@ class _BookingTile extends StatelessWidget {
         child: Row(
           children: [
             Container(
-              width: 46, height: 46,
+              width: 46,
+              height: 46,
               decoration: BoxDecoration(
                   color: AppTheme.surface,
                   borderRadius: BorderRadius.circular(10),
@@ -1510,9 +1684,9 @@ class _BookingTile extends StatelessWidget {
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
               decoration: BoxDecoration(
-                color: statusColor().withOpacity(0.1),
+                color: statusColor().withValues(alpha: 0.1),
                 borderRadius: BorderRadius.circular(20),
-                border: Border.all(color: statusColor().withOpacity(0.3)),
+                border: Border.all(color: statusColor().withValues(alpha: 0.3)),
               ),
               child: Text(booking.status.label as String,
                   style: TextStyle(
@@ -1521,8 +1695,7 @@ class _BookingTile extends StatelessWidget {
                       color: statusColor())),
             ),
             const SizedBox(width: 6),
-            const Icon(Icons.chevron_right,
-                color: AppTheme.textHint, size: 18),
+            const Icon(Icons.chevron_right, color: AppTheme.textHint, size: 18),
           ],
         ),
       ),
@@ -1530,7 +1703,7 @@ class _BookingTile extends StatelessWidget {
   }
 }
 
-// ── Bottom nav ────────────────────────────────────────────────────────────────
+// â”€â”€ Bottom nav â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 class _UCBottomNav extends StatelessWidget {
   const _UCBottomNav({required this.index, required this.onTap});
@@ -1577,7 +1750,7 @@ class _UCBottomNav extends StatelessWidget {
   }
 }
 
-// ── Service search delegate ───────────────────────────────────────────────────
+// â”€â”€ Service search delegate â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 class _ServiceSearchDelegate extends SearchDelegate<String> {
   _ServiceSearchDelegate({required this.categories});
@@ -1600,9 +1773,7 @@ class _ServiceSearchDelegate extends SearchDelegate<String> {
   List<String> _results(String q) {
     if (q.trim().isEmpty) return [];
     final lower = q.toLowerCase();
-    return _allTerms
-        .where((t) => t.toLowerCase().contains(lower))
-        .toList();
+    return _allTerms.where((t) => t.toLowerCase().contains(lower)).toList();
   }
 
   @override
@@ -1736,7 +1907,9 @@ class _ServiceSearchDelegate extends SearchDelegate<String> {
   }
 
   IconData _iconFor(String name) => switch (name) {
-        'Air Conditioner' || 'AC Repair' || 'Foam-jet AC Service' =>
+        'Air Conditioner' ||
+        'AC Repair' ||
+        'Foam-jet AC Service' =>
           Icons.ac_unit,
         'Refrigerator' => Icons.kitchen,
         'Washing Machine' => Icons.local_laundry_service,
@@ -1750,11 +1923,10 @@ class _ServiceSearchDelegate extends SearchDelegate<String> {
       };
 }
 
-// ── Suggestions view shown when search is empty ───────────────────────────────
+// â”€â”€ Suggestions view shown when search is empty â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 class _SuggestionsView extends StatelessWidget {
-  const _SuggestionsView(
-      {required this.categories, required this.onTap});
+  const _SuggestionsView({required this.categories, required this.onTap});
   final List<ApplianceCategory> categories;
   final void Function(String) onTap;
 
@@ -1788,8 +1960,8 @@ class _SuggestionsView extends StatelessWidget {
                 (label) => GestureDetector(
                   onTap: () => onTap(label),
                   child: Container(
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 14, vertical: 8),
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
                     decoration: BoxDecoration(
                       color: AppTheme.surface,
                       borderRadius: BorderRadius.circular(20),

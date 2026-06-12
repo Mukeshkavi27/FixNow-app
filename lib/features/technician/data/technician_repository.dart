@@ -15,7 +15,16 @@ class TechnicianRepository {
   final FirebaseFirestore _firestore;
 
   Future<void> markAttendance(Attendance attendance) {
-    return _firestore.collection('attendance').add(attendance.toJson());
+    final day = attendance.timestamp;
+    final dayKey =
+        '${day.year.toString().padLeft(4, '0')}-${day.month.toString().padLeft(2, '0')}-${day.day.toString().padLeft(2, '0')}';
+    return _firestore
+        .collection('attendance')
+        .doc('${attendance.technicianId}_$dayKey')
+        .set({
+      ...attendance.toJson(),
+      'timestamp': FieldValue.serverTimestamp(),
+    });
   }
 
   Future<void> updateLocation(TechnicianLocation location) {
@@ -25,12 +34,23 @@ class TechnicianRepository {
         .set(location.toJson(), SetOptions(merge: true));
   }
 
+  Future<void> stopSharingLocation(String technicianId) {
+    return _firestore
+        .collection('technician_locations')
+        .doc(technicianId)
+        .update({
+      'activeBookingId': FieldValue.delete(),
+      'updatedAt': FieldValue.serverTimestamp(),
+    });
+  }
+
   Stream<TechnicianLocation?> watchLocation(String technicianId) {
     return _firestore
         .collection('technician_locations')
         .doc(technicianId)
         .snapshots()
-        .map((doc) => doc.exists ? TechnicianLocation.fromFirestore(doc) : null);
+        .map(
+            (doc) => doc.exists ? TechnicianLocation.fromFirestore(doc) : null);
   }
 
   Stream<List<TechnicianLocation>> watchActiveLocations() {
