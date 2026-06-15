@@ -364,15 +364,15 @@ class _BookingDetailScreenState extends ConsumerState<BookingDetailScreen> {
                         _EstimateRow(
                             label: 'Labour charge',
                             value:
-                                'â‚¹${estimate.labourCharge.toStringAsFixed(0)}'),
+                                '₹${estimate.labourCharge.toStringAsFixed(0)}'),
                         _EstimateRow(
                             label: 'Parts charge',
                             value:
-                                'â‚¹${estimate.partsCharge.toStringAsFixed(0)}'),
+                                '₹${estimate.partsCharge.toStringAsFixed(0)}'),
                         const Divider(height: 20),
                         _EstimateRow(
                           label: 'Total',
-                          value: 'â‚¹${estimate.total.toStringAsFixed(0)}',
+                          value: '₹${estimate.total.toStringAsFixed(0)}',
                           bold: true,
                         ),
                         if (estimate.notes.isNotEmpty) ...[
@@ -581,6 +581,16 @@ class _BookingDetailScreenState extends ConsumerState<BookingDetailScreen> {
                                 style: TextStyle(fontWeight: FontWeight.w700)),
                           ),
                         ),
+                        if (booking.technicianId == null) ...[
+                          const SizedBox(height: 8),
+                          const Text(
+                            'A review can be submitted once a technician has been assigned to this booking.',
+                            style: TextStyle(
+                              fontSize: 11,
+                              color: AppTheme.textHint,
+                            ),
+                          ),
+                        ],
                       ],
                     ),
                   ),

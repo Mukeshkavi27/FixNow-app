@@ -14,8 +14,8 @@ class FixNowApp extends ConsumerWidget {
       title: 'FixNow',
       debugShowCheckedModeBanner: false,
       theme: AppTheme.light,
-      darkTheme: AppTheme.dark,
-      themeMode: ThemeMode.system,
+      darkTheme: AppTheme.light,
+      themeMode: ThemeMode.light,
       routerConfig: router,
     );
   }

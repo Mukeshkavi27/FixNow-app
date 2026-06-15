@@ -14,6 +14,7 @@ import '../../shared/domain/bill.dart';
 import '../data/admin_repository.dart';
 import '../../technician/data/technician_repository.dart';
 import '../../technician/domain/technician_location.dart';
+import '../../bookings/presentation/booking_detail_screen.dart';
 
 final allBookingsProvider = StreamProvider.autoDispose<List<Booking>>((ref) {
   return ref.watch(bookingRepositoryProvider).watchAllBookings();
