@@ -62,7 +62,7 @@ service cloud.firestore {
       allow update: if isAdmin()
         || (signedIn()
           && request.auth.uid == userId
-          && onlyChanges(['name', 'phone', 'profilePhoto']));
+          && onlyChanges(['name', 'phone', 'profilePhoto', 'updatedAt']));
       allow delete: if isAdmin();
     }
 

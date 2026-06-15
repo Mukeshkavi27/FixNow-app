@@ -9,6 +9,8 @@ import '../../features/auth/presentation/login_screen.dart';
 import '../../features/bookings/presentation/booking_detail_screen.dart';
 import '../../features/customer/presentation/book_service_screen.dart';
 import '../../features/customer/presentation/customer_dashboard_screen.dart';
+import '../../features/customer/presentation/customer_history_screen.dart';
+import '../../features/customer/presentation/customer_profile_screen.dart';
 import '../../features/technician/presentation/technician_dashboard_screen.dart';
 import '../widgets/splash_screen.dart';
 
@@ -42,6 +44,10 @@ final appRouterProvider = Provider<GoRouter>((ref) {
       if (location.startsWith('/book/') && appUser.role != UserRole.customer) {
         return home;
       }
+      if (location.startsWith('/customer/') &&
+          appUser.role != UserRole.customer) {
+        return home;
+      }
       return null;
     },
     routes: [
@@ -51,6 +57,14 @@ final appRouterProvider = Provider<GoRouter>((ref) {
       GoRoute(
           path: '/customer',
           builder: (context, state) => const CustomerDashboardScreen()),
+      GoRoute(
+        path: '/customer/history',
+        builder: (context, state) => const CustomerHistoryScreen(),
+      ),
+      GoRoute(
+        path: '/customer/profile',
+        builder: (context, state) => const CustomerProfileScreen(),
+      ),
       GoRoute(
         path: '/book/:appliance',
         builder: (context, state) => BookServiceScreen(

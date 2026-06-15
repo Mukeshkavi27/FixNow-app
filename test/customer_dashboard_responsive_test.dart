@@ -45,7 +45,10 @@ void main() {
     await pumpDashboard(tester, size: const Size(360, 800));
 
     expect(tester.takeException(), isNull);
-    expect(find.text('Home services\nat your doorstep'), findsOneWidget);
+    expect(
+      find.text('Reliable home care,\nright when you need it'),
+      findsOneWidget,
+    );
   });
 
   testWidgets('customer dashboard uses a bounded desktop layout', (

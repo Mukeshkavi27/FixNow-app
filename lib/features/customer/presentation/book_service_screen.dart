@@ -31,6 +31,18 @@ class _BookServiceScreenState extends ConsumerState<BookServiceScreen> {
   TimeOfDay _time = const TimeOfDay(hour: 10, minute: 0);
   XFile? _image;
   bool _isSaving = false;
+  bool _profileLoaded = false;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (_profileLoaded) return;
+    final user = ref.read(currentUserProvider).valueOrNull;
+    if (user == null) return;
+    _name.text = user.name;
+    _phone.text = user.phone;
+    _profileLoaded = true;
+  }
 
   @override
   void dispose() {
@@ -108,6 +120,17 @@ class _BookServiceScreenState extends ConsumerState<BookServiceScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final user = ref.watch(currentUserProvider).valueOrNull;
+    if (!_profileLoaded && user != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted || _profileLoaded) return;
+        setState(() {
+          _name.text = user.name;
+          _phone.text = user.phone;
+          _profileLoaded = true;
+        });
+      });
+    }
     return Scaffold(
       appBar: AppBar(title: Text(widget.appliance)),
       body: Form(

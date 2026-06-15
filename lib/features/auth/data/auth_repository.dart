@@ -67,4 +67,31 @@ class AuthRepository {
   }
 
   Future<void> signOut() => _auth.signOut();
+
+  Future<void> updateCustomerProfile({
+    required String uid,
+    required String name,
+    required String phone,
+    String? profilePhoto,
+  }) async {
+    final changes = <String, dynamic>{
+      'name': name.trim(),
+      'phone': phone.trim(),
+      'updatedAt': FieldValue.serverTimestamp(),
+    };
+    if (profilePhoto != null) changes['profilePhoto'] = profilePhoto;
+    await _firestore.collection('users').doc(uid).update(changes);
+    await _auth.currentUser?.updateDisplayName(name.trim());
+    if (profilePhoto != null) {
+      await _auth.currentUser?.updatePhotoURL(profilePhoto);
+    }
+  }
+
+  Future<void> sendPasswordReset() async {
+    final email = _auth.currentUser?.email;
+    if (email == null || email.isEmpty) {
+      throw StateError('No email is linked to this account.');
+    }
+    await _auth.sendPasswordResetEmail(email: email);
+  }
 }
