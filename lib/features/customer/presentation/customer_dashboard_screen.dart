@@ -130,6 +130,8 @@ class CustomerDashboardScreen extends ConsumerWidget {
                           ),
                           const SizedBox(height: 30),
                           _PopularServices(
+                            services: services.valueOrNull ??
+                                AppConstants.applianceCategories,
                             onBook: (service) => context.push(
                               '/book/${Uri.encodeComponent(service)}',
                             ),
@@ -496,7 +498,7 @@ class _ServiceGrid extends StatelessWidget {
             crossAxisCount: columns,
             mainAxisSpacing: 10,
             crossAxisSpacing: 10,
-            childAspectRatio: columns == 2 ? 1.2 : 1.15,
+            childAspectRatio: columns == 2 ? 0.82 : 0.86,
           ),
           itemBuilder: (context, index) {
             final service = services[index];
@@ -523,63 +525,134 @@ class _ServiceCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final color = _serviceColor(service.name);
     return Material(
-      color: color.withValues(alpha: 0.09),
+      color: Colors.white,
       borderRadius: BorderRadius.circular(8),
+      clipBehavior: Clip.antiAlias,
       child: InkWell(
         onTap: onTap,
-        borderRadius: BorderRadius.circular(8),
-        child: Padding(
-          padding: const EdgeInsets.all(13),
+        child: Container(
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(color: AppTheme.divider),
+          ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Container(
-                width: 40,
-                height: 40,
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(8),
+              // Image fills the full width of the card, across the top.
+              Expanded(
+                child: Container(
+                  width: double.infinity,
+                  color: color.withValues(alpha: 0.09),
+                  child: _ServiceCardImage(service: service, color: color),
                 ),
-                child: service.imageUrl == null
-                    ? Icon(_serviceIcon(service.name), color: color, size: 23)
-                    : ClipRRect(
-                        borderRadius: BorderRadius.circular(8),
-                        child: Image.network(
-                          service.imageUrl!,
-                          fit: BoxFit.cover,
-                          errorBuilder: (_, __, ___) => Icon(
-                            _serviceIcon(service.name),
-                            color: color,
-                          ),
-                        ),
+              ),
+              // Name and price sit in their own section below the image.
+              Padding(
+                padding: const EdgeInsets.fromLTRB(10, 8, 10, 10),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      service.name,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w800,
+                        color: AppTheme.textPrimary,
                       ),
-              ),
-              const Spacer(),
-              Text(
-                service.name,
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  fontSize: 13,
-                  height: 1.15,
-                  fontWeight: FontWeight.w800,
-                  color: AppTheme.textPrimary,
-                ),
-              ),
-              const SizedBox(height: 4),
-              Text(
-                service.startingPrice,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  fontSize: 10,
-                  color: AppTheme.textSecondary,
+                    ),
+                    const SizedBox(height: 3),
+                    Text(
+                      service.startingPrice,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontSize: 10,
+                        color: AppTheme.textSecondary,
+                      ),
+                    ),
+                  ],
                 ),
               ),
             ],
           ),
         ),
       ),
+    );
+  }
+}
+
+/// Resolves which image to show, in this order:
+/// 1. A bundled local asset (e.g. 'assets/images/television.png'). This is
+///    what the hardcoded AppConstants.applianceCategories list uses.
+/// 2. A remote network image, used for Firestore-sourced or user-uploaded
+///    photos (e.g. an appliance category image, or a customer's own photo
+///    of their broken appliance taken at booking time).
+/// 3. A Material icon fallback, used if neither is available, or if the
+///    asset/network image fails to load (e.g. a typo'd or missing file).
+///
+/// This is shared by the big service-grid cards and by the smaller image
+/// chips (active booking card, popular-services card) so every appliance
+/// image on the dashboard resolves the same way.
+class _ResilientImage extends StatelessWidget {
+  const _ResilientImage({
+    required this.fallbackIcon,
+    required this.color,
+    this.assetName,
+    this.imageUrl,
+    this.iconSize = 20,
+  });
+
+  final String? assetName;
+  final String? imageUrl;
+  final IconData fallbackIcon;
+  final Color color;
+  final double iconSize;
+
+  bool get _hasLocalAsset =>
+      assetName != null &&
+      assetName!.startsWith('assets/') &&
+      assetName!.toLowerCase().endsWith('.png');
+
+  @override
+  Widget build(BuildContext context) {
+    if (_hasLocalAsset) {
+      return Image.asset(
+        assetName!,
+        fit: BoxFit.cover,
+        errorBuilder: (_, __, ___) => _fallback(),
+      );
+    }
+    if (imageUrl != null && imageUrl!.isNotEmpty) {
+      return Image.network(
+        imageUrl!,
+        fit: BoxFit.cover,
+        errorBuilder: (_, __, ___) => _fallback(),
+      );
+    }
+    return _fallback();
+  }
+
+  Widget _fallback() {
+    return Center(child: Icon(fallbackIcon, color: color, size: iconSize));
+  }
+}
+
+class _ServiceCardImage extends StatelessWidget {
+  const _ServiceCardImage({required this.service, required this.color});
+
+  final ApplianceCategory service;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    return _ResilientImage(
+      assetName: service.assetName,
+      imageUrl: service.imageUrl,
+      fallbackIcon: _serviceIcon(service.name),
+      color: color,
+      iconSize: 36,
     );
   }
 }
@@ -614,9 +687,14 @@ class _ActiveBookingCard extends StatelessWidget {
                     color: AppTheme.primary.withValues(alpha: 0.08),
                     borderRadius: BorderRadius.circular(8),
                   ),
-                  child: Icon(
-                    _serviceIcon(booking.applianceType),
-                    color: AppTheme.primary,
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(8),
+                    child: _ResilientImage(
+                      imageUrl: booking.imageUrl,
+                      fallbackIcon: _serviceIcon(booking.applianceType),
+                      color: AppTheme.primary,
+                      iconSize: 22,
+                    ),
                   ),
                 ),
                 const SizedBox(width: 12),
@@ -721,20 +799,38 @@ class _EmptyBookingCard extends StatelessWidget {
 }
 
 class _PopularServices extends StatelessWidget {
-  const _PopularServices({required this.onBook});
+  const _PopularServices({required this.services, required this.onBook});
 
+  final List<ApplianceCategory> services;
   final ValueChanged<String> onBook;
 
+  // label, price, fallback icon, background color, keyword to match
+  // against the real service catalog so the same image used in the
+  // grid above shows up here too.
   static const items = [
-    ('AC Repair', 'Rs. 499', Icons.ac_unit, Color(0xFFE8F4FD)),
+    ('AC Repair', 'Rs. 499', Icons.ac_unit, Color(0xFFE8F4FD), 'air'),
     (
       'Washing Machine',
       'Rs. 449',
       Icons.local_laundry_service,
-      Color(0xFFEAF7EF)
+      Color(0xFFEAF7EF),
+      'washing',
     ),
-    ('Water Purifier', 'Rs. 349', Icons.water_drop_outlined, Color(0xFFFFF1E7)),
+    (
+      'Water Purifier',
+      'Rs. 349',
+      Icons.water_drop_outlined,
+      Color(0xFFFFF1E7),
+      'purifier',
+    ),
   ];
+
+  ApplianceCategory? _match(String keyword) {
+    for (final service in services) {
+      if (service.name.toLowerCase().contains(keyword)) return service;
+    }
+    return null;
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -758,6 +854,7 @@ class _PopularServices extends StatelessWidget {
             separatorBuilder: (_, __) => const SizedBox(width: 10),
             itemBuilder: (context, index) {
               final item = items[index];
+              final matched = _match(item.$5);
               return SizedBox(
                 width: 184,
                 child: InkWell(
@@ -772,7 +869,24 @@ class _PopularServices extends StatelessWidget {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Icon(item.$3, color: AppTheme.primary, size: 30),
+                        Container(
+                          width: 40,
+                          height: 40,
+                          decoration: BoxDecoration(
+                            color: Colors.white,
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: ClipRRect(
+                            borderRadius: BorderRadius.circular(8),
+                            child: _ResilientImage(
+                              assetName: matched?.assetName,
+                              imageUrl: matched?.imageUrl,
+                              fallbackIcon: item.$3,
+                              color: AppTheme.primary,
+                              iconSize: 22,
+                            ),
+                          ),
+                        ),
                         const Spacer(),
                         Text(
                           item.$1,
