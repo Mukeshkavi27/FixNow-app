@@ -61,6 +61,50 @@ class BookingRepository {
     return doc.id;
   }
 
+  Future<void> rescheduleUnassignedBooking({
+    required String bookingId,
+    required String customerId,
+    required DateTime preferredDate,
+    required String preferredTime,
+  }) {
+    final bookingRef = _firestore.collection('bookings').doc(bookingId);
+    return _firestore.runTransaction((transaction) async {
+      final snapshot = await transaction.get(bookingRef);
+      final data = snapshot.data();
+      if (data == null) throw StateError('Booking not found.');
+      if (data['customerId'] != customerId ||
+          data['status'] != BookingStatus.booked.name ||
+          data['technicianId'] != null) {
+        throw StateError(
+          'This booking can no longer be rescheduled.',
+        );
+      }
+      transaction.update(bookingRef, {
+        'preferredDate': Timestamp.fromDate(preferredDate),
+        'preferredTime': preferredTime,
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+    });
+  }
+
+  Future<void> cancelUnassignedBooking({
+    required String bookingId,
+    required String customerId,
+  }) {
+    final bookingRef = _firestore.collection('bookings').doc(bookingId);
+    return _firestore.runTransaction((transaction) async {
+      final snapshot = await transaction.get(bookingRef);
+      final data = snapshot.data();
+      if (data == null) throw StateError('Booking not found.');
+      if (data['customerId'] != customerId ||
+          data['status'] != BookingStatus.booked.name ||
+          data['technicianId'] != null) {
+        throw StateError('This booking can no longer be cancelled.');
+      }
+      transaction.delete(bookingRef);
+    });
+  }
+
   Future<void> transitionStatus({
     required String bookingId,
     required String technicianId,

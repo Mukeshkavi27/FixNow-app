@@ -1,3 +1,5 @@
+import 'dart:ui';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -65,254 +67,266 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     final screenHeight = size.height;
     final screenWidth = size.width;
 
-    // Responsive breakpoints
     final isSmall = screenHeight < 680;
     final isWide = screenWidth > 600;
 
-    // Adaptive values
-    final brandTopPad = isSmall ? 24.0 : (isWide ? 40.0 : 32.0);
-    final brandBottomPad = isSmall ? 20.0 : (isWide ? 32.0 : 28.0);
-    final logoSize = isSmall ? 44.0 : 52.0;
-    final logoFontSize = isSmall ? 15.0 : 18.0;
+    final logoSize = isSmall ? 72.0 : 88.0;
     final titleFontSize = isSmall ? 26.0 : 32.0;
-    final logoBottomGap = isSmall ? 12.0 : 20.0;
-    final titleBottomGap = isSmall ? 2.0 : 4.0;
-    final formHPad = isWide ? 32.0 : 24.0;
+    final formHPad = isWide ? 32.0 : 22.0;
     final fieldGap = isSmall ? 10.0 : 14.0;
-    final formTopGap = isSmall ? 4.0 : 8.0;
+    final panelPad = isSmall ? 22.0 : 28.0;
+    final panelOpacity = isWide ? 0.76 : 0.6;
+    final imageLightenOpacity = isWide ? 0.14 : 0.46;
+    final imageTintOpacity = isWide ? 0.28 : 0.12;
 
-    // For wide screens (tablet/web), constrain & center the card
-    Widget body = SafeArea(
-      child: SingleChildScrollView(
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            // ── Brand section ──────────────────────────────
-            Container(
-              color: AppTheme.primary,
-              padding: EdgeInsets.fromLTRB(
-                  formHPad, brandTopPad, formHPad, brandBottomPad),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Container(
+    Widget formPanel = ClipRRect(
+      borderRadius: BorderRadius.circular(28),
+      child: BackdropFilter(
+        filter: ImageFilter.blur(sigmaX: 24, sigmaY: 24),
+        child: Container(
+          padding: EdgeInsets.all(panelPad),
+          decoration: BoxDecoration(
+            color: Colors.white.withValues(alpha: panelOpacity),
+            borderRadius: BorderRadius.circular(28),
+            border: Border.all(
+              color: Colors.white.withValues(alpha: 0.82),
+              width: 1.2,
+            ),
+            boxShadow: [
+              BoxShadow(
+                color: AppTheme.primary.withValues(alpha: 0.12),
+                blurRadius: 30,
+                offset: const Offset(0, 16),
+              ),
+            ],
+          ),
+          child: Form(
+            key: _formKey,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: Container(
                     width: logoSize,
                     height: logoSize,
+                    padding: const EdgeInsets.all(8),
                     decoration: BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(14),
-                    ),
-                    child: Center(
-                      child: Text(
-                        'FN',
-                        style: TextStyle(
-                          color: AppTheme.primary,
-                          fontSize: logoFontSize,
-                          fontWeight: FontWeight.w900,
+                      color: Colors.white.withValues(alpha: 0.9),
+                      borderRadius: BorderRadius.circular(22),
+                      boxShadow: [
+                        BoxShadow(
+                          color: AppTheme.primary.withValues(alpha: 0.18),
+                          blurRadius: 24,
+                          offset: const Offset(0, 12),
                         ),
-                      ),
+                      ],
+                    ),
+                    child: Image.asset(
+                      'assets/images/fixnow_logo.png',
+                      fit: BoxFit.contain,
                     ),
                   ),
-                  SizedBox(height: logoBottomGap),
-                  Text(
-                    'FixNow',
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontSize: titleFontSize,
-                      fontWeight: FontWeight.w900,
-                      letterSpacing: -0.5,
-                    ),
-                  ),
-                  SizedBox(height: titleBottomGap),
-                  Text(
-                    _isRegister
-                        ? 'Create your account'
-                        : 'Home services at your doorstep',
-                    style: const TextStyle(
-                      color: Colors.white70,
-                      fontSize: 14,
-                      fontWeight: FontWeight.w400,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-
-            // ── Form section ───────────────────────────────
-            Padding(
-              padding: EdgeInsets.fromLTRB(formHPad, 20, formHPad, 24),
-              child: Form(
-                key: _formKey,
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    SizedBox(height: formTopGap),
-                    Text(
-                      _isRegister ? 'Sign up' : 'Sign in',
-                      style: TextStyle(
-                        fontSize: isSmall ? 18 : 22,
-                        fontWeight: FontWeight.w800,
-                        color: AppTheme.textPrimary,
-                      ),
-                    ),
-                    SizedBox(height: isSmall ? 14 : 20),
-
-                    if (_isRegister) ...[
-                      _UCTextField(
-                        controller: _name,
-                        label: 'Full name',
-                        prefixIcon: Icons.person_outline,
-                        validator: (v) =>
-                            v == null || v.trim().isEmpty ? 'Enter name' : null,
-                      ),
-                      SizedBox(height: fieldGap),
-                      _UCTextField(
-                        controller: _phone,
-                        label: 'Phone number',
-                        prefixIcon: Icons.phone_outlined,
-                        keyboardType: TextInputType.phone,
-                        validator: (v) => v == null || v.trim().length < 8
-                            ? 'Enter phone number'
-                            : null,
-                      ),
-                      SizedBox(height: fieldGap),
-                      const Text(
-                        'Technician and admin accounts are created by an administrator.',
-                        style: TextStyle(
-                          color: AppTheme.textSecondary,
-                          fontSize: 12,
-                        ),
-                      ),
-                      SizedBox(height: fieldGap),
-                    ],
-
-                    _UCTextField(
-                      controller: _email,
-                      label: 'Email address',
-                      prefixIcon: Icons.email_outlined,
-                      keyboardType: TextInputType.emailAddress,
-                      validator: (v) => v == null || !v.contains('@')
-                          ? 'Enter a valid email'
-                          : null,
-                    ),
-                    SizedBox(height: fieldGap),
-                    _UCTextField(
-                      controller: _password,
-                      label: 'Password',
-                      prefixIcon: Icons.lock_outline,
-                      obscureText: _obscurePassword,
-                      suffixIcon: IconButton(
-                        icon: Icon(
-                          _obscurePassword
-                              ? Icons.visibility_off_outlined
-                              : Icons.visibility_outlined,
-                          color: AppTheme.textHint,
-                          size: 20,
-                        ),
-                        onPressed: () => setState(
-                            () => _obscurePassword = !_obscurePassword),
-                      ),
-                      validator: (v) => v == null || v.length < 6
-                          ? 'Minimum 6 characters'
-                          : null,
-                    ),
-
-                    SizedBox(height: isSmall ? 16 : 24),
-
-                    // Submit button
-                    SizedBox(
-                      height: isSmall ? 46 : 52,
-                      child: ElevatedButton(
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: AppTheme.accent,
-                          foregroundColor: Colors.white,
-                          elevation: 0,
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                          textStyle: const TextStyle(
-                            fontSize: 15,
-                            fontWeight: FontWeight.w700,
-                          ),
-                        ),
-                        onPressed: _isLoading ? null : _submit,
-                        child: _isLoading
-                            ? const SizedBox.square(
-                                dimension: 20,
-                                child: CircularProgressIndicator(
-                                  color: Colors.white,
-                                  strokeWidth: 2.5,
-                                ),
-                              )
-                            : Text(_isRegister ? 'Create Account' : 'Sign In'),
-                      ),
-                    ),
-
-                    const SizedBox(height: 16),
-
-                    // Toggle
-                    Center(
-                      child: GestureDetector(
-                        onTap: _isLoading
-                            ? null
-                            : () => setState(() => _isRegister = !_isRegister),
-                        child: RichText(
-                          text: TextSpan(
-                            style: const TextStyle(fontSize: 13),
-                            children: [
-                              TextSpan(
-                                text: _isRegister
-                                    ? 'Already have an account? '
-                                    : 'New to FixNow? ',
-                                style: const TextStyle(
-                                    color: AppTheme.textSecondary),
-                              ),
-                              TextSpan(
-                                text:
-                                    _isRegister ? 'Sign in' : 'Create account',
-                                style: const TextStyle(
-                                  color: AppTheme.primary,
-                                  fontWeight: FontWeight.w700,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
-                    ),
-                  ],
                 ),
-              ),
+                SizedBox(height: isSmall ? 14 : 20),
+                Text(
+                  'FixNow',
+                  style: TextStyle(
+                    color: AppTheme.textPrimary,
+                    fontSize: titleFontSize,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  _isRegister
+                      ? 'Create your customer account'
+                      : 'Home services at your doorstep',
+                  style: const TextStyle(
+                    color: AppTheme.textSecondary,
+                    fontSize: 14,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+                SizedBox(height: isSmall ? 18 : 26),
+                Text(
+                  _isRegister ? 'Sign up' : 'Sign in',
+                  style: TextStyle(
+                    fontSize: isSmall ? 18 : 22,
+                    fontWeight: FontWeight.w800,
+                    color: AppTheme.textPrimary,
+                  ),
+                ),
+                SizedBox(height: isSmall ? 14 : 20),
+                if (_isRegister) ...[
+                  _UCTextField(
+                    controller: _name,
+                    label: 'Full name',
+                    prefixIcon: Icons.person_outline,
+                    validator: (v) =>
+                        v == null || v.trim().isEmpty ? 'Enter name' : null,
+                  ),
+                  SizedBox(height: fieldGap),
+                  _UCTextField(
+                    controller: _phone,
+                    label: 'Phone number',
+                    prefixIcon: Icons.phone_outlined,
+                    keyboardType: TextInputType.phone,
+                    validator: (v) => v == null || v.trim().length < 8
+                        ? 'Enter phone number'
+                        : null,
+                  ),
+                  SizedBox(height: fieldGap),
+                  const Text(
+                    'Technician and admin accounts are created by an administrator.',
+                    style: TextStyle(
+                      color: AppTheme.textSecondary,
+                      fontSize: 12,
+                    ),
+                  ),
+                  SizedBox(height: fieldGap),
+                ],
+                _UCTextField(
+                  controller: _email,
+                  label: 'Email address',
+                  prefixIcon: Icons.email_outlined,
+                  keyboardType: TextInputType.emailAddress,
+                  validator: (v) => v == null || !v.contains('@')
+                      ? 'Enter a valid email'
+                      : null,
+                ),
+                SizedBox(height: fieldGap),
+                _UCTextField(
+                  controller: _password,
+                  label: 'Password',
+                  prefixIcon: Icons.lock_outline,
+                  obscureText: _obscurePassword,
+                  suffixIcon: IconButton(
+                    icon: Icon(
+                      _obscurePassword
+                          ? Icons.visibility_off_outlined
+                          : Icons.visibility_outlined,
+                      color: AppTheme.textHint,
+                      size: 20,
+                    ),
+                    onPressed: () =>
+                        setState(() => _obscurePassword = !_obscurePassword),
+                  ),
+                  validator: (v) =>
+                      v == null || v.length < 6 ? 'Minimum 6 characters' : null,
+                ),
+                SizedBox(height: isSmall ? 16 : 24),
+                SizedBox(
+                  height: isSmall ? 46 : 52,
+                  child: ElevatedButton(
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AppTheme.accent,
+                      foregroundColor: Colors.white,
+                      disabledBackgroundColor:
+                          AppTheme.accent.withValues(alpha: 0.55),
+                      elevation: 0,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(14),
+                      ),
+                      textStyle: const TextStyle(
+                        fontSize: 15,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    onPressed: _isLoading ? null : _submit,
+                    child: _isLoading
+                        ? const SizedBox.square(
+                            dimension: 20,
+                            child: CircularProgressIndicator(
+                              color: Colors.white,
+                              strokeWidth: 2.5,
+                            ),
+                          )
+                        : Text(_isRegister ? 'Create Account' : 'Sign In'),
+                  ),
+                ),
+                const SizedBox(height: 16),
+                Center(
+                  child: GestureDetector(
+                    onTap: _isLoading
+                        ? null
+                        : () => setState(() => _isRegister = !_isRegister),
+                    child: RichText(
+                      text: TextSpan(
+                        style: const TextStyle(fontSize: 13),
+                        children: [
+                          TextSpan(
+                            text: _isRegister
+                                ? 'Already have an account? '
+                                : 'New to FixNow? ',
+                            style:
+                                const TextStyle(color: AppTheme.textSecondary),
+                          ),
+                          TextSpan(
+                            text: _isRegister ? 'Sign in' : 'Create account',
+                            style: const TextStyle(
+                              color: AppTheme.primary,
+                              fontWeight: FontWeight.w800,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ],
             ),
-          ],
+          ),
         ),
       ),
     );
 
-    // On wide screens (tablet/web), center in a constrained card
     if (isWide) {
-      body = Center(
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 520),
-          child: Card(
-            margin: const EdgeInsets.symmetric(vertical: 32, horizontal: 16),
-            elevation: 4,
-            shadowColor: Colors.black26,
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(20),
-            ),
-            clipBehavior: Clip.antiAlias,
-            child: body,
-          ),
-        ),
+      formPanel = ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 480),
+        child: formPanel,
       );
     }
 
     return Scaffold(
-      backgroundColor: isWide
-          ? AppTheme.background.withValues(alpha: 0.92)
-          : AppTheme.background,
-      body: body,
+      backgroundColor: AppTheme.primary,
+      body: Stack(
+        fit: StackFit.expand,
+        children: [
+          Image.asset(
+            'assets/images/fix_now_general.png',
+            fit: BoxFit.cover,
+            alignment: isWide ? Alignment.center : Alignment.center,
+            color: Colors.white.withValues(alpha: imageLightenOpacity),
+            colorBlendMode: BlendMode.screen,
+          ),
+          DecoratedBox(
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+                colors: [
+                  AppTheme.primary.withValues(alpha: imageTintOpacity),
+                  Colors.white.withValues(alpha: isWide ? 0.08 : 0.24),
+                  AppTheme.accent.withValues(alpha: isWide ? 0.18 : 0.1),
+                ],
+              ),
+            ),
+          ),
+          SafeArea(
+            child: Center(
+              child: SingleChildScrollView(
+                padding: EdgeInsets.symmetric(
+                  horizontal: formHPad,
+                  vertical: isSmall ? 18 : 28,
+                ),
+                child: formPanel,
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
@@ -357,7 +371,7 @@ class _UCTextField extends StatelessWidget {
         prefixIcon: Icon(prefixIcon, size: 18, color: AppTheme.textHint),
         suffixIcon: suffixIcon,
         filled: true,
-        fillColor: AppTheme.surface,
+        fillColor: Colors.white.withValues(alpha: 0.9),
         border: OutlineInputBorder(
           borderRadius: BorderRadius.circular(12),
           borderSide: const BorderSide(color: AppTheme.divider),
@@ -368,7 +382,7 @@ class _UCTextField extends StatelessWidget {
         ),
         focusedBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(12),
-          borderSide: const BorderSide(color: AppTheme.primary, width: 1.5),
+          borderSide: const BorderSide(color: AppTheme.accent, width: 1.5),
         ),
         errorBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(12),

@@ -2,15 +2,15 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 class AppTheme {
-  // Urban Company palette
-  static const Color primary = Color(0xFF1F2C3A); // deep navy
-  static const Color accent = Color(0xFF31C48D); // UC green CTA
-  static const Color accentDark = Color(0xFF27A374);
-  static const Color background = Color(0xFFFFFFFF);
-  static const Color surface = Color(0xFFF7F8FA);
+  // FixNow palette
+  static const Color primary = Color(0xFF0B5EEA); // logo blue
+  static const Color accent = Color(0xFFFF7A00); // logo orange
+  static const Color accentDark = Color(0xFFE86200);
+  static const Color background = Color(0xFFF7FAFF);
+  static const Color surface = Color(0xFFF4F8FF);
   static const Color cardBg = Color(0xFFFFFFFF);
-  static const Color divider = Color(0xFFEEEEEE);
-  static const Color textPrimary = Color(0xFF1F2C3A);
+  static const Color divider = Color(0xFFE1E8F5);
+  static const Color textPrimary = Color(0xFF15243B);
   static const Color textSecondary = Color(0xFF6B7280);
   static const Color textHint = Color(0xFF9CA3AF);
   static const Color starColor = Color(0xFFFBBF24);
@@ -29,7 +29,7 @@ class AppTheme {
   static ThemeData get light => ThemeData(
         useMaterial3: true,
         colorScheme: ColorScheme.fromSeed(
-          seedColor: const Color(0xFF1F2C3A),
+          seedColor: primary,
           brightness: Brightness.light,
         ).copyWith(
           primary: primary,
@@ -132,7 +132,7 @@ class AppTheme {
         useMaterial3: true,
         brightness: Brightness.dark,
         colorScheme: ColorScheme.fromSeed(
-          seedColor: const Color(0xFF1F2C3A),
+          seedColor: primary,
           brightness: Brightness.dark,
         ).copyWith(
           primary: accent,

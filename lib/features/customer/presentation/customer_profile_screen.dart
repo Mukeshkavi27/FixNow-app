@@ -106,143 +106,185 @@ class _CustomerProfileScreenState extends ConsumerState<CustomerProfileScreen> {
           if (user == null) {
             return const Center(child: Text('Profile is unavailable.'));
           }
-          return ListView(
-            padding: const EdgeInsets.fromLTRB(20, 12, 20, 32),
-            children: [
-              Center(
-                child: Stack(
-                  children: [
-                    CircleAvatar(
-                      radius: 50,
-                      backgroundColor: AppTheme.primary,
-                      foregroundImage: selectedPhotoBytes != null
-                          ? MemoryImage(selectedPhotoBytes!)
-                          : user.profilePhoto == null ||
-                                  user.profilePhoto!.isEmpty
-                              ? null
-                              : NetworkImage(user.profilePhoto!)
-                                  as ImageProvider,
-                      child: selectedPhoto == null &&
-                              (user.profilePhoto == null ||
-                                  user.profilePhoto!.isEmpty)
-                          ? Text(
-                              _initials(user.name),
-                              style: const TextStyle(
-                                color: Colors.white,
-                                fontSize: 25,
+          return LayoutBuilder(
+            builder: (context, constraints) {
+              final isWide = constraints.maxWidth >= 720;
+              return ListView(
+                padding: EdgeInsets.fromLTRB(
+                  isWide ? 28 : 16,
+                  16,
+                  isWide ? 28 : 16,
+                  32,
+                ),
+                children: [
+                  Center(
+                    child: ConstrainedBox(
+                      constraints: const BoxConstraints(maxWidth: 620),
+                      child: _ProfilePanel(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            Center(
+                              child: Stack(
+                                children: [
+                                  CircleAvatar(
+                                    radius: isWide ? 48 : 44,
+                                    backgroundColor: AppTheme.primary,
+                                    foregroundImage: selectedPhotoBytes != null
+                                        ? MemoryImage(selectedPhotoBytes!)
+                                        : user.profilePhoto == null ||
+                                                user.profilePhoto!.isEmpty
+                                            ? null
+                                            : NetworkImage(user.profilePhoto!)
+                                                as ImageProvider,
+                                    child: selectedPhoto == null &&
+                                            (user.profilePhoto == null ||
+                                                user.profilePhoto!.isEmpty)
+                                        ? Text(
+                                            _initials(user.name),
+                                            style: const TextStyle(
+                                              color: Colors.white,
+                                              fontSize: 25,
+                                              fontWeight: FontWeight.w800,
+                                            ),
+                                          )
+                                        : null,
+                                  ),
+                                  Positioned(
+                                    right: 0,
+                                    bottom: 0,
+                                    child: IconButton.filled(
+                                      tooltip: 'Change profile photo',
+                                      onPressed: pickPhoto,
+                                      icon: const Icon(
+                                        Icons.camera_alt_outlined,
+                                        size: 18,
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            const SizedBox(height: 26),
+                            Form(
+                              key: formKey,
+                              child: Column(
+                                children: [
+                                  TextFormField(
+                                    controller: nameController,
+                                    textInputAction: TextInputAction.next,
+                                    decoration: const InputDecoration(
+                                      labelText: 'Full name',
+                                      prefixIcon: Icon(Icons.person_outline),
+                                    ),
+                                    validator: (value) =>
+                                        value == null || value.trim().length < 2
+                                            ? 'Enter your full name'
+                                            : null,
+                                  ),
+                                  const SizedBox(height: 12),
+                                  TextFormField(
+                                    controller: phoneController,
+                                    keyboardType: TextInputType.phone,
+                                    decoration: const InputDecoration(
+                                      labelText: 'Phone number',
+                                      prefixIcon: Icon(Icons.phone_outlined),
+                                    ),
+                                    validator: (value) => value == null ||
+                                            value
+                                                    .replaceAll(
+                                                        RegExp(r'\D'), '')
+                                                    .length <
+                                                8
+                                        ? 'Enter a valid phone number'
+                                        : null,
+                                  ),
+                                  const SizedBox(height: 12),
+                                  TextFormField(
+                                    initialValue: user.email,
+                                    enabled: false,
+                                    decoration: const InputDecoration(
+                                      labelText: 'Email',
+                                      prefixIcon: Icon(Icons.email_outlined),
+                                    ),
+                                  ),
+                                  const SizedBox(height: 20),
+                                  FilledButton.icon(
+                                    onPressed: saving ? null : save,
+                                    icon: saving
+                                        ? const SizedBox.square(
+                                            dimension: 18,
+                                            child: CircularProgressIndicator(
+                                              strokeWidth: 2,
+                                              color: Colors.white,
+                                            ),
+                                          )
+                                        : const Icon(Icons.save_outlined),
+                                    label: Text(
+                                      saving ? 'Saving...' : 'Save changes',
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            const SizedBox(height: 28),
+                            const Text(
+                              'Account',
+                              style: TextStyle(
+                                fontSize: 16,
                                 fontWeight: FontWeight.w800,
                               ),
-                            )
-                          : null,
-                    ),
-                    Positioned(
-                      right: 0,
-                      bottom: 0,
-                      child: IconButton.filled(
-                        tooltip: 'Change profile photo',
-                        onPressed: pickPhoto,
-                        icon: const Icon(Icons.camera_alt_outlined, size: 18),
+                            ),
+                            const SizedBox(height: 10),
+                            _AccountTile(
+                              icon: Icons.lock_reset,
+                              title: 'Reset password',
+                              subtitle: 'Receive a secure reset link by email',
+                              onTap: () async {
+                                try {
+                                  await ref
+                                      .read(authRepositoryProvider)
+                                      .sendPasswordReset();
+                                  if (!context.mounted) return;
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    SnackBar(
+                                      content: Text(
+                                        'Reset link sent to ${user.email}.',
+                                      ),
+                                    ),
+                                  );
+                                } catch (error) {
+                                  if (context.mounted) {
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      SnackBar(
+                                        content: Text(error.toString()),
+                                      ),
+                                    );
+                                  }
+                                }
+                              },
+                            ),
+                            const SizedBox(height: 10),
+                            _AccountTile(
+                              icon: Icons.logout,
+                              title: 'Sign out',
+                              subtitle: 'Sign out of this device',
+                              destructive: true,
+                              onTap: () async {
+                                await ref
+                                    .read(authRepositoryProvider)
+                                    .signOut();
+                                if (context.mounted) context.go('/login');
+                              },
+                            ),
+                          ],
+                        ),
                       ),
                     ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 26),
-              Form(
-                key: formKey,
-                child: Column(
-                  children: [
-                    TextFormField(
-                      controller: nameController,
-                      textInputAction: TextInputAction.next,
-                      decoration: const InputDecoration(
-                        labelText: 'Full name',
-                        prefixIcon: Icon(Icons.person_outline),
-                      ),
-                      validator: (value) =>
-                          value == null || value.trim().length < 2
-                              ? 'Enter your full name'
-                              : null,
-                    ),
-                    const SizedBox(height: 12),
-                    TextFormField(
-                      controller: phoneController,
-                      keyboardType: TextInputType.phone,
-                      decoration: const InputDecoration(
-                        labelText: 'Phone number',
-                        prefixIcon: Icon(Icons.phone_outlined),
-                      ),
-                      validator: (value) => value == null ||
-                              value.replaceAll(RegExp(r'\D'), '').length < 8
-                          ? 'Enter a valid phone number'
-                          : null,
-                    ),
-                    const SizedBox(height: 12),
-                    TextFormField(
-                      initialValue: user.email,
-                      enabled: false,
-                      decoration: const InputDecoration(
-                        labelText: 'Email',
-                        prefixIcon: Icon(Icons.email_outlined),
-                      ),
-                    ),
-                    const SizedBox(height: 20),
-                    FilledButton.icon(
-                      onPressed: saving ? null : save,
-                      icon: saving
-                          ? const SizedBox.square(
-                              dimension: 18,
-                              child: CircularProgressIndicator(
-                                strokeWidth: 2,
-                                color: Colors.white,
-                              ),
-                            )
-                          : const Icon(Icons.save_outlined),
-                      label: Text(saving ? 'Saving...' : 'Save changes'),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 28),
-              const Text(
-                'Account',
-                style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800),
-              ),
-              const SizedBox(height: 10),
-              _AccountTile(
-                icon: Icons.lock_reset,
-                title: 'Reset password',
-                subtitle: 'Receive a secure reset link by email',
-                onTap: () async {
-                  try {
-                    await ref.read(authRepositoryProvider).sendPasswordReset();
-                    if (!context.mounted) return;
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(
-                        content: Text('Reset link sent to ${user.email}.'),
-                      ),
-                    );
-                  } catch (error) {
-                    if (context.mounted) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(content: Text(error.toString())),
-                      );
-                    }
-                  }
-                },
-              ),
-              const SizedBox(height: 10),
-              _AccountTile(
-                icon: Icons.logout,
-                title: 'Sign out',
-                subtitle: 'Sign out of this device',
-                destructive: true,
-                onTap: () async {
-                  await ref.read(authRepositoryProvider).signOut();
-                  if (context.mounted) context.go('/login');
-                },
-              ),
-            ],
+                  ),
+                ],
+              );
+            },
           );
         },
         loading: () => const Center(child: CircularProgressIndicator()),
@@ -289,6 +331,32 @@ class _AccountTile extends StatelessWidget {
       ),
       subtitle: Text(subtitle),
       trailing: Icon(Icons.chevron_right, color: color),
+    );
+  }
+}
+
+class _ProfilePanel extends StatelessWidget {
+  const _ProfilePanel({required this.child});
+
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: AppTheme.divider),
+        boxShadow: [
+          BoxShadow(
+            color: AppTheme.primary.withValues(alpha: 0.04),
+            blurRadius: 18,
+            offset: const Offset(0, 8),
+          ),
+        ],
+      ),
+      child: child,
     );
   }
 }

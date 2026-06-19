@@ -93,6 +93,12 @@ service cloud.firestore {
           && resource.data.status == 'estimateSent'
           && request.resource.data.status == 'estimateApproved'
           && onlyChanges(['status', 'updatedAt']))
+        || (ownsBooking(resource.data)
+          && resource.data.status == 'booked'
+          && resource.data.technicianId == null
+          && request.resource.data.status == 'booked'
+          && request.resource.data.technicianId == null
+          && onlyChanges(['preferredDate', 'preferredTime', 'updatedAt']))
         || technicianTransition('technicianAssigned', 'accepted')
         || technicianTransition('accepted', 'onTheWay')
         || technicianTransition('onTheWay', 'arrived')
@@ -115,7 +121,10 @@ service cloud.firestore {
           && request.resource.data.status == resource.data.status
           && onlyChanges(['servicePhotos']));
 
-      allow delete: if isAdmin();
+      allow delete: if isAdmin()
+        || (ownsBooking(resource.data)
+          && resource.data.status == 'booked'
+          && resource.data.technicianId == null);
     }
 
     match /estimates/{bookingId} {

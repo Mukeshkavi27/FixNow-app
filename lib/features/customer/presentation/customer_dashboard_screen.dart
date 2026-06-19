@@ -28,135 +28,151 @@ class CustomerDashboardScreen extends ConsumerWidget {
     final location = ref.watch(_selectedLocationProvider);
     final width = MediaQuery.sizeOf(context).width;
     final pagePadding = width >= 900 ? 28.0 : 16.0;
+    final isWide = width >= 900;
+    Future<void> openSupport() async {
+      final number = AppConstants.whatsappSupportNumber.replaceAll('+', '');
+      await launchUrl(
+        Uri.parse(
+          'https://wa.me/$number?text=Hello%20FixNow,%20I%20need%20help%20with%20a%20service.',
+        ),
+        mode: LaunchMode.externalApplication,
+      );
+    }
 
     return Scaffold(
       backgroundColor: AppTheme.background,
       body: SafeArea(
-        child: Center(
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 1180),
-            child: RefreshIndicator(
-              onRefresh: () async {
-                ref.invalidate(serviceCatalogProvider);
-                ref.invalidate(customerBookingsProvider);
-                ref.invalidate(currentUserProvider);
-              },
-              child: CustomScrollView(
-                physics: const AlwaysScrollableScrollPhysics(),
-                slivers: [
-                  SliverToBoxAdapter(
-                    child: Padding(
-                      padding:
-                          EdgeInsets.fromLTRB(pagePadding, 12, pagePadding, 32),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          _CustomerHeader(
-                            userName: user.valueOrNull?.name ?? 'Customer',
-                            profilePhoto: user.valueOrNull?.profilePhoto,
-                            location: location,
-                            onLocationTap: () =>
-                                _showLocationSheet(context, ref),
-                            onHistoryTap: () =>
-                                context.push('/customer/history'),
-                            onProfileTap: () =>
-                                context.push('/customer/profile'),
+        child: Stack(
+          children: [
+            Center(
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 1180),
+                child: RefreshIndicator(
+                  onRefresh: () async {
+                    ref.invalidate(serviceCatalogProvider);
+                    ref.invalidate(customerBookingsProvider);
+                    ref.invalidate(currentUserProvider);
+                  },
+                  child: CustomScrollView(
+                    physics: const AlwaysScrollableScrollPhysics(),
+                    slivers: [
+                      SliverToBoxAdapter(
+                        child: Padding(
+                          padding: EdgeInsets.fromLTRB(
+                            pagePadding,
+                            12,
+                            pagePadding,
+                            isWide ? 32 : 96,
                           ),
-                          const SizedBox(height: 22),
-                          const _WelcomeHero(),
-                          const SizedBox(height: 18),
-                          _SearchBar(
-                            onTap: () => showSearch<String>(
-                              context: context,
-                              delegate: _ServiceSearchDelegate(
-                                services.valueOrNull ??
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              _CustomerHeader(
+                                userName: user.valueOrNull?.name ?? 'Customer',
+                                profilePhoto: user.valueOrNull?.profilePhoto,
+                                location: location,
+                                onLocationTap: () =>
+                                    _showLocationSheet(context, ref),
+                                onHistoryTap: () =>
+                                    context.push('/customer/history'),
+                                onProfileTap: () =>
+                                    context.push('/customer/profile'),
+                              ),
+                              const SizedBox(height: 22),
+                              const _WelcomeHero(),
+                              const SizedBox(height: 18),
+                              _SearchBar(
+                                onTap: () => showSearch<String>(
+                                  context: context,
+                                  delegate: _ServiceSearchDelegate(
+                                    services.valueOrNull ??
+                                        AppConstants.applianceCategories,
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(height: 28),
+                              _SectionHeader(
+                                title: 'Appliance services',
+                                subtitle: 'Choose what needs attention today',
+                                action: TextButton(
+                                  onPressed: () => showSearch<String>(
+                                    context: context,
+                                    delegate: _ServiceSearchDelegate(
+                                      services.valueOrNull ??
+                                          AppConstants.applianceCategories,
+                                    ),
+                                  ),
+                                  child: const Text('Search'),
+                                ),
+                              ),
+                              const SizedBox(height: 14),
+                              services.when(
+                                data: (items) => _ServiceGrid(services: items),
+                                loading: () => const _ServiceGridSkeleton(),
+                                error: (error, _) => _InlineError(
+                                  message: 'Services could not be loaded.',
+                                  onRetry: () =>
+                                      ref.invalidate(serviceCatalogProvider),
+                                ),
+                              ),
+                              const SizedBox(height: 30),
+                              _SectionHeader(
+                                title: 'Your current service',
+                                subtitle: 'Updates from booking to completion',
+                                action: TextButton(
+                                  onPressed: () =>
+                                      context.push('/customer/history'),
+                                  child: const Text('View all'),
+                                ),
+                              ),
+                              const SizedBox(height: 14),
+                              bookings.when(
+                                data: (items) {
+                                  final active = items
+                                      .where((item) =>
+                                          item.status != BookingStatus.closed)
+                                      .toList();
+                                  if (active.isEmpty) {
+                                    return const _EmptyBookingCard();
+                                  }
+                                  return _ActiveBookingCard(
+                                    booking: active.first,
+                                  );
+                                },
+                                loading: () => const _BookingSkeleton(),
+                                error: (error, _) => _InlineError(
+                                  message: 'Bookings could not be loaded.',
+                                  onRetry: () =>
+                                      ref.invalidate(customerBookingsProvider),
+                                ),
+                              ),
+                              const SizedBox(height: 30),
+                              _PopularServices(
+                                services: services.valueOrNull ??
                                     AppConstants.applianceCategories,
-                              ),
-                            ),
-                          ),
-                          const SizedBox(height: 28),
-                          _SectionHeader(
-                            title: 'Appliance services',
-                            subtitle: 'Choose what needs attention today',
-                            action: TextButton(
-                              onPressed: () => showSearch<String>(
-                                context: context,
-                                delegate: _ServiceSearchDelegate(
-                                  services.valueOrNull ??
-                                      AppConstants.applianceCategories,
+                                onBook: (service) => context.push(
+                                  '/book/${Uri.encodeComponent(service)}',
                                 ),
                               ),
-                              child: const Text('Search'),
-                            ),
+                            ],
                           ),
-                          const SizedBox(height: 14),
-                          services.when(
-                            data: (items) => _ServiceGrid(services: items),
-                            loading: () => const _ServiceGridSkeleton(),
-                            error: (error, _) => _InlineError(
-                              message: 'Services could not be loaded.',
-                              onRetry: () =>
-                                  ref.invalidate(serviceCatalogProvider),
-                            ),
-                          ),
-                          const SizedBox(height: 30),
-                          _SectionHeader(
-                            title: 'Your current service',
-                            subtitle: 'Updates from booking to completion',
-                            action: TextButton(
-                              onPressed: () =>
-                                  context.push('/customer/history'),
-                              child: const Text('View all'),
-                            ),
-                          ),
-                          const SizedBox(height: 14),
-                          bookings.when(
-                            data: (items) {
-                              final active = items
-                                  .where((item) =>
-                                      item.status != BookingStatus.closed)
-                                  .toList();
-                              if (active.isEmpty) {
-                                return const _EmptyBookingCard();
-                              }
-                              return _ActiveBookingCard(booking: active.first);
-                            },
-                            loading: () => const _BookingSkeleton(),
-                            error: (error, _) => _InlineError(
-                              message: 'Bookings could not be loaded.',
-                              onRetry: () =>
-                                  ref.invalidate(customerBookingsProvider),
-                            ),
-                          ),
-                          const SizedBox(height: 30),
-                          _PopularServices(
-                            services: services.valueOrNull ??
-                                AppConstants.applianceCategories,
-                            onBook: (service) => context.push(
-                              '/book/${Uri.encodeComponent(service)}',
-                            ),
-                          ),
-                          const SizedBox(height: 26),
-                          _SupportBanner(
-                            onTap: () async {
-                              final number = AppConstants.whatsappSupportNumber
-                                  .replaceAll('+', '');
-                              await launchUrl(
-                                Uri.parse(
-                                  'https://wa.me/$number?text=Hello%20FixNow,%20I%20need%20help%20with%20a%20service.',
-                                ),
-                                mode: LaunchMode.externalApplication,
-                              );
-                            },
-                          ),
-                        ],
+                        ),
                       ),
-                    ),
+                    ],
                   ),
-                ],
+                ),
               ),
             ),
-          ),
+            Positioned(
+              right: isWide ? 22 : 16,
+              bottom: isWide ? null : 18,
+              top: isWide ? 220 : null,
+              child: _SupportChatLauncher(
+                expanded: isWide,
+                onTap: openSupport,
+              ),
+            ),
+          ],
         ),
       ),
     );
@@ -337,52 +353,98 @@ class _WelcomeHero extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(20),
-      decoration: BoxDecoration(
-        color: AppTheme.primary,
-        borderRadius: BorderRadius.circular(8),
-      ),
-      child: Row(
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(8),
+      child: Stack(
         children: [
-          const Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+          Positioned.fill(
+            child: Image.asset(
+              'assets/images/fix_now_general.png',
+              fit: BoxFit.cover,
+              alignment: Alignment.centerRight,
+            ),
+          ),
+          Positioned.fill(
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.centerLeft,
+                  end: Alignment.centerRight,
+                  colors: [
+                    AppTheme.primary.withValues(alpha: 0.9),
+                    AppTheme.primary.withValues(alpha: 0.62),
+                    AppTheme.accent.withValues(alpha: 0.2),
+                  ],
+                ),
+              ),
+            ),
+          ),
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(20),
+            decoration: BoxDecoration(
+              border: Border.all(
+                color: Colors.white.withValues(alpha: 0.22),
+              ),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Row(
               children: [
-                Text(
-                  'Reliable home care,\nright when you need it',
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontSize: 24,
-                    height: 1.15,
-                    fontWeight: FontWeight.w800,
+                const Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Reliable home care,\nright when you need it',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 24,
+                          height: 1.15,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                      SizedBox(height: 10),
+                      Text(
+                        'Verified technicians, clear estimates and live updates.',
+                        style: TextStyle(
+                          color: Color(0xFFF4F8FF),
+                          fontSize: 13,
+                          height: 1.4,
+                        ),
+                      ),
+                    ],
                   ),
                 ),
-                SizedBox(height: 10),
-                Text(
-                  'Verified technicians, clear estimates and live updates.',
-                  style: TextStyle(
-                    color: Color(0xFFD8DEE6),
-                    fontSize: 13,
-                    height: 1.4,
+                const SizedBox(width: 12),
+                Container(
+                  width: 96,
+                  height: 96,
+                  decoration: BoxDecoration(
+                    color: Colors.white.withValues(alpha: 0.22),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(
+                      color: Colors.white.withValues(alpha: 0.28),
+                    ),
+                  ),
+                  clipBehavior: Clip.antiAlias,
+                  child: Padding(
+                    padding: const EdgeInsets.all(10),
+                    child: DecoratedBox(
+                      decoration: BoxDecoration(
+                        color: Colors.white.withValues(alpha: 0.92),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Padding(
+                        padding: const EdgeInsets.all(8),
+                        child: Image.asset(
+                          'assets/images/fixnow_logo.png',
+                          fit: BoxFit.contain,
+                        ),
+                      ),
+                    ),
                   ),
                 ),
               ],
-            ),
-          ),
-          const SizedBox(width: 12),
-          Container(
-            width: 78,
-            height: 78,
-            decoration: BoxDecoration(
-              color: Colors.white.withValues(alpha: 0.1),
-              borderRadius: BorderRadius.circular(8),
-            ),
-            child: const Icon(
-              Icons.home_repair_service_outlined,
-              color: Colors.white,
-              size: 42,
             ),
           ),
         ],
@@ -665,6 +727,7 @@ class _ActiveBookingCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final progress = (booking.status.index + 1) / BookingStatus.values.length;
+    final assetName = _serviceAssetName(booking.applianceType);
     return InkWell(
       onTap: () => context.push('/booking/${booking.id}'),
       borderRadius: BorderRadius.circular(8),
@@ -690,6 +753,7 @@ class _ActiveBookingCard extends StatelessWidget {
                   child: ClipRRect(
                     borderRadius: BorderRadius.circular(8),
                     child: _ResilientImage(
+                      assetName: assetName,
                       imageUrl: booking.imageUrl,
                       fallbackIcon: _serviceIcon(booking.applianceType),
                       color: AppTheme.primary,
@@ -847,7 +911,7 @@ class _PopularServices extends StatelessWidget {
         ),
         const SizedBox(height: 14),
         SizedBox(
-          height: 174,
+          height: 218,
           child: ListView.separated(
             scrollDirection: Axis.horizontal,
             itemCount: items.length,
@@ -856,28 +920,24 @@ class _PopularServices extends StatelessWidget {
               final item = items[index];
               final matched = _match(item.$5);
               return SizedBox(
-                width: 184,
+                width: 218,
                 child: InkWell(
                   onTap: () => onBook(item.$1),
                   borderRadius: BorderRadius.circular(8),
-                  child: Container(
-                    padding: const EdgeInsets.all(14),
+                  child: DecoratedBox(
                     decoration: BoxDecoration(
-                      color: item.$4,
+                      color: Colors.white,
                       borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: AppTheme.divider),
                     ),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Container(
-                          width: 40,
-                          height: 40,
-                          decoration: BoxDecoration(
-                            color: Colors.white,
-                            borderRadius: BorderRadius.circular(8),
-                          ),
+                        Expanded(
                           child: ClipRRect(
-                            borderRadius: BorderRadius.circular(8),
+                            borderRadius: const BorderRadius.vertical(
+                              top: Radius.circular(8),
+                            ),
                             child: _ResilientImage(
                               assetName: matched?.assetName,
                               imageUrl: matched?.imageUrl,
@@ -887,36 +947,48 @@ class _PopularServices extends StatelessWidget {
                             ),
                           ),
                         ),
-                        const Spacer(),
-                        Text(
-                          item.$1,
-                          style: const TextStyle(
-                            fontWeight: FontWeight.w800,
-                            color: AppTheme.textPrimary,
-                          ),
-                        ),
-                        const SizedBox(height: 5),
-                        Text(
-                          'Starting ${item.$2}',
-                          style: const TextStyle(
-                            fontSize: 11,
-                            color: AppTheme.textSecondary,
-                          ),
-                        ),
-                        const SizedBox(height: 8),
-                        const Row(
-                          children: [
-                            Icon(Icons.star,
-                                size: 14, color: AppTheme.starColor),
-                            SizedBox(width: 4),
-                            Text(
-                              '4.8',
-                              style: TextStyle(
-                                fontSize: 11,
-                                fontWeight: FontWeight.w700,
+                        Padding(
+                          padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                item.$1,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                  fontWeight: FontWeight.w800,
+                                  color: AppTheme.textPrimary,
+                                ),
                               ),
-                            ),
-                          ],
+                              const SizedBox(height: 5),
+                              Text(
+                                'Starting ${item.$2}',
+                                style: const TextStyle(
+                                  fontSize: 11,
+                                  color: AppTheme.textSecondary,
+                                ),
+                              ),
+                              const SizedBox(height: 8),
+                              const Row(
+                                children: [
+                                  Icon(
+                                    Icons.star,
+                                    size: 14,
+                                    color: AppTheme.starColor,
+                                  ),
+                                  SizedBox(width: 4),
+                                  Text(
+                                    '4.8',
+                                    style: TextStyle(
+                                      fontSize: 11,
+                                      fontWeight: FontWeight.w700,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ],
+                          ),
                         ),
                       ],
                     ),
@@ -931,51 +1003,98 @@ class _PopularServices extends StatelessWidget {
   }
 }
 
-class _SupportBanner extends StatelessWidget {
-  const _SupportBanner({required this.onTap});
+class _SupportChatLauncher extends StatelessWidget {
+  const _SupportChatLauncher({
+    required this.expanded,
+    required this.onTap,
+  });
 
+  final bool expanded;
   final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
     return Material(
-      color: const Color(0xFFEAF7EF),
-      borderRadius: BorderRadius.circular(8),
+      color: Colors.transparent,
+      elevation: 10,
+      shadowColor: AppTheme.primary.withValues(alpha: 0.22),
+      borderRadius: BorderRadius.circular(18),
       child: InkWell(
         onTap: onTap,
-        borderRadius: BorderRadius.circular(8),
-        child: const Padding(
-          padding: EdgeInsets.all(16),
-          child: Row(
-            children: [
-              Icon(Icons.support_agent, color: Color(0xFF16845B), size: 30),
-              SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'Need help choosing a service?',
-                      style: TextStyle(
-                        fontWeight: FontWeight.w800,
-                        color: AppTheme.textPrimary,
-                      ),
-                    ),
-                    SizedBox(height: 3),
-                    Text(
-                      'Chat with FixNow support on WhatsApp.',
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: AppTheme.textSecondary,
-                      ),
-                    ),
-                  ],
-                ),
+        borderRadius: BorderRadius.circular(18),
+        child: Container(
+          width: expanded ? 238 : 64,
+          height: expanded ? null : 64,
+          padding: EdgeInsets.all(expanded ? 14 : 0),
+          decoration: BoxDecoration(
+            color: const Color(0xFF0F8F61),
+            borderRadius: BorderRadius.circular(18),
+            border: Border.all(color: Colors.white.withValues(alpha: 0.55)),
+            boxShadow: [
+              BoxShadow(
+                color: const Color(0xFF0F8F61).withValues(alpha: 0.28),
+                blurRadius: 22,
+                offset: const Offset(0, 10),
               ),
-              Icon(Icons.arrow_forward, color: Color(0xFF16845B)),
             ],
           ),
+          child: expanded
+              ? const Row(
+                  children: [
+                    _SupportIconBadge(),
+                    SizedBox(width: 10),
+                    Expanded(
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'FixNow support',
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 15,
+                              fontWeight: FontWeight.w900,
+                            ),
+                          ),
+                          SizedBox(height: 2),
+                          Text(
+                            'Chat on WhatsApp',
+                            style: TextStyle(
+                              color: Color(0xFFE7FFF4),
+                              fontSize: 12,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    Icon(Icons.arrow_forward, color: Colors.white),
+                  ],
+                )
+              : const Center(child: _SupportIconBadge()),
         ),
+      ),
+    );
+  }
+}
+
+class _SupportIconBadge extends StatelessWidget {
+  const _SupportIconBadge();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: 42,
+      height: 42,
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.16),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.18)),
+      ),
+      child: const Icon(
+        Icons.support_agent,
+        color: Colors.white,
+        size: 25,
       ),
     );
   }
@@ -1238,6 +1357,33 @@ IconData _serviceIcon(String name) {
   if (normalized.contains('television')) return Icons.tv_outlined;
   if (normalized.contains('fan')) return Icons.air;
   return Icons.home_repair_service_outlined;
+}
+
+String? _serviceAssetName(String name) {
+  final normalized = name.toLowerCase();
+  if (normalized.contains('air conditioner') ||
+      normalized == 'ac' ||
+      normalized.contains('ac repair')) {
+    return 'assets/images/ac.png';
+  }
+  if (normalized.contains('refrigerator') || normalized.contains('fridge')) {
+    return 'assets/images/refrigerator.png';
+  }
+  if (normalized.contains('washing')) {
+    return 'assets/images/washing_machine.png';
+  }
+  if (normalized.contains('microwave')) {
+    return 'assets/images/microwave.png';
+  }
+  if (normalized.contains('purifier')) {
+    return 'assets/images/water_purifier.png';
+  }
+  if (normalized.contains('television') || normalized.contains('tv')) {
+    return 'assets/images/television.png';
+  }
+  if (normalized.contains('fan')) return 'assets/images/fan.png';
+  if (normalized.contains('other')) return 'assets/images/other_services.png';
+  return null;
 }
 
 Color _serviceColor(String name) {

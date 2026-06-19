@@ -72,6 +72,13 @@ final appRouterProvider = Provider<GoRouter>((ref) {
         ),
       ),
       GoRoute(
+        path: '/booking/:id/confirmed',
+        builder: (context, state) => BookingDetailScreen(
+          bookingId: state.pathParameters['id']!,
+          showConfirmation: true,
+        ),
+      ),
+      GoRoute(
         path: '/booking/:id',
         builder: (context, state) =>
             BookingDetailScreen(bookingId: state.pathParameters['id']!),
