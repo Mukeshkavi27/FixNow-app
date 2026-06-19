@@ -29,6 +29,7 @@ class CustomerDashboardScreen extends ConsumerWidget {
     final width = MediaQuery.sizeOf(context).width;
     final pagePadding = width >= 900 ? 28.0 : 16.0;
     final isWide = width >= 900;
+    final showDesktopSupportPrompt = width >= 1280;
     Future<void> openSupport() async {
       final number = AppConstants.whatsappSupportNumber.replaceAll('+', '');
       await launchUrl(
@@ -164,11 +165,11 @@ class CustomerDashboardScreen extends ConsumerWidget {
               ),
             ),
             Positioned(
-              right: isWide ? 22 : 16,
-              bottom: isWide ? null : 18,
-              top: isWide ? 220 : null,
+              right: showDesktopSupportPrompt ? 20 : 16,
+              bottom: showDesktopSupportPrompt ? 24 : 18,
+              top: null,
               child: _SupportChatLauncher(
-                expanded: isWide,
+                expanded: showDesktopSupportPrompt,
                 onTap: openSupport,
               ),
             ),
@@ -1014,6 +1015,137 @@ class _SupportChatLauncher extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    if (!expanded) {
+      return SizedBox(
+        width: 200,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.end,
+          children: [
+            Container(
+              padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: AppTheme.divider),
+                boxShadow: [
+                  BoxShadow(
+                    color: AppTheme.primary.withValues(alpha: 0.08),
+                    blurRadius: 16,
+                    offset: const Offset(0, 8),
+                  ),
+                ],
+              ),
+              child: const Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Not able to identify the right service?',
+                    style: TextStyle(
+                      color: AppTheme.textPrimary,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w800,
+                      height: 1.25,
+                    ),
+                  ),
+                  SizedBox(height: 3),
+                  Text(
+                    'Ask our experts.',
+                    style: TextStyle(
+                      color: AppTheme.textSecondary,
+                      fontSize: 11,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 10),
+            _SupportActionButton(
+              expanded: false,
+              onTap: onTap,
+            ),
+          ],
+        ),
+      );
+    }
+
+    if (expanded) {
+      return SizedBox(
+        width: 320,
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Expanded(
+              child: Container(
+                padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(18),
+                  border: Border.all(color: AppTheme.divider),
+                  boxShadow: [
+                    BoxShadow(
+                      color: AppTheme.primary.withValues(alpha: 0.08),
+                      blurRadius: 20,
+                      offset: const Offset(0, 10),
+                    ),
+                  ],
+                ),
+                child: const Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Not able to identify the right service?',
+                      style: TextStyle(
+                        color: AppTheme.textPrimary,
+                        fontSize: 14,
+                        fontWeight: FontWeight.w900,
+                        height: 1.25,
+                      ),
+                    ),
+                    SizedBox(height: 4),
+                    Text(
+                      'Ask our experts on WhatsApp.',
+                      style: TextStyle(
+                        color: AppTheme.textSecondary,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(width: 12),
+            _SupportActionButton(
+              expanded: true,
+              onTap: onTap,
+            ),
+          ],
+        ),
+      );
+    }
+
+    return _SupportActionButton(
+      expanded: false,
+      onTap: onTap,
+    );
+  }
+}
+
+class _SupportActionButton extends StatelessWidget {
+  const _SupportActionButton({
+    required this.expanded,
+    required this.onTap,
+  });
+
+  final bool expanded;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
     return Material(
       color: Colors.transparent,
       elevation: 10,
@@ -1023,9 +1155,9 @@ class _SupportChatLauncher extends StatelessWidget {
         onTap: onTap,
         borderRadius: BorderRadius.circular(18),
         child: Container(
-          width: expanded ? 238 : 64,
-          height: expanded ? null : 64,
-          padding: EdgeInsets.all(expanded ? 14 : 0),
+          width: expanded ? 88 : 64,
+          height: 64,
+          padding: EdgeInsets.symmetric(horizontal: expanded ? 12 : 0),
           decoration: BoxDecoration(
             color: const Color(0xFF0F8F61),
             borderRadius: BorderRadius.circular(18),
@@ -1040,38 +1172,16 @@ class _SupportChatLauncher extends StatelessWidget {
           ),
           child: expanded
               ? const Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
                   children: [
                     _SupportIconBadge(),
-                    SizedBox(width: 10),
-                    Expanded(
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            'FixNow support',
-                            style: TextStyle(
-                              color: Colors.white,
-                              fontSize: 15,
-                              fontWeight: FontWeight.w900,
-                            ),
-                          ),
-                          SizedBox(height: 2),
-                          Text(
-                            'Chat on WhatsApp',
-                            style: TextStyle(
-                              color: Color(0xFFE7FFF4),
-                              fontSize: 12,
-                              fontWeight: FontWeight.w700,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                    Icon(Icons.arrow_forward, color: Colors.white),
+                    SizedBox(width: 8),
+                    Icon(Icons.arrow_forward, color: Colors.white, size: 20),
                   ],
                 )
-              : const Center(child: _SupportIconBadge()),
+              : const Center(
+                  child: _SupportIconBadge(compact: true),
+                ),
         ),
       ),
     );
@@ -1079,13 +1189,15 @@ class _SupportChatLauncher extends StatelessWidget {
 }
 
 class _SupportIconBadge extends StatelessWidget {
-  const _SupportIconBadge();
+  const _SupportIconBadge({this.compact = false});
+
+  final bool compact;
 
   @override
   Widget build(BuildContext context) {
     return Container(
-      width: 42,
-      height: 42,
+      width: compact ? 42 : 40,
+      height: compact ? 42 : 40,
       decoration: BoxDecoration(
         color: Colors.white.withValues(alpha: 0.16),
         borderRadius: BorderRadius.circular(14),

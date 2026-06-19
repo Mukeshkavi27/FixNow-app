@@ -1,9 +1,13 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_map/flutter_map.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:geolocator/geolocator.dart';
-import 'package:google_maps_flutter/google_maps_flutter.dart';
+import 'package:go_router/go_router.dart';
+import 'package:intl/intl.dart';
+import 'package:latlong2/latlong.dart';
 import 'package:uuid/uuid.dart';
 
+import '../../../app/theme/app_theme.dart';
 import '../../../app/widgets/app_scaffold.dart';
 import '../../../core/enums/booking_status.dart';
 import '../../auth/domain/app_user.dart';
@@ -11,10 +15,11 @@ import '../../bookings/data/booking_repository.dart';
 import '../../bookings/domain/booking.dart';
 import '../../shared/data/bill_repository.dart';
 import '../../shared/domain/bill.dart';
-import '../data/admin_repository.dart';
 import '../../technician/data/technician_repository.dart';
 import '../../technician/domain/technician_location.dart';
+import '../data/admin_repository.dart';
 import '../../bookings/presentation/booking_detail_screen.dart';
+import 'admin_dashboard_support.dart';
 
 final allBookingsProvider = StreamProvider.autoDispose<List<Booking>>((ref) {
   return ref.watch(bookingRepositoryProvider).watchAllBookings();
@@ -37,14 +42,35 @@ final activeTechnicianLocationsProvider =
   return ref.watch(technicianRepositoryProvider).watchActiveLocations();
 });
 
-class AdminDashboardScreen extends ConsumerWidget {
+class AdminDashboardScreen extends ConsumerStatefulWidget {
   const AdminDashboardScreen({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final bookings = ref.watch(allBookingsProvider);
-    final technicians = ref.watch(techniciansProvider);
-    final bills = ref.watch(allBillsProvider);
+  ConsumerState<AdminDashboardScreen> createState() =>
+      _AdminDashboardScreenState();
+}
+
+class _AdminDashboardScreenState extends ConsumerState<AdminDashboardScreen> {
+  final _searchController = TextEditingController();
+  BookingStatus? _selectedStatus;
+  String? _selectedTechnicianId;
+  AdminRangeFilter _selectedRange = AdminRangeFilter.today;
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final bookingsAsync = ref.watch(allBookingsProvider);
+    final techniciansAsync = ref.watch(techniciansProvider);
+    final billsAsync = ref.watch(allBillsProvider);
+    final locationsAsync = ref.watch(activeTechnicianLocationsProvider);
+    final width = MediaQuery.sizeOf(context).width;
+    final wideLayout = width >= 1100;
+
     return AppScaffold(
       title: 'Admin Dashboard',
       floatingActionButton: FloatingActionButton.extended(
@@ -52,88 +78,239 @@ class AdminDashboardScreen extends ConsumerWidget {
         icon: const Icon(Icons.add),
         label: const Text('Manual Booking'),
       ),
-      body: bookings.when(
-        data: (items) {
-          final today = DateTime.now();
-          final todaysBookings = items.where((booking) {
-            return booking.createdAt.year == today.year &&
-                booking.createdAt.month == today.month &&
-                booking.createdAt.day == today.day;
-          }).length;
-          final active =
-              items.where((b) => b.status != BookingStatus.closed).length;
-          final paidBills =
-              bills.valueOrNull?.where((bill) => bill.isPaid) ?? const <Bill>[];
-          final revenueToday = paidBills
-              .where((bill) => _isSameDay(bill.createdAt, today))
-              .fold<double>(0, (sum, bill) => sum + bill.amount);
-          final revenueMonth = paidBills
-              .where((bill) =>
-                  bill.createdAt.year == today.year &&
-                  bill.createdAt.month == today.month)
-              .fold<double>(0, (sum, bill) => sum + bill.amount);
-          return ListView(
-            padding: const EdgeInsets.all(16),
-            children: [
-              technicians.when(
-                data: (techs) => Wrap(
-                  spacing: 12,
-                  runSpacing: 12,
-                  children: [
-                    _MetricCard(
-                        label: "Today's Bookings", value: '$todaysBookings'),
-                    _MetricCard(
-                        label: 'Active Technicians',
-                        value: '${techs.where((t) => t.isActive).length}'),
-                    _MetricCard(
-                      label: 'Revenue Today',
-                      value: 'Rs. ${revenueToday.toStringAsFixed(0)}',
-                    ),
-                    _MetricCard(
-                      label: 'Revenue Month',
-                      value: 'Rs. ${revenueMonth.toStringAsFixed(0)}',
-                    ),
-                  ],
-                ),
-                loading: () => const LinearProgressIndicator(),
-                error: (error, stackTrace) => Text(error.toString()),
-              ),
-              const SizedBox(height: 24),
-              Text('Booking Management',
-                  style: Theme.of(context).textTheme.titleLarge),
-              const SizedBox(height: 12),
-              ...items.map((booking) => _AdminBookingCard(booking: booking)),
-              const SizedBox(height: 24),
-              Text('Live Monitoring',
-                  style: Theme.of(context).textTheme.titleLarge),
-              const SizedBox(height: 12),
-              const SizedBox(height: 260, child: _TechnicianMap()),
-              const SizedBox(height: 24),
-              Text('Technician Management',
-                  style: Theme.of(context).textTheme.titleLarge),
-              const SizedBox(height: 12),
-              technicians.when(
-                data: (techs) => Column(
-                    children: techs
-                        .map((tech) => _TechnicianTile(technician: tech))
-                        .toList()),
-                loading: () => const LinearProgressIndicator(),
-                error: (error, stackTrace) => Text(error.toString()),
-              ),
-              Text('Active bookings: $active'),
-            ],
-          );
-        },
+      body: bookingsAsync.when(
         loading: () => const Center(child: CircularProgressIndicator()),
-        error: (error, stackTrace) => Center(child: Text(error.toString())),
+        error: (error, _) => _AdminError(
+          message: error.toString(),
+          onRetry: () => ref.invalidate(allBookingsProvider),
+        ),
+        data: (bookings) => techniciansAsync.when(
+          loading: () => const Center(child: CircularProgressIndicator()),
+          error: (error, _) => _AdminError(
+            message: error.toString(),
+            onRetry: () => ref.invalidate(techniciansProvider),
+          ),
+          data: (technicians) => billsAsync.when(
+            loading: () => const Center(child: CircularProgressIndicator()),
+            error: (error, _) => _AdminError(
+              message: error.toString(),
+              onRetry: () => ref.invalidate(allBillsProvider),
+            ),
+            data: (bills) {
+              final now = DateTime.now();
+              final filteredBookings = filterAdminBookings(
+                bookings: bookings,
+                now: now,
+                query: _searchController.text,
+                status: _selectedStatus,
+                technicianId: _selectedTechnicianId,
+                range: _selectedRange,
+              );
+              final overdueBookings = bookings
+                  .where((booking) => isBookingOverdue(booking, now))
+                  .toList();
+              final dueSoonBookings = bookings.where((booking) {
+                final deadline = bookingDeadline(booking);
+                if (deadline == null || isBookingOverdue(booking, now)) {
+                  return false;
+                }
+                return deadline.difference(now) <= const Duration(hours: 1);
+              }).length;
+              final paidBills = bills.where((bill) => bill.isPaid).toList();
+              final revenueToday = paidBills
+                  .where((bill) => isSameDay(bill.createdAt, now))
+                  .fold<double>(0, (sum, bill) => sum + bill.amount);
+              final revenueMonth = paidBills
+                  .where((bill) =>
+                      bill.createdAt.year == now.year &&
+                      bill.createdAt.month == now.month)
+                  .fold<double>(0, (sum, bill) => sum + bill.amount);
+
+              return locationsAsync.when(
+                loading: () => const Center(child: CircularProgressIndicator()),
+                error: (error, _) => _AdminError(
+                  message: error.toString(),
+                  onRetry: () =>
+                      ref.invalidate(activeTechnicianLocationsProvider),
+                ),
+                data: (locations) {
+                  final performance = buildTechnicianPerformance(
+                    technicians: technicians,
+                    bills: bills,
+                    bookings: bookings,
+                    locations: locations,
+                    now: now,
+                  );
+                  return RefreshIndicator(
+                    onRefresh: () async {
+                      ref.invalidate(allBookingsProvider);
+                      ref.invalidate(techniciansProvider);
+                      ref.invalidate(allBillsProvider);
+                      ref.invalidate(activeTechnicianLocationsProvider);
+                    },
+                    child: ListView(
+                      padding: const EdgeInsets.all(20),
+                      children: [
+                        _AdminHero(
+                          activeTechnicians:
+                              technicians.where((tech) => tech.isActive).length,
+                          totalCustomers:
+                              ref.watch(customersProvider).valueOrNull?.length ??
+                                  0,
+                          overdueJobs: overdueBookings.length,
+                        ),
+                        const SizedBox(height: 18),
+                        _AdminMetricGrid(
+                          metrics: [
+                            _MetricData(
+                              label: 'Filtered bookings',
+                              value: '${filteredBookings.length}',
+                              caption: '${bookings.length} total jobs',
+                              color: AppTheme.primary,
+                              icon: Icons.filter_alt_outlined,
+                            ),
+                            _MetricData(
+                              label: 'Revenue today',
+                              value: _formatCurrency(revenueToday),
+                              caption: 'Paid bills only',
+                              color: AppTheme.accent,
+                              icon: Icons.currency_rupee,
+                            ),
+                            _MetricData(
+                              label: 'Revenue month',
+                              value: _formatCurrency(revenueMonth),
+                              caption: 'This month',
+                              color: const Color(0xFF6B7CFF),
+                              icon: Icons.insights_outlined,
+                            ),
+                            _MetricData(
+                              label: 'Jobs at risk',
+                              value: '${overdueBookings.length}',
+                              caption: '$dueSoonBookings due within 1 hour',
+                              color: const Color(0xFFD95C2A),
+                              icon: Icons.alarm_on_outlined,
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 18),
+                        _AdminFilterPanel(
+                          controller: _searchController,
+                          selectedStatus: _selectedStatus,
+                          selectedTechnicianId: _selectedTechnicianId,
+                          selectedRange: _selectedRange,
+                          technicians: technicians,
+                          onSearchChanged: (_) => setState(() {}),
+                          onStatusChanged: (value) =>
+                              setState(() => _selectedStatus = value),
+                          onTechnicianChanged: (value) => setState(
+                            () => _selectedTechnicianId =
+                                value == 'all' ? null : value,
+                          ),
+                          onRangeChanged: (value) =>
+                              setState(() => _selectedRange = value),
+                          onClear: () {
+                            setState(() {
+                              _searchController.clear();
+                              _selectedStatus = null;
+                              _selectedTechnicianId = null;
+                              _selectedRange = AdminRangeFilter.today;
+                            });
+                          },
+                        ),
+                        const SizedBox(height: 18),
+                        wideLayout
+                            ? Row(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Expanded(
+                                    flex: 3,
+                                    child: _LiveMonitoringSection(
+                                      locations: locations,
+                                      bookings: bookings,
+                                      selectedTechnicianId:
+                                          _selectedTechnicianId,
+                                    ),
+                                  ),
+                                  const SizedBox(width: 18),
+                                  Expanded(
+                                    flex: 2,
+                                    child: _TechnicianPerformanceRail(
+                                      items: performance,
+                                    ),
+                                  ),
+                                ],
+                              )
+                            : Column(
+                                children: [
+                                  _LiveMonitoringSection(
+                                    locations: locations,
+                                    bookings: bookings,
+                                    selectedTechnicianId:
+                                        _selectedTechnicianId,
+                                  ),
+                                  const SizedBox(height: 18),
+                                  _TechnicianPerformanceRail(
+                                    items: performance,
+                                  ),
+                                ],
+                              ),
+                        const SizedBox(height: 18),
+                        _TechnicianEarningsSection(items: performance),
+                        const SizedBox(height: 18),
+                        _SectionCard(
+                          title: 'Booking control',
+                          subtitle:
+                              'Filter, assign, collect payments, and watch service deadlines.',
+                          child: filteredBookings.isEmpty
+                              ? const Padding(
+                                  padding: EdgeInsets.all(24),
+                                  child: Text(
+                                    'No bookings match the current filters.',
+                                    style: TextStyle(
+                                      color: AppTheme.textSecondary,
+                                    ),
+                                  ),
+                                )
+                              : Column(
+                                  children: [
+                                    for (var i = 0;
+                                        i < filteredBookings.length;
+                                        i++) ...[
+                                      _AdminBookingCard(
+                                        booking: filteredBookings[i],
+                                        now: now,
+                                      ),
+                                      if (i != filteredBookings.length - 1)
+                                        const SizedBox(height: 12),
+                                    ],
+                                  ],
+                                ),
+                        ),
+                        const SizedBox(height: 18),
+                        _SectionCard(
+                          title: 'Technician management',
+                          subtitle:
+                              'Enable or disable technicians without losing visibility into their performance.',
+                          child: Column(
+                            children: [
+                              for (var i = 0; i < technicians.length; i++) ...[
+                                _TechnicianTile(technician: technicians[i]),
+                                if (i != technicians.length - 1)
+                                  const SizedBox(height: 10),
+                              ],
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  );
+                },
+              );
+            },
+          ),
+        ),
       ),
     );
-  }
-
-  static bool _isSameDay(DateTime left, DateTime right) {
-    return left.year == right.year &&
-        left.month == right.month &&
-        left.day == right.day;
   }
 
   Future<void> _manualBooking(BuildContext context, WidgetRef ref) async {
@@ -184,7 +361,8 @@ class AdminDashboardScreen extends ConsumerWidget {
                       minLines: 2,
                       maxLines: 4,
                       decoration: const InputDecoration(
-                          labelText: 'Problem description'),
+                        labelText: 'Problem description',
+                      ),
                       validator: _required,
                     ),
                   ],
@@ -236,10 +414,793 @@ class AdminDashboardScreen extends ConsumerWidget {
       value == null || value.trim().isEmpty ? 'Required' : null;
 }
 
+class _AdminHero extends StatelessWidget {
+  const _AdminHero({
+    required this.activeTechnicians,
+    required this.totalCustomers,
+    required this.overdueJobs,
+  });
+
+  final int activeTechnicians;
+  final int totalCustomers;
+  final int overdueJobs;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(18),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: Stack(
+        children: [
+          Positioned.fill(
+            child: Image.asset(
+              'assets/images/fix_now_general.png',
+              fit: BoxFit.cover,
+              alignment: Alignment.centerRight,
+            ),
+          ),
+          Positioned.fill(
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.centerLeft,
+                  end: Alignment.centerRight,
+                  colors: [
+                    AppTheme.primary.withValues(alpha: 0.92),
+                    AppTheme.primary.withValues(alpha: 0.72),
+                    AppTheme.accent.withValues(alpha: 0.42),
+                  ],
+                ),
+              ),
+            ),
+          ),
+          Container(
+            decoration: BoxDecoration(
+              border: Border.all(
+                color: Colors.white.withValues(alpha: 0.2),
+              ),
+              borderRadius: BorderRadius.circular(18),
+            ),
+            padding: const EdgeInsets.all(20),
+            child: Wrap(
+              runSpacing: 16,
+              spacing: 16,
+              alignment: WrapAlignment.spaceBetween,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              children: [
+                const SizedBox(
+                  width: 420,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Operations command center',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 28,
+                          fontWeight: FontWeight.w900,
+                        ),
+                      ),
+                      SizedBox(height: 8),
+                      Text(
+                        'Track technician movement, watch overdue jobs, and compare who is earning what today and this month.',
+                        style: TextStyle(
+                          color: Color(0xFFE8F1FF),
+                          fontSize: 14,
+                          height: 1.45,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                Wrap(
+                  spacing: 12,
+                  runSpacing: 12,
+                  children: [
+                    _HeroTag(
+                      label: 'Active technicians',
+                      value: '$activeTechnicians',
+                    ),
+                    _HeroTag(
+                      label: 'Customers',
+                      value: '$totalCustomers',
+                    ),
+                    _HeroTag(
+                      label: 'Overdue jobs',
+                      value: '$overdueJobs',
+                      danger: overdueJobs > 0,
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _HeroTag extends StatelessWidget {
+  const _HeroTag({
+    required this.label,
+    required this.value,
+    this.danger = false,
+  });
+
+  final String label;
+  final String value;
+  final bool danger;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: 160,
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: danger
+            ? Colors.white.withValues(alpha: 0.17)
+            : Colors.white.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.16)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            value,
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 24,
+              fontWeight: FontWeight.w900,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            label,
+            style: const TextStyle(
+              color: Color(0xFFEAF2FF),
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _AdminMetricGrid extends StatelessWidget {
+  const _AdminMetricGrid({required this.metrics});
+
+  final List<_MetricData> metrics;
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final columns = constraints.maxWidth >= 1180
+            ? 4
+            : constraints.maxWidth >= 760
+                ? 2
+                : 1;
+        return GridView.builder(
+          shrinkWrap: true,
+          physics: const NeverScrollableScrollPhysics(),
+          itemCount: metrics.length,
+          gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+            crossAxisCount: columns,
+            mainAxisSpacing: 14,
+            crossAxisSpacing: 14,
+            mainAxisExtent: 156,
+          ),
+          itemBuilder: (context, index) => _MetricCard(data: metrics[index]),
+        );
+      },
+    );
+  }
+}
+
+class _MetricData {
+  const _MetricData({
+    required this.label,
+    required this.value,
+    required this.caption,
+    required this.color,
+    required this.icon,
+  });
+
+  final String label;
+  final String value;
+  final String caption;
+  final Color color;
+  final IconData icon;
+}
+
+class _MetricCard extends StatelessWidget {
+  const _MetricCard({required this.data});
+
+  final _MetricData data;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: AppTheme.divider),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            width: 42,
+            height: 42,
+            decoration: BoxDecoration(
+              color: data.color.withValues(alpha: 0.12),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Icon(data.icon, color: data.color),
+          ),
+          const SizedBox(height: 18),
+          Text(
+            data.value,
+            style: const TextStyle(
+              fontSize: 24,
+              fontWeight: FontWeight.w900,
+              color: AppTheme.textPrimary,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            data.label,
+            style: const TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.w700,
+              color: AppTheme.textPrimary,
+            ),
+          ),
+          const SizedBox(height: 2),
+          Text(
+            data.caption,
+            style: const TextStyle(
+              fontSize: 12,
+              color: AppTheme.textSecondary,
+            ),
+          ),
+          const Spacer(),
+        ],
+      ),
+    );
+  }
+}
+
+class _AdminFilterPanel extends StatelessWidget {
+  const _AdminFilterPanel({
+    required this.controller,
+    required this.selectedStatus,
+    required this.selectedTechnicianId,
+    required this.selectedRange,
+    required this.technicians,
+    required this.onSearchChanged,
+    required this.onStatusChanged,
+    required this.onTechnicianChanged,
+    required this.onRangeChanged,
+    required this.onClear,
+  });
+
+  final TextEditingController controller;
+  final BookingStatus? selectedStatus;
+  final String? selectedTechnicianId;
+  final AdminRangeFilter selectedRange;
+  final List<AppUser> technicians;
+  final ValueChanged<String> onSearchChanged;
+  final ValueChanged<BookingStatus?> onStatusChanged;
+  final ValueChanged<String?> onTechnicianChanged;
+  final ValueChanged<AdminRangeFilter> onRangeChanged;
+  final VoidCallback onClear;
+
+  @override
+  Widget build(BuildContext context) {
+    return _SectionCard(
+      title: 'Filters',
+      subtitle:
+          'Slice bookings by status, technician, search, and operating window.',
+      child: Column(
+        children: [
+          LayoutBuilder(
+            builder: (context, constraints) {
+              final stacked = constraints.maxWidth < 900;
+              final fields = [
+                Expanded(
+                  flex: 3,
+                  child: TextField(
+                    controller: controller,
+                    onChanged: onSearchChanged,
+                    decoration: const InputDecoration(
+                      prefixIcon: Icon(Icons.search),
+                      labelText: 'Search customer, appliance, phone, address',
+                    ),
+                  ),
+                ),
+                if (!stacked) const SizedBox(width: 12),
+                Expanded(
+                  flex: 2,
+                  child: DropdownButtonFormField<BookingStatus?>(
+                    initialValue: selectedStatus,
+                    decoration: const InputDecoration(
+                      labelText: 'Status filter',
+                    ),
+                    items: [
+                      const DropdownMenuItem<BookingStatus?>(
+                        value: null,
+                        child: Text('All statuses'),
+                      ),
+                      ...BookingStatus.values.map(
+                        (status) => DropdownMenuItem<BookingStatus?>(
+                          value: status,
+                          child: Text(status.label),
+                        ),
+                      ),
+                    ],
+                    onChanged: onStatusChanged,
+                  ),
+                ),
+                if (!stacked) const SizedBox(width: 12),
+                Expanded(
+                  flex: 2,
+                  child: DropdownButtonFormField<String?>(
+                    initialValue: selectedTechnicianId ?? 'all',
+                    decoration: const InputDecoration(
+                      labelText: 'Technician filter',
+                    ),
+                    items: [
+                      const DropdownMenuItem<String?>(
+                        value: 'all',
+                        child: Text('All technicians'),
+                      ),
+                      ...technicians.map(
+                        (tech) => DropdownMenuItem<String?>(
+                          value: tech.uid,
+                          child: Text(tech.name),
+                        ),
+                      ),
+                    ],
+                    onChanged: onTechnicianChanged,
+                  ),
+                ),
+              ];
+              if (stacked) {
+                return Column(
+                  children: [
+                    fields[0],
+                    const SizedBox(height: 12),
+                    fields[1],
+                    const SizedBox(height: 12),
+                    fields[2],
+                  ],
+                );
+              }
+              return Row(children: fields);
+            },
+          ),
+          const SizedBox(height: 14),
+          Row(
+            children: [
+              Expanded(
+                child: Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    for (final range in AdminRangeFilter.values)
+                      ChoiceChip(
+                        label: Text(range.label),
+                        selected: selectedRange == range,
+                        onSelected: (_) => onRangeChanged(range),
+                      ),
+                  ],
+                ),
+              ),
+              TextButton.icon(
+                onPressed: onClear,
+                icon: const Icon(Icons.restart_alt),
+                label: const Text('Clear'),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _LiveMonitoringSection extends StatelessWidget {
+  const _LiveMonitoringSection({
+    required this.locations,
+    required this.bookings,
+    required this.selectedTechnicianId,
+  });
+
+  final List<TechnicianLocation> locations;
+  final List<Booking> bookings;
+  final String? selectedTechnicianId;
+
+  @override
+  Widget build(BuildContext context) {
+    final visibleLocations = selectedTechnicianId == null
+        ? locations
+        : locations
+            .where((location) => location.technicianId == selectedTechnicianId)
+            .toList();
+    final activeByTechnician = {
+      for (final booking in bookings)
+        if (booking.technicianId != null &&
+            booking.status != BookingStatus.closed)
+          booking.technicianId!: booking,
+    };
+
+    return _SectionCard(
+      title: 'Live monitoring',
+      subtitle:
+          'Watch all technicians at once and cross-check who is moving, idle, or overdue.',
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            height: 360,
+            child: _TechnicianMap(
+              locations: visibleLocations,
+              activeByTechnician: activeByTechnician,
+            ),
+          ),
+          const SizedBox(height: 14),
+          Wrap(
+            spacing: 10,
+            runSpacing: 10,
+            children: [
+              _MonitorChip(
+                label: 'Visible technicians',
+                value: '${visibleLocations.length}',
+                color: AppTheme.primary,
+              ),
+              _MonitorChip(
+                label: 'On active jobs',
+                value: '${activeByTechnician.length}',
+                color: AppTheme.accent,
+              ),
+              _MonitorChip(
+                label: 'Stale location updates',
+                value:
+                    '${visibleLocations.where((location) => DateTime.now().difference(location.updatedAt) > const Duration(minutes: 15)).length}',
+                color: const Color(0xFFD95C2A),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _MonitorChip extends StatelessWidget {
+  const _MonitorChip({
+    required this.label,
+    required this.value,
+    required this.color,
+  });
+
+  final String label;
+  final String value;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(14),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(Icons.circle, size: 10, color: color),
+          const SizedBox(width: 8),
+          Text(
+            '$label: $value',
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w700,
+              color: color,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _TechnicianPerformanceRail extends StatelessWidget {
+  const _TechnicianPerformanceRail({required this.items});
+
+  final List<TechnicianPerformance> items;
+
+  @override
+  Widget build(BuildContext context) {
+    return _SectionCard(
+      title: 'Technician pulse',
+      subtitle: 'Who is earning, who is active, and who needs intervention.',
+      child: Column(
+        children: [
+          for (var i = 0; i < items.length; i++) ...[
+            _TechnicianPulseTile(item: items[i]),
+            if (i != items.length - 1) const SizedBox(height: 10),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _TechnicianPulseTile extends StatelessWidget {
+  const _TechnicianPulseTile({required this.item});
+
+  final TechnicianPerformance item;
+
+  @override
+  Widget build(BuildContext context) {
+    final color = item.highlightRisk ? const Color(0xFFD95C2A) : AppTheme.accent;
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: item.highlightRisk
+              ? const Color(0xFFF2C5B4)
+              : AppTheme.divider,
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              CircleAvatar(
+                backgroundColor: color.withValues(alpha: 0.12),
+                foregroundColor: color,
+                child: Text(
+                  item.technician.name.isEmpty
+                      ? 'T'
+                      : item.technician.name.substring(0, 1).toUpperCase(),
+                  style: TextStyle(
+                    color: color,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      item.technician.name,
+                      style: const TextStyle(
+                        fontSize: 15,
+                        fontWeight: FontWeight.w800,
+                        color: AppTheme.textPrimary,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      item.statusLabel,
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
+                        color: color,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              _MiniStat(label: 'Today', value: _formatCurrency(item.dailyEarnings)),
+              _MiniStat(
+                label: 'Month',
+                value: _formatCurrency(item.monthlyEarnings),
+              ),
+              _MiniStat(label: 'Active', value: '${item.activeBookings}'),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Text(
+            item.lastLocationUpdate == null
+                ? 'No recent live location'
+                : 'Last location: ${_formatRelative(item.lastLocationUpdate!)}',
+            style: const TextStyle(
+              fontSize: 12,
+              color: AppTheme.textSecondary,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _MiniStat extends StatelessWidget {
+  const _MiniStat({required this.label, required this.value});
+
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      decoration: BoxDecoration(
+        color: AppTheme.surface,
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Text(
+        '$label: $value',
+        style: const TextStyle(
+          fontSize: 12,
+          fontWeight: FontWeight.w700,
+          color: AppTheme.textPrimary,
+        ),
+      ),
+    );
+  }
+}
+
+class _TechnicianEarningsSection extends StatelessWidget {
+  const _TechnicianEarningsSection({required this.items});
+
+  final List<TechnicianPerformance> items;
+
+  @override
+  Widget build(BuildContext context) {
+    return _SectionCard(
+      title: 'Technician-wise earnings',
+      subtitle:
+          'Daily earnings, monthly earnings, completed jobs, and pending collections.',
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final columns = constraints.maxWidth >= 1100
+              ? 3
+              : constraints.maxWidth >= 720
+                  ? 2
+                  : 1;
+          return GridView.builder(
+            shrinkWrap: true,
+            physics: const NeverScrollableScrollPhysics(),
+            itemCount: items.length,
+            gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+              crossAxisCount: columns,
+              mainAxisExtent: 178,
+              mainAxisSpacing: 12,
+              crossAxisSpacing: 12,
+            ),
+            itemBuilder: (context, index) {
+              final item = items[index];
+              return Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(color: AppTheme.divider),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      item.technician.name,
+                      style: const TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w800,
+                        color: AppTheme.textPrimary,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      item.statusLabel,
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
+                        color: item.highlightRisk
+                            ? const Color(0xFFD95C2A)
+                            : AppTheme.accent,
+                      ),
+                    ),
+                    const Spacer(),
+                    _EarningsRow(
+                      label: 'Daily earning',
+                      value: _formatCurrency(item.dailyEarnings),
+                    ),
+                    _EarningsRow(
+                      label: 'Monthly earning',
+                      value: _formatCurrency(item.monthlyEarnings),
+                    ),
+                    _EarningsRow(
+                      label: 'Completed jobs',
+                      value: '${item.completedJobs}',
+                    ),
+                    _EarningsRow(
+                      label: 'Pending collection',
+                      value: _formatCurrency(item.pendingCollections),
+                      warning: item.pendingCollections > 0,
+                    ),
+                  ],
+                ),
+              );
+            },
+          );
+        },
+      ),
+    );
+  }
+}
+
+class _EarningsRow extends StatelessWidget {
+  const _EarningsRow({
+    required this.label,
+    required this.value,
+    this.warning = false,
+  });
+
+  final String label;
+  final String value;
+  final bool warning;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(top: 6),
+      child: Row(
+        children: [
+          Expanded(
+            child: Text(
+              label,
+              style: const TextStyle(
+                fontSize: 12,
+                color: AppTheme.textSecondary,
+              ),
+            ),
+          ),
+          Text(
+            value,
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w800,
+              color: warning ? const Color(0xFFD95C2A) : AppTheme.textPrimary,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class _AdminBookingCard extends ConsumerWidget {
-  const _AdminBookingCard({required this.booking});
+  const _AdminBookingCard({
+    required this.booking,
+    required this.now,
+  });
 
   final Booking booking;
+  final DateTime now;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -264,18 +1225,124 @@ class _AdminBookingCard extends ConsumerWidget {
     }
     final bill = ref.watch(bookingBillProvider(booking.id)).valueOrNull;
     final canAssign = booking.status == BookingStatus.booked;
-    return Card(
-      child: ExpansionTile(
-        title: Text('${booking.applianceType} | ${booking.customerName}'),
-        subtitle: Text(booking.status.label),
-        childrenPadding: const EdgeInsets.all(12),
+    final overdue = isBookingOverdue(booking, now);
+    final deadline = bookingDeadline(booking);
+    final dueSoon = !overdue &&
+        deadline != null &&
+        deadline.difference(now) <= const Duration(hours: 1);
+
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(
+          color: overdue
+              ? const Color(0xFFF0C4B4)
+              : dueSoon
+                  ? const Color(0xFFFFD6A8)
+                  : AppTheme.divider,
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Align(
-            alignment: Alignment.centerLeft,
-            child: Text(
-                '${booking.phone}\n${booking.address}\n${booking.problemDescription}'),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      crossAxisAlignment: WrapCrossAlignment.center,
+                      children: [
+                        Text(
+                          '${booking.applianceType} • ${booking.customerName}',
+                          style: const TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w800,
+                            color: AppTheme.textPrimary,
+                          ),
+                        ),
+                        _StatusPill(
+                          label: booking.status.label,
+                          color: _statusColor(booking.status),
+                        ),
+                        if (overdue)
+                          const _StatusPill(
+                            label: 'Overdue',
+                            color: Color(0xFFD95C2A),
+                          )
+                        else if (dueSoon)
+                          const _StatusPill(
+                            label: 'Due soon',
+                            color: Color(0xFFF38A1F),
+                          ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      '${booking.phone} • ${booking.address}',
+                      style: const TextStyle(
+                        fontSize: 13,
+                        color: AppTheme.textSecondary,
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      booking.problemDescription,
+                      style: const TextStyle(
+                        fontSize: 13,
+                        color: AppTheme.textPrimary,
+                        height: 1.4,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 12),
+              OutlinedButton.icon(
+                onPressed: () => context.push('/booking/${booking.id}'),
+                icon: const Icon(Icons.open_in_new, size: 18),
+                label: const Text('Open'),
+              ),
+            ],
           ),
-          const SizedBox(height: 12),
+          const SizedBox(height: 14),
+          Wrap(
+            spacing: 10,
+            runSpacing: 10,
+            children: [
+              _BookingInfoChip(
+                icon: Icons.calendar_today_outlined,
+                label:
+                    DateFormat('dd MMM, hh:mm a').format(bookingScheduledAt(booking)!),
+              ),
+              _BookingInfoChip(
+                icon: Icons.engineering_outlined,
+                label: booking.technicianName ?? 'Unassigned',
+              ),
+              if (deadline != null)
+                _BookingInfoChip(
+                  icon: Icons.timer_outlined,
+                  label: overdue
+                      ? 'Missed deadline by ${_formatDuration(now.difference(deadline))}'
+                      : 'Window closes in ${_formatDuration(deadline.difference(now))}',
+                ),
+              if (bill != null)
+                _BookingInfoChip(
+                  icon: bill.isPaid
+                      ? Icons.payments_outlined
+                      : Icons.currency_rupee,
+                  label:
+                      '${bill.isPaid ? 'Paid' : 'Pending'} ${_formatCurrency(bill.amount)}',
+                ),
+            ],
+          ),
+          const SizedBox(height: 14),
           DropdownButtonFormField<String>(
             initialValue: booking.technicianId,
             decoration: InputDecoration(
@@ -318,9 +1385,7 @@ class _AdminBookingCard extends ConsumerWidget {
                 onPressed: () =>
                     ref.read(billRepositoryProvider).markPaid(booking.id),
                 icon: const Icon(Icons.payments_outlined),
-                label: Text(
-                  'Mark INR ${bill.amount.toStringAsFixed(0)} paid',
-                ),
+                label: Text('Mark ${_formatCurrency(bill.amount)} paid'),
               ),
             ),
           ],
@@ -357,69 +1422,147 @@ class _AdminBookingCard extends ConsumerWidget {
   }
 }
 
-class _TechnicianMap extends ConsumerWidget {
-  const _TechnicianMap();
+class _BookingInfoChip extends StatelessWidget {
+  const _BookingInfoChip({
+    required this.icon,
+    required this.label,
+  });
+
+  final IconData icon;
+  final String label;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    // watchActiveLocations() returns Stream<List<TechnicianLocation>>
-    final locations =
-        ref.watch(technicianRepositoryProvider).watchActiveLocations();
-    return StreamBuilder<List<TechnicianLocation>>(
-      stream: locations,
-      builder: (context, snapshot) {
-        final docs = snapshot.data ?? <TechnicianLocation>[];
-        final now = DateTime.now();
-        final idle = docs
-            .where((location) =>
-                location.activeBookingId != null &&
-                now.difference(location.updatedAt) >
-                    const Duration(minutes: 15))
-            .toList();
-        final markers = docs.map((loc) {
-          final isIdle = idle.any(
-            (location) => location.technicianId == loc.technicianId,
-          );
-          return Marker(
-            markerId: MarkerId(loc.technicianId),
-            position: LatLng(loc.latitude, loc.longitude),
-            icon: BitmapDescriptor.defaultMarkerWithHue(
-              isIdle ? BitmapDescriptor.hueOrange : BitmapDescriptor.hueAzure,
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      decoration: BoxDecoration(
+        color: AppTheme.surface,
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 16, color: AppTheme.primary),
+          const SizedBox(width: 8),
+          Text(
+            label,
+            style: const TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w700,
+              color: AppTheme.textPrimary,
             ),
-            infoWindow: InfoWindow(
-              title: loc.technicianId,
-              snippet: isIdle ? 'Idle at location for over 15 minutes' : null,
-            ),
-          );
-        }).toSet();
-        final center = markers.isEmpty
-            ? const LatLng(20.5937, 78.9629)
-            : markers.first.position;
-        return Column(
-          children: [
-            if (idle.isNotEmpty)
-              MaterialBanner(
-                content: Text(
-                  '${idle.length} technician(s) have not updated location for over 15 minutes.',
-                ),
-                leading: const Icon(Icons.warning_amber_rounded),
-                actions: const [SizedBox.shrink()],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _StatusPill extends StatelessWidget {
+  const _StatusPill({
+    required this.label,
+    required this.color,
+  });
+
+  final String label;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Text(
+        label,
+        style: TextStyle(
+          color: color,
+          fontSize: 11,
+          fontWeight: FontWeight.w800,
+        ),
+      ),
+    );
+  }
+}
+
+class _TechnicianMap extends StatelessWidget {
+  const _TechnicianMap({
+    required this.locations,
+    required this.activeByTechnician,
+  });
+
+  final List<TechnicianLocation> locations;
+  final Map<String, Booking> activeByTechnician;
+
+  @override
+  Widget build(BuildContext context) {
+    final now = DateTime.now();
+    final markers = locations.map((location) {
+      final booking = activeByTechnician[location.technicianId];
+      final stale =
+          now.difference(location.updatedAt) > const Duration(minutes: 15);
+      final color = stale
+          ? const Color(0xFFD95C2A)
+          : booking != null
+              ? AppTheme.primary
+              : AppTheme.accent;
+      return Marker(
+        point: LatLng(location.latitude, location.longitude),
+        width: 52,
+        height: 52,
+        child: Container(
+          decoration: BoxDecoration(
+            color: Colors.white,
+            shape: BoxShape.circle,
+            border: Border.all(color: color, width: 3),
+            boxShadow: [
+              BoxShadow(
+                color: color.withValues(alpha: 0.18),
+                blurRadius: 14,
+                offset: const Offset(0, 6),
               ),
-            Expanded(
-              child: ClipRRect(
-                borderRadius: BorderRadius.circular(8),
-                child: GoogleMap(
-                  initialCameraPosition: CameraPosition(
-                    target: center,
-                    zoom: markers.isEmpty ? 4 : 12,
-                  ),
-                  markers: markers,
-                ),
-              ),
+            ],
+          ),
+          alignment: Alignment.center,
+          child: Text(
+            location.technicianId.isEmpty
+                ? 'T'
+                : location.technicianId.substring(0, 1).toUpperCase(),
+            style: TextStyle(
+              color: color,
+              fontSize: 15,
+              fontWeight: FontWeight.w900,
             ),
-          ],
-        );
-      },
+          ),
+        ),
+      );
+    }).toList();
+    final center = markers.isEmpty
+        ? const LatLng(20.5937, 78.9629)
+        : markers.first.point;
+
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(18),
+      child: FlutterMap(
+        options: MapOptions(
+          initialCenter: center,
+          initialZoom: markers.isEmpty ? 4 : 11,
+          interactionOptions: const InteractionOptions(
+            flags: InteractiveFlag.drag |
+                InteractiveFlag.pinchZoom |
+                InteractiveFlag.doubleTapZoom,
+          ),
+        ),
+        children: [
+          TileLayer(
+            urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+            userAgentPackageName: 'com.fixnow.app',
+          ),
+          MarkerLayer(markers: markers),
+        ],
+      ),
     );
   }
 }
@@ -431,9 +1574,17 @@ class _TechnicianTile extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    return Card(
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: AppTheme.divider),
+      ),
       child: SwitchListTile(
-        title: Text(technician.name),
+        title: Text(
+          technician.name,
+          style: const TextStyle(fontWeight: FontWeight.w800),
+        ),
         subtitle: Text('${technician.phone} • ${technician.email}'),
         value: technician.isActive,
         onChanged: (value) => ref
@@ -444,28 +1595,128 @@ class _TechnicianTile extends ConsumerWidget {
   }
 }
 
-class _MetricCard extends StatelessWidget {
-  const _MetricCard({required this.label, required this.value});
+class _SectionCard extends StatelessWidget {
+  const _SectionCard({
+    required this.title,
+    required this.subtitle,
+    required this.child,
+  });
 
-  final String label;
-  final String value;
+  final String title;
+  final String subtitle;
+  final Widget child;
 
   @override
   Widget build(BuildContext context) {
-    return SizedBox(
-      width: 180,
-      child: Card(
+    return Container(
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF8FAFF),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: AppTheme.divider),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            title,
+            style: const TextStyle(
+              fontSize: 20,
+              fontWeight: FontWeight.w900,
+              color: AppTheme.textPrimary,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            subtitle,
+            style: const TextStyle(
+              fontSize: 13,
+              color: AppTheme.textSecondary,
+              height: 1.45,
+            ),
+          ),
+          const SizedBox(height: 16),
+          child,
+        ],
+      ),
+    );
+  }
+}
+
+class _AdminError extends StatelessWidget {
+  const _AdminError({
+    required this.message,
+    required this.onRetry,
+  });
+
+  final String message;
+  final VoidCallback onRetry;
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 520),
         child: Padding(
-          padding: const EdgeInsets.all(16),
+          padding: const EdgeInsets.all(24),
           child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
             children: [
-              Text(value, style: Theme.of(context).textTheme.headlineSmall),
-              Text(label),
+              const Icon(Icons.error_outline, size: 44, color: Colors.red),
+              const SizedBox(height: 12),
+              Text(
+                message,
+                textAlign: TextAlign.center,
+                style: const TextStyle(color: AppTheme.textPrimary),
+              ),
+              const SizedBox(height: 12),
+              FilledButton.icon(
+                onPressed: onRetry,
+                icon: const Icon(Icons.refresh),
+                label: const Text('Retry'),
+              ),
             ],
           ),
         ),
       ),
     );
   }
+}
+
+Color _statusColor(BookingStatus status) {
+  return switch (status) {
+    BookingStatus.booked => const Color(0xFF4B6BFB),
+    BookingStatus.technicianAssigned => const Color(0xFF2D8CFF),
+    BookingStatus.accepted => const Color(0xFF14A38B),
+    BookingStatus.onTheWay => const Color(0xFF0088CC),
+    BookingStatus.arrived => const Color(0xFF5C7CFA),
+    BookingStatus.estimateSent => const Color(0xFFF08C00),
+    BookingStatus.estimateApproved => const Color(0xFF2B8A3E),
+    BookingStatus.serviceStarted => const Color(0xFF7B61FF),
+    BookingStatus.serviceCompleted => const Color(0xFF1C7ED6),
+    BookingStatus.billGenerated => const Color(0xFF845EF7),
+    BookingStatus.closed => const Color(0xFF6C757D),
+  };
+}
+
+String _formatCurrency(double amount) {
+  return 'Rs. ${amount.toStringAsFixed(0)}';
+}
+
+String _formatDuration(Duration duration) {
+  final positive = duration.isNegative ? duration * -1 : duration;
+  final hours = positive.inHours;
+  final minutes = positive.inMinutes.remainder(60);
+  if (hours > 0) {
+    return '${hours}h ${minutes}m';
+  }
+  return '${positive.inMinutes}m';
+}
+
+String _formatRelative(DateTime time) {
+  final delta = DateTime.now().difference(time);
+  if (delta.inMinutes < 1) return 'just now';
+  if (delta.inHours < 1) return '${delta.inMinutes}m ago';
+  if (delta.inDays < 1) return '${delta.inHours}h ago';
+  return DateFormat('dd MMM, hh:mm a').format(time);
 }

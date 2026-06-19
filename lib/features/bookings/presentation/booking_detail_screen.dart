@@ -1,8 +1,9 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_map/flutter_map.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
-import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:intl/intl.dart';
+import 'package:latlong2/latlong.dart';
 
 import '../../../app/theme/app_theme.dart';
 import '../../../core/enums/booking_status.dart';
@@ -1058,42 +1059,84 @@ class _TrackingMap extends StatelessWidget {
     final techPosition = technicianLocation == null
         ? null
         : LatLng(technicianLocation!.latitude, technicianLocation!.longitude);
-    final markers = <Marker>{
-      Marker(
-        markerId: const MarkerId('service-location'),
-        position: servicePosition,
-        infoWindow: const InfoWindow(title: 'Service location'),
+    return FlutterMap(
+      options: MapOptions(
+        initialCenter: techPosition ?? servicePosition,
+        initialZoom: techPosition == null ? 14 : 12,
+        interactionOptions: const InteractionOptions(
+          flags: InteractiveFlag.drag |
+              InteractiveFlag.pinchZoom |
+              InteractiveFlag.doubleTapZoom,
+        ),
       ),
-      if (techPosition != null)
-        Marker(
-          markerId: const MarkerId('technician-location'),
-          position: techPosition,
-          infoWindow: const InfoWindow(title: 'Technician'),
-          icon: BitmapDescriptor.defaultMarkerWithHue(
-            BitmapDescriptor.hueAzure,
+      children: [
+        TileLayer(
+          urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+          userAgentPackageName: 'com.fixnow.app',
+        ),
+        if (techPosition != null)
+          PolylineLayer(
+            polylines: [
+              Polyline(
+                points: [techPosition, servicePosition],
+                color: AppTheme.primary,
+                strokeWidth: 4,
+              ),
+            ],
           ),
+        MarkerLayer(
+          markers: [
+            Marker(
+              point: servicePosition,
+              width: 48,
+              height: 48,
+              child: const _TrackingMarker(
+                icon: Icons.home_repair_service_outlined,
+                color: AppTheme.accent,
+              ),
+            ),
+            if (techPosition != null)
+              Marker(
+                point: techPosition,
+                width: 48,
+                height: 48,
+                child: const _TrackingMarker(
+                  icon: Icons.engineering_outlined,
+                  color: AppTheme.primary,
+                ),
+              ),
+          ],
         ),
-    };
-    final polylines = <Polyline>{
-      if (techPosition != null)
-        Polyline(
-          polylineId: const PolylineId('technician-route'),
-          points: [techPosition, servicePosition],
-          color: AppTheme.primary,
-          width: 4,
-        ),
-    };
+      ],
+    );
+  }
+}
 
-    return GoogleMap(
-      initialCameraPosition: CameraPosition(
-        target: techPosition ?? servicePosition,
-        zoom: techPosition == null ? 14 : 12,
+class _TrackingMarker extends StatelessWidget {
+  const _TrackingMarker({
+    required this.icon,
+    required this.color,
+  });
+
+  final IconData icon;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        shape: BoxShape.circle,
+        border: Border.all(color: color, width: 2),
+        boxShadow: [
+          BoxShadow(
+            color: color.withValues(alpha: 0.18),
+            blurRadius: 14,
+            offset: const Offset(0, 6),
+          ),
+        ],
       ),
-      markers: markers,
-      polylines: polylines,
-      zoomControlsEnabled: false,
-      myLocationButtonEnabled: false,
-      mapToolbarEnabled: false,
+      child: Icon(icon, color: color, size: 22),
     );
   }
 }
