@@ -5,6 +5,7 @@ import 'package:go_router/go_router.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../../app/theme/app_theme.dart';
+import '../../../app/widgets/resilient_asset_image.dart';
 import '../../../core/constants/app_constants.dart';
 import '../../../core/enums/booking_status.dart';
 import '../../auth/data/auth_repository.dart';
@@ -220,11 +221,13 @@ class _CustomerHeader extends StatelessWidget {
       children: [
         ClipRRect(
           borderRadius: BorderRadius.circular(10),
-          child: Image.asset(
-            'assets/images/fixnow_logo.png',
+          child: const ResilientAssetImage(
+            assetName: 'assets/images/fixnow_logo.png',
             width: 46,
             height: 46,
             fit: BoxFit.contain,
+            fallbackIcon: Icons.home_repair_service_outlined,
+            fallbackIconSize: 20,
           ),
         ),
         const SizedBox(width: 11),
@@ -359,10 +362,13 @@ class _WelcomeHero extends StatelessWidget {
       child: Stack(
         children: [
           Positioned.fill(
-            child: Image.asset(
-              'assets/images/fix_now_general.png',
+            child: const ResilientAssetImage(
+              assetName: 'assets/images/fix_now_general.png',
               fit: BoxFit.cover,
               alignment: Alignment.centerRight,
+              fallbackIcon: Icons.handyman_outlined,
+              fallbackIconSize: 60,
+              fallbackBackgroundColor: Color(0xFFEAF1FF),
             ),
           ),
           Positioned.fill(
@@ -437,9 +443,11 @@ class _WelcomeHero extends StatelessWidget {
                       ),
                       child: Padding(
                         padding: const EdgeInsets.all(8),
-                        child: Image.asset(
-                          'assets/images/fixnow_logo.png',
+                        child: const ResilientAssetImage(
+                          assetName: 'assets/images/fixnow_logo.png',
                           fit: BoxFit.contain,
+                          fallbackIcon: Icons.home_repair_service_outlined,
+                          fallbackIconSize: 26,
                         ),
                       ),
                     ),

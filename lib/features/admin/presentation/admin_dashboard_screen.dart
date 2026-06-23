@@ -9,7 +9,12 @@ import 'package:uuid/uuid.dart';
 
 import '../../../app/theme/app_theme.dart';
 import '../../../app/widgets/app_scaffold.dart';
+import '../../../app/widgets/resilient_asset_image.dart';
+import '../../../core/branches/branch_info.dart';
+import '../../../core/branches/branch_repository.dart';
+import '../../../core/branches/branch_resolver.dart';
 import '../../../core/enums/booking_status.dart';
+import '../../auth/data/auth_repository.dart';
 import '../../auth/domain/app_user.dart';
 import '../../bookings/data/booking_repository.dart';
 import '../../bookings/domain/booking.dart';
@@ -42,6 +47,11 @@ final activeTechnicianLocationsProvider =
   return ref.watch(technicianRepositoryProvider).watchActiveLocations();
 });
 
+final pendingTechnicianRequestsProvider =
+    StreamProvider.autoDispose<List<AppUser>>((ref) {
+  return ref.watch(adminRepositoryProvider).watchPendingTechnicianRequests();
+});
+
 class AdminDashboardScreen extends ConsumerStatefulWidget {
   const AdminDashboardScreen({super.key});
 
@@ -55,6 +65,7 @@ class _AdminDashboardScreenState extends ConsumerState<AdminDashboardScreen> {
   BookingStatus? _selectedStatus;
   String? _selectedTechnicianId;
   AdminRangeFilter _selectedRange = AdminRangeFilter.today;
+  String? _selectedBranchId;
 
   @override
   void dispose() {
@@ -64,10 +75,14 @@ class _AdminDashboardScreenState extends ConsumerState<AdminDashboardScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final branchesAsync = ref.watch(branchesProvider);
     final bookingsAsync = ref.watch(allBookingsProvider);
     final techniciansAsync = ref.watch(techniciansProvider);
+    final customersAsync = ref.watch(customersProvider);
     final billsAsync = ref.watch(allBillsProvider);
     final locationsAsync = ref.watch(activeTechnicianLocationsProvider);
+    final pendingRequestsAsync = ref.watch(pendingTechnicianRequestsProvider);
+    final currentAdmin = ref.watch(currentUserProvider).valueOrNull;
     final width = MediaQuery.sizeOf(context).width;
     final wideLayout = width >= 1100;
 
@@ -78,38 +93,99 @@ class _AdminDashboardScreenState extends ConsumerState<AdminDashboardScreen> {
         icon: const Icon(Icons.add),
         label: const Text('Manual Booking'),
       ),
-      body: bookingsAsync.when(
-        loading: () => const Center(child: CircularProgressIndicator()),
+      body: branchesAsync.when(
+        loading: () => const _AdminStatePanel(
+          title: 'Loading branches',
+          message: 'Fetching branch configuration for the admin console.',
+          icon: Icons.sync,
+          busy: true,
+        ),
+        error: (error, _) => _AdminError(
+          message: error.toString(),
+          onRetry: () => ref.invalidate(branchesProvider),
+        ),
+        data: (branches) {
+          if (branches.isEmpty) {
+            return _AdminEmptyBranches(
+              onAddBranch: () => _openBranchDialog(context, ref),
+            );
+          }
+          final effectiveBranchId =
+              currentAdmin?.branchId ?? _selectedBranchId ?? branches.first.id;
+          final effectiveBranch =
+              _branchById(branches, effectiveBranchId) ?? branches.first;
+
+          return bookingsAsync.when(
+        loading: () => const _AdminStatePanel(
+          title: 'Loading bookings',
+          message: 'Preparing today\'s jobs and service queue.',
+          icon: Icons.receipt_long_outlined,
+          busy: true,
+        ),
         error: (error, _) => _AdminError(
           message: error.toString(),
           onRetry: () => ref.invalidate(allBookingsProvider),
         ),
         data: (bookings) => techniciansAsync.when(
-          loading: () => const Center(child: CircularProgressIndicator()),
+          loading: () => const _AdminStatePanel(
+            title: 'Loading technicians',
+            message: 'Getting technician roster and assignment controls.',
+            icon: Icons.engineering_outlined,
+            busy: true,
+          ),
           error: (error, _) => _AdminError(
             message: error.toString(),
             onRetry: () => ref.invalidate(techniciansProvider),
           ),
           data: (technicians) => billsAsync.when(
-            loading: () => const Center(child: CircularProgressIndicator()),
+            loading: () => const _AdminStatePanel(
+              title: 'Loading billing',
+              message: 'Calculating collections and revenue metrics.',
+              icon: Icons.payments_outlined,
+              busy: true,
+            ),
             error: (error, _) => _AdminError(
               message: error.toString(),
               onRetry: () => ref.invalidate(allBillsProvider),
             ),
             data: (bills) {
               final now = DateTime.now();
+              final branchBookings = bookings
+                  .where((booking) => booking.branchId == effectiveBranchId)
+                  .toList();
+              final branchTechnicians = technicians
+                  .where((technician) => technician.branchId == effectiveBranchId)
+                  .toList();
+              if (customersAsync.hasError) {
+                return _AdminError(
+                  message: customersAsync.error.toString(),
+                  onRetry: () => ref.invalidate(customersProvider),
+                );
+              }
+              if (customersAsync.isLoading) {
+                return const _AdminStatePanel(
+                  title: 'Loading customers',
+                  message: 'Fetching branch customers and profile counts.',
+                  icon: Icons.people_outline,
+                  busy: true,
+                );
+              }
+              final branchCustomers =
+                  (customersAsync.valueOrNull ?? const <AppUser>[])
+                      .where((customer) => customer.branchId == effectiveBranchId)
+                      .toList();
               final filteredBookings = filterAdminBookings(
-                bookings: bookings,
+                bookings: branchBookings,
                 now: now,
                 query: _searchController.text,
                 status: _selectedStatus,
                 technicianId: _selectedTechnicianId,
                 range: _selectedRange,
               );
-              final overdueBookings = bookings
+              final overdueBookings = branchBookings
                   .where((booking) => isBookingOverdue(booking, now))
                   .toList();
-              final dueSoonBookings = bookings.where((booking) {
+              final dueSoonBookings = branchBookings.where((booking) {
                 final deadline = bookingDeadline(booking);
                 if (deadline == null || isBookingOverdue(booking, now)) {
                   return false;
@@ -127,7 +203,12 @@ class _AdminDashboardScreenState extends ConsumerState<AdminDashboardScreen> {
                   .fold<double>(0, (sum, bill) => sum + bill.amount);
 
               return locationsAsync.when(
-                loading: () => const Center(child: CircularProgressIndicator()),
+                loading: () => const _AdminStatePanel(
+                  title: 'Loading live tracking',
+                  message: 'Connecting technician locations and map markers.',
+                  icon: Icons.location_searching_outlined,
+                  busy: true,
+                ),
                 error: (error, _) => _AdminError(
                   message: error.toString(),
                   onRetry: () =>
@@ -135,12 +216,16 @@ class _AdminDashboardScreenState extends ConsumerState<AdminDashboardScreen> {
                 ),
                 data: (locations) {
                   final performance = buildTechnicianPerformance(
-                    technicians: technicians,
+                    technicians: branchTechnicians,
                     bills: bills,
-                    bookings: bookings,
+                    bookings: branchBookings,
                     locations: locations,
                     now: now,
                   );
+                  final pendingRequests = (pendingRequestsAsync.valueOrNull ??
+                          const <AppUser>[])
+                      .where((item) => item.branchId == effectiveBranchId)
+                      .toList();
                   return RefreshIndicator(
                     onRefresh: () async {
                       ref.invalidate(allBookingsProvider);
@@ -151,13 +236,29 @@ class _AdminDashboardScreenState extends ConsumerState<AdminDashboardScreen> {
                     child: ListView(
                       padding: const EdgeInsets.all(20),
                       children: [
+                        if (branches.length > 1 || currentAdmin?.branchId == null) ...[
+                          _BranchSwitcher(
+                            branches: branches,
+                            selectedBranchId: effectiveBranchId,
+                            onSelected: (value) =>
+                                setState(() => _selectedBranchId = value),
+                          ),
+                          const SizedBox(height: 14),
+                        ],
                         _AdminHero(
                           activeTechnicians:
-                              technicians.where((tech) => tech.isActive).length,
-                          totalCustomers:
-                              ref.watch(customersProvider).valueOrNull?.length ??
-                                  0,
+                              branchTechnicians.where((tech) => tech.isActive).length,
+                          totalCustomers: branchCustomers.length,
                           overdueJobs: overdueBookings.length,
+                          branchName: effectiveBranch.name,
+                        ),
+                        const SizedBox(height: 18),
+                        _BranchManagementSection(
+                          branches: branches,
+                          activeBranchId: effectiveBranch.id,
+                          onAddBranch: () => _openBranchDialog(context, ref),
+                          onEditBranch: (branch) =>
+                              _openBranchDialog(context, ref, branch: branch),
                         ),
                         const SizedBox(height: 18),
                         _AdminMetricGrid(
@@ -165,7 +266,7 @@ class _AdminDashboardScreenState extends ConsumerState<AdminDashboardScreen> {
                             _MetricData(
                               label: 'Filtered bookings',
                               value: '${filteredBookings.length}',
-                              caption: '${bookings.length} total jobs',
+                              caption: '${branchBookings.length} total jobs',
                               color: AppTheme.primary,
                               icon: Icons.filter_alt_outlined,
                             ),
@@ -198,7 +299,7 @@ class _AdminDashboardScreenState extends ConsumerState<AdminDashboardScreen> {
                           selectedStatus: _selectedStatus,
                           selectedTechnicianId: _selectedTechnicianId,
                           selectedRange: _selectedRange,
-                          technicians: technicians,
+                          technicians: branchTechnicians,
                           onSearchChanged: (_) => setState(() {}),
                           onStatusChanged: (value) =>
                               setState(() => _selectedStatus = value),
@@ -218,6 +319,14 @@ class _AdminDashboardScreenState extends ConsumerState<AdminDashboardScreen> {
                           },
                         ),
                         const SizedBox(height: 18),
+                        if (pendingRequests.isNotEmpty) ...[
+                          const SizedBox(height: 18),
+                          _PendingTechnicianSection(
+                            requests: pendingRequests,
+                            branches: branches,
+                          ),
+                        ],
+                        const SizedBox(height: 18),
                         wideLayout
                             ? Row(
                                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -225,10 +334,20 @@ class _AdminDashboardScreenState extends ConsumerState<AdminDashboardScreen> {
                                   Expanded(
                                     flex: 3,
                                     child: _LiveMonitoringSection(
-                                      locations: locations,
-                                      bookings: bookings,
+                                      locations: locations
+                                          .where(
+                                            (location) => branchTechnicians.any(
+                                              (technician) =>
+                                                  technician.uid ==
+                                                  location.technicianId,
+                                            ),
+                                          )
+                                          .toList(),
+                                      bookings: branchBookings,
                                       selectedTechnicianId:
                                           _selectedTechnicianId,
+                                      branchName: effectiveBranch.name,
+                                      branchCity: effectiveBranch.city,
                                     ),
                                   ),
                                   const SizedBox(width: 18),
@@ -243,10 +362,20 @@ class _AdminDashboardScreenState extends ConsumerState<AdminDashboardScreen> {
                             : Column(
                                 children: [
                                   _LiveMonitoringSection(
-                                    locations: locations,
-                                    bookings: bookings,
+                                    locations: locations
+                                        .where(
+                                          (location) => branchTechnicians.any(
+                                            (technician) =>
+                                                technician.uid ==
+                                                location.technicianId,
+                                          ),
+                                        )
+                                        .toList(),
+                                    bookings: branchBookings,
                                     selectedTechnicianId:
                                         _selectedTechnicianId,
+                                    branchName: effectiveBranch.name,
+                                    branchCity: effectiveBranch.city,
                                   ),
                                   const SizedBox(height: 18),
                                   _TechnicianPerformanceRail(
@@ -293,9 +422,11 @@ class _AdminDashboardScreenState extends ConsumerState<AdminDashboardScreen> {
                               'Enable or disable technicians without losing visibility into their performance.',
                           child: Column(
                             children: [
-                              for (var i = 0; i < technicians.length; i++) ...[
-                                _TechnicianTile(technician: technicians[i]),
-                                if (i != technicians.length - 1)
+                              for (var i = 0;
+                                  i < branchTechnicians.length;
+                                  i++) ...[
+                                _TechnicianTile(technician: branchTechnicians[i]),
+                                if (i != branchTechnicians.length - 1)
                                   const SizedBox(height: 10),
                               ],
                             ],
@@ -309,6 +440,8 @@ class _AdminDashboardScreenState extends ConsumerState<AdminDashboardScreen> {
             },
           ),
         ),
+      );
+        },
       ),
     );
   }
@@ -379,6 +512,24 @@ class _AdminDashboardScreenState extends ConsumerState<AdminDashboardScreen> {
               onPressed: () async {
                 if (!formKey.currentState!.validate()) return;
                 final now = DateTime.now();
+                final currentAdmin = ref.read(currentUserProvider).valueOrNull;
+                final branches = ref.read(branchesProvider).valueOrNull ?? const [];
+                if (branches.isEmpty) {
+                  if (dialogContext.mounted) {
+                    ScaffoldMessenger.of(dialogContext).showSnackBar(
+                      const SnackBar(
+                        content: Text('Add a branch before creating bookings.'),
+                      ),
+                    );
+                  }
+                  return;
+                }
+                final branch = currentAdmin?.branchId != null
+                    ? _branchById(branches, currentAdmin!.branchId) ?? branches.first
+                    : BranchResolver.resolve(
+                        branches: branches,
+                        address: address.text.trim(),
+                      ).branch;
                 await ref.read(bookingRepositoryProvider).createBooking(
                       Booking(
                         id: '',
@@ -392,6 +543,8 @@ class _AdminDashboardScreenState extends ConsumerState<AdminDashboardScreen> {
                         preferredTime: 'To be confirmed',
                         status: BookingStatus.booked,
                         createdAt: now,
+                        branchId: branch.id,
+                        branchName: branch.name,
                       ),
                     );
                 if (dialogContext.mounted) Navigator.pop(dialogContext);
@@ -412,6 +565,517 @@ class _AdminDashboardScreenState extends ConsumerState<AdminDashboardScreen> {
 
   static String? _required(String? value) =>
       value == null || value.trim().isEmpty ? 'Required' : null;
+
+  BranchInfo? _branchById(List<BranchInfo> branches, String? branchId) {
+    if (branchId == null) return null;
+    for (final branch in branches) {
+      if (branch.id == branchId) return branch;
+    }
+    return null;
+  }
+
+  Future<void> _openBranchDialog(
+    BuildContext context,
+    WidgetRef ref, {
+    BranchInfo? branch,
+  }) async {
+    final formKey = GlobalKey<FormState>();
+    final name = TextEditingController(text: branch?.name ?? '');
+    final city = TextEditingController(text: branch?.city ?? '');
+    final aliases = TextEditingController(
+      text: branch == null ? '' : branch.aliases.join(', '),
+    );
+    final radius = TextEditingController(
+      text: branch == null ? '35000' : branch.radiusMeters.toStringAsFixed(0),
+    );
+
+    try {
+      await showDialog<void>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          title: Text(branch == null ? 'Add branch' : 'Edit branch'),
+          content: SizedBox(
+            width: 520,
+            child: Form(
+              key: formKey,
+              child: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    TextFormField(
+                      controller: name,
+                      decoration: const InputDecoration(labelText: 'Branch name'),
+                      validator: _required,
+                    ),
+                    TextFormField(
+                      controller: city,
+                      decoration: const InputDecoration(labelText: 'City'),
+                      validator: _required,
+                    ),
+                    TextFormField(
+                      controller: radius,
+                      keyboardType: const TextInputType.numberWithOptions(
+                        decimal: true,
+                      ),
+                      decoration: const InputDecoration(
+                        labelText: 'Service radius (meters)',
+                      ),
+                      validator: _required,
+                    ),
+                    TextFormField(
+                      controller: aliases,
+                      minLines: 1,
+                      maxLines: 2,
+                      decoration: const InputDecoration(
+                        labelText: 'Aliases',
+                        helperText: 'Comma-separated area names and spellings',
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () async {
+                if (!formKey.currentState!.validate()) return;
+                final parsedRadius = double.tryParse(radius.text.trim());
+                if (parsedRadius == null) {
+                  ScaffoldMessenger.of(dialogContext).showSnackBar(
+                    const SnackBar(
+                      content: Text('Enter a valid service radius.'),
+                    ),
+                  );
+                  return;
+                }
+                try {
+                  final payload = BranchInfo(
+                    id: branch?.id ?? '',
+                    name: name.text.trim(),
+                    city: city.text.trim(),
+                    latitude: branch?.latitude ?? 0,
+                    longitude: branch?.longitude ?? 0,
+                    aliases: aliases.text
+                        .split(',')
+                        .map((item) => item.trim())
+                        .where((item) => item.isNotEmpty)
+                        .toList(),
+                    radiusMeters: parsedRadius,
+                  );
+                  final repository = ref.read(branchRepositoryProvider);
+                  if (branch == null) {
+                    await repository.createBranch(payload);
+                  } else {
+                    await repository.updateBranch(payload);
+                  }
+                  if (dialogContext.mounted) {
+                    Navigator.pop(dialogContext);
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text(
+                          branch == null
+                              ? 'Branch created successfully.'
+                              : 'Branch updated successfully.',
+                        ),
+                      ),
+                    );
+                  }
+                } catch (error) {
+                  if (dialogContext.mounted) {
+                    ScaffoldMessenger.of(dialogContext).showSnackBar(
+                      SnackBar(
+                        content: Text(error.toString()),
+                        backgroundColor: Colors.red.shade700,
+                      ),
+                    );
+                  }
+                }
+              },
+              child: Text(branch == null ? 'Create branch' : 'Save branch'),
+            ),
+          ],
+        ),
+      );
+    } finally {
+      name.dispose();
+      city.dispose();
+      aliases.dispose();
+      radius.dispose();
+    }
+  }
+}
+
+class _BranchManagementSection extends StatelessWidget {
+  const _BranchManagementSection({
+    required this.branches,
+    required this.activeBranchId,
+    required this.onAddBranch,
+    required this.onEditBranch,
+  });
+
+  final List<BranchInfo> branches;
+  final String activeBranchId;
+  final VoidCallback onAddBranch;
+  final ValueChanged<BranchInfo> onEditBranch;
+
+  @override
+  Widget build(BuildContext context) {
+    return _SectionCard(
+      title: 'Branches',
+      subtitle:
+          'Manage cities, service radius, and area aliases that route customers and technicians automatically.',
+      action: FilledButton.icon(
+        onPressed: onAddBranch,
+        icon: const Icon(Icons.add_business_outlined),
+        label: const Text('Add branch'),
+      ),
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final columns = constraints.maxWidth >= 1180
+              ? 3
+              : constraints.maxWidth >= 760
+                  ? 2
+                  : 1;
+          return GridView.builder(
+            shrinkWrap: true,
+            physics: const NeverScrollableScrollPhysics(),
+            itemCount: branches.length,
+            gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+              crossAxisCount: columns,
+              mainAxisSpacing: 12,
+              crossAxisSpacing: 12,
+              mainAxisExtent: constraints.maxWidth < 760 ? 250 : 228,
+            ),
+            itemBuilder: (context, index) {
+              final branch = branches[index];
+              final selected = branch.id == activeBranchId;
+              return Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: selected
+                      ? AppTheme.primary.withValues(alpha: 0.07)
+                      : Colors.white,
+                  borderRadius: BorderRadius.circular(18),
+                  border: Border.all(
+                    color: selected ? AppTheme.primary : AppTheme.divider,
+                  ),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            branch.name,
+                            style: const TextStyle(
+                              fontSize: 18,
+                              fontWeight: FontWeight.w800,
+                              color: AppTheme.textPrimary,
+                            ),
+                          ),
+                        ),
+                        IconButton(
+                          onPressed: () => onEditBranch(branch),
+                          icon: const Icon(Icons.edit_outlined),
+                          tooltip: 'Edit branch',
+                          visualDensity: VisualDensity.compact,
+                          constraints: const BoxConstraints.tightFor(
+                            width: 36,
+                            height: 36,
+                          ),
+                          padding: EdgeInsets.zero,
+                        ),
+                      ],
+                    ),
+                    Text(
+                      branch.city,
+                      style: const TextStyle(
+                        fontSize: 13,
+                        color: AppTheme.textSecondary,
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    _StatusPill(
+                      label:
+                          'Radius ${(branch.radiusMeters / 1000).toStringAsFixed(0)} km',
+                      color: AppTheme.accent,
+                    ),
+                    const SizedBox(height: 12),
+                    const Text(
+                      'City name and aliases route customers and technicians to this branch.',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: AppTheme.textSecondary,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      branch.aliases.isEmpty
+                          ? 'No area aliases added yet.'
+                          : 'Aliases: ${branch.aliases.join(', ')}',
+                      maxLines: 3,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontSize: 12,
+                        color: AppTheme.textSecondary,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    if (selected)
+                      const Text(
+                        'Currently selected',
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w700,
+                          color: AppTheme.primary,
+                        ),
+                      ),
+                  ],
+                ),
+              );
+            },
+          );
+        },
+      ),
+    );
+  }
+}
+
+class _AdminEmptyBranches extends StatelessWidget {
+  const _AdminEmptyBranches({required this.onAddBranch});
+
+  final VoidCallback onAddBranch;
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 560),
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Container(
+            padding: const EdgeInsets.all(28),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(24),
+              border: Border.all(color: AppTheme.divider),
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  width: 72,
+                  height: 72,
+                  decoration: BoxDecoration(
+                    color: AppTheme.primary.withValues(alpha: 0.08),
+                    borderRadius: BorderRadius.circular(20),
+                  ),
+                  child: const Icon(
+                    Icons.location_city_outlined,
+                    size: 34,
+                    color: AppTheme.primary,
+                  ),
+                ),
+                const SizedBox(height: 18),
+                const Text(
+                  'Add your first branch',
+                  style: TextStyle(
+                    fontSize: 24,
+                    fontWeight: FontWeight.w900,
+                    color: AppTheme.textPrimary,
+                  ),
+                ),
+                const SizedBox(height: 10),
+                const Text(
+                  'Bookings, technician approvals, and customer routing need at least one branch. Add a city branch to start operations.',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    fontSize: 14,
+                    height: 1.5,
+                    color: AppTheme.textSecondary,
+                  ),
+                ),
+                const SizedBox(height: 18),
+                FilledButton.icon(
+                  onPressed: onAddBranch,
+                  icon: const Icon(Icons.add_business_outlined),
+                  label: const Text('Create branch'),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _BranchSwitcher extends StatelessWidget {
+  const _BranchSwitcher({
+    required this.branches,
+    required this.selectedBranchId,
+    required this.onSelected,
+  });
+
+  final List<BranchInfo> branches;
+  final String selectedBranchId;
+  final ValueChanged<String> onSelected;
+
+  @override
+  Widget build(BuildContext context) {
+    return Wrap(
+      spacing: 8,
+      runSpacing: 8,
+      children: [
+        for (final branch in branches)
+          ChoiceChip(
+            label: Text(branch.city),
+            selected: selectedBranchId == branch.id,
+            onSelected: (_) => onSelected(branch.id),
+          ),
+      ],
+    );
+  }
+}
+
+class _PendingTechnicianSection extends ConsumerWidget {
+  const _PendingTechnicianSection({
+    required this.requests,
+    required this.branches,
+  });
+
+  final List<AppUser> requests;
+  final List<BranchInfo> branches;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    return _SectionCard(
+      title: 'Technician approvals',
+      subtitle:
+          'Review branch requests before technicians get access to live jobs and attendance.',
+      child: Column(
+        children: [
+          for (var i = 0; i < requests.length; i++) ...[
+            _PendingTechnicianTile(
+              request: requests[i],
+              branches: branches,
+            ),
+            if (i != requests.length - 1) const SizedBox(height: 10),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _PendingTechnicianTile extends ConsumerWidget {
+  const _PendingTechnicianTile({
+    required this.request,
+    required this.branches,
+  });
+
+  final AppUser request;
+  final List<BranchInfo> branches;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final suggested = request.requestLatitude != null &&
+            request.requestLongitude != null &&
+            branches.isNotEmpty
+        ? BranchResolver.resolve(
+            branches: branches,
+            latitude: request.requestLatitude,
+            longitude: request.requestLongitude,
+          ).branch
+        : null;
+    final branchId = request.branchId ?? suggested?.id ?? branches.first.id;
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: AppTheme.divider),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            request.name,
+            style: const TextStyle(
+              fontSize: 16,
+              fontWeight: FontWeight.w800,
+              color: AppTheme.textPrimary,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            '${request.phone} | ${request.email}',
+            style: const TextStyle(
+              fontSize: 12,
+              color: AppTheme.textSecondary,
+            ),
+          ),
+          const SizedBox(height: 8),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              _StatusPill(
+                label: request.branchName ?? 'Requested branch pending',
+                color: AppTheme.primary,
+              ),
+              if (suggested != null && suggested.id != request.branchId)
+                _StatusPill(
+                  label: 'Nearest: ${suggested.city}',
+                  color: AppTheme.accent,
+                ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              Expanded(
+                child: OutlinedButton.icon(
+                  onPressed: () => ref
+                      .read(adminRepositoryProvider)
+                      .rejectTechnicianRequest(request.uid),
+                  icon: const Icon(Icons.close),
+                  label: const Text('Reject'),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: FilledButton.icon(
+                  onPressed: () {
+                    var branch = branches.first;
+                    for (final item in branches) {
+                      if (item.id == branchId) {
+                        branch = item;
+                        break;
+                      }
+                    }
+                    ref.read(adminRepositoryProvider).approveTechnicianRequest(
+                          uid: request.uid,
+                          branchId: branch.id,
+                          branchName: branch.name,
+                        );
+                  },
+                  icon: const Icon(Icons.check),
+                  label: const Text('Approve'),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
 }
 
 class _AdminHero extends StatelessWidget {
@@ -419,11 +1083,13 @@ class _AdminHero extends StatelessWidget {
     required this.activeTechnicians,
     required this.totalCustomers,
     required this.overdueJobs,
+    required this.branchName,
   });
 
   final int activeTechnicians;
   final int totalCustomers;
   final int overdueJobs;
+  final String branchName;
 
   @override
   Widget build(BuildContext context) {
@@ -436,10 +1102,13 @@ class _AdminHero extends StatelessWidget {
       child: Stack(
         children: [
           Positioned.fill(
-            child: Image.asset(
-              'assets/images/fix_now_general.png',
+            child: const ResilientAssetImage(
+              assetName: 'assets/images/fix_now_general.png',
               fit: BoxFit.cover,
               alignment: Alignment.centerRight,
+              fallbackIcon: Icons.analytics_outlined,
+              fallbackIconSize: 64,
+              fallbackBackgroundColor: Color(0xFFEAF1FF),
             ),
           ),
           Positioned.fill(
@@ -471,12 +1140,12 @@ class _AdminHero extends StatelessWidget {
               alignment: WrapAlignment.spaceBetween,
               crossAxisAlignment: WrapCrossAlignment.center,
               children: [
-                const SizedBox(
+                SizedBox(
                   width: 420,
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(
+                      const Text(
                         'Operations command center',
                         style: TextStyle(
                           color: Colors.white,
@@ -484,9 +1153,9 @@ class _AdminHero extends StatelessWidget {
                           fontWeight: FontWeight.w900,
                         ),
                       ),
-                      SizedBox(height: 8),
+                      const SizedBox(height: 8),
                       Text(
-                        'Track technician movement, watch overdue jobs, and compare who is earning what today and this month.',
+                        '$branchName is live. Track technician movement, watch overdue jobs, and compare who is earning what today and this month.',
                         style: TextStyle(
                           color: Color(0xFFE8F1FF),
                           fontSize: 14,
@@ -595,7 +1264,7 @@ class _AdminMetricGrid extends StatelessWidget {
             crossAxisCount: columns,
             mainAxisSpacing: 14,
             crossAxisSpacing: 14,
-            mainAxisExtent: 156,
+            mainAxisExtent: constraints.maxWidth < 760 ? 188 : 176,
           ),
           itemBuilder: (context, index) => _MetricCard(data: metrics[index]),
         );
@@ -672,7 +1341,6 @@ class _MetricCard extends StatelessWidget {
               color: AppTheme.textSecondary,
             ),
           ),
-          const Spacer(),
         ],
       ),
     );
@@ -706,6 +1374,12 @@ class _AdminFilterPanel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final selectedTechnicianValue =
+        selectedTechnicianId == null ||
+                selectedTechnicianId == 'all' ||
+                technicians.any((tech) => tech.uid == selectedTechnicianId)
+            ? (selectedTechnicianId ?? 'all')
+            : 'all';
     return _SectionCard(
       title: 'Filters',
       subtitle:
@@ -715,77 +1389,83 @@ class _AdminFilterPanel extends StatelessWidget {
           LayoutBuilder(
             builder: (context, constraints) {
               final stacked = constraints.maxWidth < 900;
-              final fields = [
-                Expanded(
-                  flex: 3,
-                  child: TextField(
-                    controller: controller,
-                    onChanged: onSearchChanged,
-                    decoration: const InputDecoration(
-                      prefixIcon: Icon(Icons.search),
-                      labelText: 'Search customer, appliance, phone, address',
+              final searchField = TextField(
+                controller: controller,
+                onChanged: onSearchChanged,
+                decoration: const InputDecoration(
+                  prefixIcon: Icon(Icons.search),
+                  labelText: 'Search customer, appliance, phone, address',
+                ),
+              );
+              final statusField = DropdownButtonFormField<BookingStatus?>(
+                initialValue: selectedStatus,
+                decoration: const InputDecoration(
+                  labelText: 'Status filter',
+                ),
+                items: [
+                  const DropdownMenuItem<BookingStatus?>(
+                    value: null,
+                    child: Text('All statuses'),
+                  ),
+                  ...BookingStatus.values.map(
+                    (status) => DropdownMenuItem<BookingStatus?>(
+                      value: status,
+                      child: Text(status.label),
                     ),
                   ),
+                ],
+                onChanged: onStatusChanged,
+              );
+              final technicianField = DropdownButtonFormField<String?>(
+                initialValue: selectedTechnicianValue,
+                decoration: const InputDecoration(
+                  labelText: 'Technician filter',
                 ),
-                if (!stacked) const SizedBox(width: 12),
-                Expanded(
-                  flex: 2,
-                  child: DropdownButtonFormField<BookingStatus?>(
-                    initialValue: selectedStatus,
-                    decoration: const InputDecoration(
-                      labelText: 'Status filter',
-                    ),
-                    items: [
-                      const DropdownMenuItem<BookingStatus?>(
-                        value: null,
-                        child: Text('All statuses'),
-                      ),
-                      ...BookingStatus.values.map(
-                        (status) => DropdownMenuItem<BookingStatus?>(
-                          value: status,
-                          child: Text(status.label),
-                        ),
-                      ),
-                    ],
-                    onChanged: onStatusChanged,
+                items: [
+                  const DropdownMenuItem<String?>(
+                    value: 'all',
+                    child: Text('All technicians'),
                   ),
-                ),
-                if (!stacked) const SizedBox(width: 12),
-                Expanded(
-                  flex: 2,
-                  child: DropdownButtonFormField<String?>(
-                    initialValue: selectedTechnicianId ?? 'all',
-                    decoration: const InputDecoration(
-                      labelText: 'Technician filter',
+                  ...technicians.map(
+                    (tech) => DropdownMenuItem<String?>(
+                      value: tech.uid,
+                      child: Text(tech.name),
                     ),
-                    items: [
-                      const DropdownMenuItem<String?>(
-                        value: 'all',
-                        child: Text('All technicians'),
-                      ),
-                      ...technicians.map(
-                        (tech) => DropdownMenuItem<String?>(
-                          value: tech.uid,
-                          child: Text(tech.name),
-                        ),
-                      ),
-                    ],
-                    onChanged: onTechnicianChanged,
                   ),
-                ),
-              ];
+                ],
+                onChanged: onTechnicianChanged,
+              );
+
               if (stacked) {
                 return Column(
                   children: [
-                    fields[0],
+                    searchField,
                     const SizedBox(height: 12),
-                    fields[1],
+                    statusField,
                     const SizedBox(height: 12),
-                    fields[2],
+                    technicianField,
                   ],
                 );
               }
-              return Row(children: fields);
+
+              return Row(
+                children: [
+                  Expanded(
+                    flex: 3,
+                    child: searchField,
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    flex: 2,
+                    child: statusField,
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    flex: 2,
+                    child: technicianField,
+                  ),
+                ],
+              );
             },
           ),
           const SizedBox(height: 14),
@@ -823,11 +1503,15 @@ class _LiveMonitoringSection extends StatelessWidget {
     required this.locations,
     required this.bookings,
     required this.selectedTechnicianId,
+    required this.branchName,
+    required this.branchCity,
   });
 
   final List<TechnicianLocation> locations;
   final List<Booking> bookings;
   final String? selectedTechnicianId;
+  final String branchName;
+  final String branchCity;
 
   @override
   Widget build(BuildContext context) {
@@ -852,10 +1536,15 @@ class _LiveMonitoringSection extends StatelessWidget {
         children: [
           SizedBox(
             height: 360,
-            child: _TechnicianMap(
-              locations: visibleLocations,
-              activeByTechnician: activeByTechnician,
-            ),
+            child: visibleLocations.isEmpty
+                ? _EmptyBranchMapState(
+                    branchName: branchName,
+                    branchCity: branchCity,
+                  )
+                : _TechnicianMap(
+                    locations: visibleLocations,
+                    activeByTechnician: activeByTechnician,
+                  ),
           ),
           const SizedBox(height: 14),
           Wrap(
@@ -1207,6 +1896,9 @@ class _AdminBookingCard extends ConsumerWidget {
     final technicians = [
       ...(ref.watch(techniciansProvider).valueOrNull ?? <AppUser>[]),
     ].where((tech) => tech.isActive).toList();
+    final technicianById = {
+      for (final technician in technicians) technician.uid: technician,
+    };
     final locations =
         ref.watch(activeTechnicianLocationsProvider).valueOrNull ??
             <TechnicianLocation>[];
@@ -1225,6 +1917,11 @@ class _AdminBookingCard extends ConsumerWidget {
     }
     final bill = ref.watch(bookingBillProvider(booking.id)).valueOrNull;
     final canAssign = booking.status == BookingStatus.booked;
+    final assignmentValue =
+        booking.technicianId != null &&
+                technicianById.containsKey(booking.technicianId)
+            ? booking.technicianId
+            : null;
     final overdue = isBookingOverdue(booking, now);
     final deadline = bookingDeadline(booking);
     final dueSoon = !overdue &&
@@ -1344,7 +2041,7 @@ class _AdminBookingCard extends ConsumerWidget {
           ),
           const SizedBox(height: 14),
           DropdownButtonFormField<String>(
-            initialValue: booking.technicianId,
+            initialValue: assignmentValue,
             decoration: InputDecoration(
               labelText: booking.latitude == null
                   ? 'Assign technician'
@@ -1367,8 +2064,15 @@ class _AdminBookingCard extends ConsumerWidget {
             onChanged: canAssign
                 ? (uid) {
                     if (uid == null) return;
-                    final tech =
-                        technicians.firstWhere((item) => item.uid == uid);
+                    final tech = technicianById[uid];
+                    if (tech == null) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text('Selected technician is unavailable.'),
+                        ),
+                      );
+                      return;
+                    }
                     ref.read(bookingRepositoryProvider).assignTechnician(
                           bookingId: booking.id,
                           technicianId: tech.uid,
@@ -1567,6 +2271,81 @@ class _TechnicianMap extends StatelessWidget {
   }
 }
 
+class _EmptyBranchMapState extends StatelessWidget {
+  const _EmptyBranchMapState({
+    required this.branchName,
+    required this.branchCity,
+  });
+
+  final String branchName;
+  final String branchCity;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(18),
+        gradient: LinearGradient(
+          colors: [
+            AppTheme.primary.withValues(alpha: 0.12),
+            AppTheme.accent.withValues(alpha: 0.1),
+          ],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        border: Border.all(color: AppTheme.divider),
+      ),
+      padding: const EdgeInsets.all(24),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Container(
+            width: 52,
+            height: 52,
+            decoration: BoxDecoration(
+              color: Colors.white.withValues(alpha: 0.88),
+              borderRadius: BorderRadius.circular(16),
+            ),
+            child: const Icon(
+              Icons.location_city_outlined,
+              color: AppTheme.primary,
+              size: 28,
+            ),
+          ),
+          const SizedBox(height: 18),
+          Text(
+            '$branchName live map',
+            style: const TextStyle(
+              fontSize: 22,
+              fontWeight: FontWeight.w800,
+              color: AppTheme.textPrimary,
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'No technicians from $branchCity are sharing live location yet.',
+            style: const TextStyle(
+              fontSize: 14,
+              color: AppTheme.textSecondary,
+              height: 1.5,
+            ),
+          ),
+          const SizedBox(height: 10),
+          const Text(
+            'Branch routing already works from city and area aliases. The map will switch automatically as soon as this branch has live technician movement.',
+            style: TextStyle(
+              fontSize: 13,
+              color: AppTheme.textSecondary,
+              height: 1.5,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class _TechnicianTile extends ConsumerWidget {
   const _TechnicianTile({required this.technician});
 
@@ -1600,45 +2379,100 @@ class _SectionCard extends StatelessWidget {
     required this.title,
     required this.subtitle,
     required this.child,
+    this.action,
   });
 
   final String title;
   final String subtitle;
   final Widget child;
+  final Widget? action;
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(18),
-      decoration: BoxDecoration(
-        color: const Color(0xFFF8FAFF),
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: AppTheme.divider),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            title,
-            style: const TextStyle(
-              fontSize: 20,
-              fontWeight: FontWeight.w900,
-              color: AppTheme.textPrimary,
-            ),
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final compactHeader = constraints.maxWidth < 720;
+        return Container(
+          padding: const EdgeInsets.all(18),
+          decoration: BoxDecoration(
+            color: const Color(0xFFF8FAFF),
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(color: AppTheme.divider),
           ),
-          const SizedBox(height: 4),
-          Text(
-            subtitle,
-            style: const TextStyle(
-              fontSize: 13,
-              color: AppTheme.textSecondary,
-              height: 1.45,
-            ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              if (compactHeader) ...[
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      title,
+                      style: const TextStyle(
+                        fontSize: 20,
+                        fontWeight: FontWeight.w900,
+                        color: AppTheme.textPrimary,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      subtitle,
+                      style: const TextStyle(
+                        fontSize: 13,
+                        color: AppTheme.textSecondary,
+                        height: 1.45,
+                      ),
+                    ),
+                    if (action != null) ...[
+                      const SizedBox(height: 14),
+                      Align(
+                        alignment: Alignment.centerLeft,
+                        child: action!,
+                      ),
+                    ],
+                  ],
+                ),
+              ] else ...[
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            title,
+                            style: const TextStyle(
+                              fontSize: 20,
+                              fontWeight: FontWeight.w900,
+                              color: AppTheme.textPrimary,
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            subtitle,
+                            style: const TextStyle(
+                              fontSize: 13,
+                              color: AppTheme.textSecondary,
+                              height: 1.45,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    if (action != null) ...[
+                      const SizedBox(width: 12),
+                      Flexible(child: action!),
+                    ],
+                  ],
+                ),
+              ],
+              const SizedBox(height: 16),
+              child,
+            ],
           ),
-          const SizedBox(height: 16),
-          child,
-        ],
-      ),
+        );
+      },
     );
   }
 }
@@ -1676,6 +2510,72 @@ class _AdminError extends StatelessWidget {
                 label: const Text('Retry'),
               ),
             ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _AdminStatePanel extends StatelessWidget {
+  const _AdminStatePanel({
+    required this.title,
+    required this.message,
+    required this.icon,
+    this.busy = false,
+  });
+
+  final String title;
+  final String message;
+  final IconData icon;
+  final bool busy;
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 560),
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Container(
+            padding: const EdgeInsets.all(24),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(20),
+              border: Border.all(color: AppTheme.divider),
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (busy)
+                  const Padding(
+                    padding: EdgeInsets.only(bottom: 16),
+                    child: CircularProgressIndicator(),
+                  )
+                else
+                  Icon(icon, size: 44, color: AppTheme.primary),
+                if (!busy) const SizedBox(height: 12),
+                Text(
+                  title,
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(
+                    fontSize: 22,
+                    fontWeight: FontWeight.w900,
+                    color: AppTheme.textPrimary,
+                  ),
+                ),
+                const SizedBox(height: 10),
+                Text(
+                  message,
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(
+                    fontSize: 14,
+                    height: 1.5,
+                    color: AppTheme.textSecondary,
+                  ),
+                ),
+              ],
+            ),
           ),
         ),
       ),

@@ -2,8 +2,12 @@ import 'dart:ui';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:geolocator/geolocator.dart';
 
 import '../../../app/theme/app_theme.dart';
+import '../../../app/widgets/resilient_asset_image.dart';
+import '../../../core/branches/branch_repository.dart';
+import '../../../core/branches/branch_resolver.dart';
 import '../data/auth_repository.dart';
 
 class LoginScreen extends ConsumerStatefulWidget {
@@ -20,8 +24,10 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
   final _name = TextEditingController();
   final _phone = TextEditingController();
   bool _isRegister = false;
+  bool _isTechnicianRequest = false;
   bool _isLoading = false;
   bool _obscurePassword = true;
+  String? _selectedBranchId;
 
   @override
   void dispose() {
@@ -37,13 +43,34 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     setState(() => _isLoading = true);
     try {
       final repo = ref.read(authRepositoryProvider);
+      final branches = ref.read(branchesProvider).valueOrNull ?? const [];
       if (_isRegister) {
-        await repo.createUser(
-          name: _name.text.trim(),
-          email: _email.text.trim(),
-          password: _password.text,
-          phone: _phone.text.trim(),
-        );
+        if (_isTechnicianRequest) {
+          final branch = branches.where((item) => item.id == _selectedBranchId).isEmpty
+              ? null
+              : branches.firstWhere((item) => item.id == _selectedBranchId);
+          if (branch == null) {
+            throw StateError('Select the technician branch.');
+          }
+          final position = await _position();
+          await repo.createTechnicianRequest(
+            name: _name.text.trim(),
+            email: _email.text.trim(),
+            password: _password.text,
+            phone: _phone.text.trim(),
+            branchId: branch.id,
+            branchName: branch.name,
+            requestLatitude: position?.latitude,
+            requestLongitude: position?.longitude,
+          );
+        } else {
+          await repo.createUser(
+            name: _name.text.trim(),
+            email: _email.text.trim(),
+            password: _password.text,
+            phone: _phone.text.trim(),
+          );
+        }
       } else {
         await repo.signIn(_email.text.trim(), _password.text);
       }
@@ -61,8 +88,47 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     }
   }
 
+  Future<Position?> _position() async {
+    try {
+      final enabled = await Geolocator.isLocationServiceEnabled();
+      if (!enabled) return null;
+      var permission = await Geolocator.checkPermission();
+      if (permission == LocationPermission.denied) {
+        permission = await Geolocator.requestPermission();
+      }
+      if (permission == LocationPermission.denied ||
+          permission == LocationPermission.deniedForever) {
+        return null;
+      }
+      return Geolocator.getCurrentPosition();
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<void> _suggestBranch() async {
+    final position = await _position();
+    final branches = ref.read(branchesProvider).valueOrNull ?? const [];
+    if (position == null || branches.isEmpty) return;
+    final resolution = BranchResolver.resolve(
+      branches: branches,
+      latitude: position.latitude,
+      longitude: position.longitude,
+    );
+    if (!mounted) return;
+    setState(() => _selectedBranchId = resolution.branch.id);
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('Suggested branch: ${resolution.branch.name}'),
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
+    final branchesAsync = ref.watch(branchesProvider);
+    final branches = branchesAsync.valueOrNull ?? const [];
     final size = MediaQuery.sizeOf(context);
     final screenHeight = size.height;
     final screenWidth = size.width;
@@ -123,9 +189,11 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                         ),
                       ],
                     ),
-                    child: Image.asset(
-                      'assets/images/fixnow_logo.png',
+                    child: const ResilientAssetImage(
+                      assetName: 'assets/images/fixnow_logo.png',
                       fit: BoxFit.contain,
+                      fallbackIcon: Icons.home_repair_service_outlined,
+                      fallbackIconSize: 30,
                     ),
                   ),
                 ),
@@ -141,7 +209,9 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                 const SizedBox(height: 4),
                 Text(
                   _isRegister
-                      ? 'Create your customer account'
+                      ? (_isTechnicianRequest
+                          ? 'Request technician access for your branch'
+                          : 'Create your customer account')
                       : 'Home services at your doorstep',
                   style: const TextStyle(
                     color: AppTheme.textSecondary,
@@ -150,6 +220,32 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                   ),
                 ),
                 SizedBox(height: isSmall ? 18 : 26),
+                if (_isRegister && _isTechnicianRequest) ...[
+                  if (branchesAsync.hasError)
+                    Padding(
+                      padding: EdgeInsets.only(bottom: fieldGap),
+                      child: Text(
+                        'Branch list could not be loaded right now. Customer login still works, but technician signup needs branch access.',
+                        style: const TextStyle(
+                          color: Color(0xFFD95C2A),
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    )
+                  else if (!branchesAsync.isLoading && branches.isEmpty)
+                    Padding(
+                      padding: EdgeInsets.only(bottom: fieldGap),
+                      child: const Text(
+                        'No branches are available yet. Ask admin to create a branch before technician signup.',
+                        style: TextStyle(
+                          color: Color(0xFFD95C2A),
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                ],
                 Text(
                   _isRegister ? 'Sign up' : 'Sign in',
                   style: TextStyle(
@@ -160,6 +256,37 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                 ),
                 SizedBox(height: isSmall ? 14 : 20),
                 if (_isRegister) ...[
+                  Container(
+                    padding: const EdgeInsets.all(4),
+                    decoration: BoxDecoration(
+                      color: Colors.white.withValues(alpha: 0.72),
+                      borderRadius: BorderRadius.circular(14),
+                    ),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: _RegisterModeChip(
+                            label: 'Customer',
+                            selected: !_isTechnicianRequest,
+                            onTap: () => setState(() {
+                              _isTechnicianRequest = false;
+                            }),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: _RegisterModeChip(
+                            label: 'Technician',
+                            selected: _isTechnicianRequest,
+                            onTap: () => setState(() {
+                              _isTechnicianRequest = true;
+                            }),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  SizedBox(height: fieldGap),
                   _UCTextField(
                     controller: _name,
                     label: 'Full name',
@@ -178,14 +305,58 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                         : null,
                   ),
                   SizedBox(height: fieldGap),
-                  const Text(
-                    'Technician and admin accounts are created by an administrator.',
-                    style: TextStyle(
-                      color: AppTheme.textSecondary,
-                      fontSize: 12,
+                  if (_isTechnicianRequest) ...[
+                    DropdownButtonFormField<String>(
+                      initialValue: _selectedBranchId,
+                      decoration: const InputDecoration(
+                        labelText: 'Requested branch',
+                        prefixIcon: Icon(Icons.account_tree_outlined),
+                      ),
+                      items: branches
+                          .map(
+                            (branch) => DropdownMenuItem(
+                              value: branch.id,
+                              child: Text(branch.name),
+                            ),
+                          )
+                          .toList(),
+                      onChanged: (value) =>
+                          setState(() => _selectedBranchId = value),
+                      disabledHint: Text(
+                        branchesAsync.isLoading
+                            ? 'Loading branches...'
+                            : 'No branches available',
+                      ),
+                      validator: (value) => value == null || value.isEmpty
+                          ? 'Choose a branch'
+                          : null,
                     ),
-                  ),
-                  SizedBox(height: fieldGap),
+                    SizedBox(height: fieldGap),
+                    OutlinedButton.icon(
+                      onPressed:
+                          _isLoading || branches.isEmpty ? null : _suggestBranch,
+                      icon: const Icon(Icons.my_location_outlined),
+                      label: const Text('Suggest nearest branch'),
+                    ),
+                    SizedBox(height: fieldGap),
+                    const Text(
+                      'Technician access stays pending until the selected branch admin approves it.',
+                      style: TextStyle(
+                        color: AppTheme.textSecondary,
+                        fontSize: 12,
+                      ),
+                    ),
+                    SizedBox(height: fieldGap),
+                  ] else ...[
+                    const Text(
+                      'Customer accounts are created instantly. Technician accounts need branch admin approval.',
+                      style: TextStyle(
+                        color: AppTheme.textSecondary,
+                        fontSize: 12,
+                      ),
+                    ),
+                    SizedBox(height: fieldGap),
+                  ],
                 ],
                 _UCTextField(
                   controller: _email,
@@ -243,7 +414,11 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                               strokeWidth: 2.5,
                             ),
                           )
-                        : Text(_isRegister ? 'Create Account' : 'Sign In'),
+                        : Text(_isRegister
+                            ? (_isTechnicianRequest
+                                ? 'Request Technician Access'
+                                : 'Create Account')
+                            : 'Sign In'),
                   ),
                 ),
                 const SizedBox(height: 16),
@@ -294,12 +469,15 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
       body: Stack(
         fit: StackFit.expand,
         children: [
-          Image.asset(
-            'assets/images/fix_now_general.png',
+          ResilientAssetImage(
+            assetName: 'assets/images/fix_now_general.png',
             fit: BoxFit.cover,
             alignment: isWide ? Alignment.center : Alignment.center,
             color: Colors.white.withValues(alpha: imageLightenOpacity),
             colorBlendMode: BlendMode.screen,
+            fallbackIcon: Icons.build_circle_outlined,
+            fallbackIconSize: 64,
+            fallbackBackgroundColor: const Color(0xFFEAF1FF),
           ),
           DecoratedBox(
             decoration: BoxDecoration(
@@ -326,6 +504,42 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+class _RegisterModeChip extends StatelessWidget {
+  const _RegisterModeChip({
+    required this.label,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(12),
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 10),
+        decoration: BoxDecoration(
+          color: selected ? AppTheme.primary : Colors.transparent,
+          borderRadius: BorderRadius.circular(12),
+        ),
+        alignment: Alignment.center,
+        child: Text(
+          label,
+          style: TextStyle(
+            color: selected ? Colors.white : AppTheme.textPrimary,
+            fontSize: 13,
+            fontWeight: FontWeight.w800,
+          ),
+        ),
       ),
     );
   }

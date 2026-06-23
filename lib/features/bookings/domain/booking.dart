@@ -18,6 +18,8 @@ class Booking {
     this.imageUrl,
     this.technicianId,
     this.technicianName,
+    this.branchId,
+    this.branchName,
     this.latitude,
     this.longitude,
     this.servicePhotos = const [],
@@ -37,6 +39,8 @@ class Booking {
   final String? imageUrl;
   final String? technicianId;
   final String? technicianName;
+  final String? branchId;
+  final String? branchName;
   final double? latitude;
   final double? longitude;
   final List<ServicePhoto> servicePhotos;
@@ -58,6 +62,8 @@ class Booking {
       imageUrl: data['imageUrl'] as String?,
       technicianId: data['technicianId'] as String?,
       technicianName: data['technicianName'] as String?,
+      branchId: data['branchId'] as String?,
+      branchName: data['branchName'] as String?,
       latitude: (data['latitude'] as num?)?.toDouble(),
       longitude: (data['longitude'] as num?)?.toDouble(),
       servicePhotos: (data['servicePhotos'] as List<dynamic>? ?? const [])
@@ -82,6 +88,8 @@ class Booking {
       'imageUrl': imageUrl,
       'technicianId': technicianId,
       'technicianName': technicianName,
+      'branchId': branchId,
+      'branchName': branchName,
       'latitude': latitude,
       'longitude': longitude,
       'servicePhotos': servicePhotos.map((photo) => photo.toJson()).toList(),

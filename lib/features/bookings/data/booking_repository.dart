@@ -32,9 +32,12 @@ class BookingRepository {
             snapshot.docs.map(Booking.fromFirestore).toList()));
   }
 
-  Stream<List<Booking>> watchAllBookings() {
-    return _firestore
-        .collection('bookings')
+  Stream<List<Booking>> watchAllBookings({String? branchId}) {
+    Query<Map<String, dynamic>> query = _firestore.collection('bookings');
+    if (branchId != null && branchId.isNotEmpty) {
+      query = query.where('branchId', isEqualTo: branchId);
+    }
+    return query
         .orderBy('createdAt', descending: true)
         .snapshots()
         .map((snapshot) => snapshot.docs.map(Booking.fromFirestore).toList());

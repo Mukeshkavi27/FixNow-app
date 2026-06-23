@@ -3,10 +3,13 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'app/fixnow_app.dart';
+import 'app/widgets/app_error_view.dart';
 import 'firebase_options.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  ErrorWidget.builder = (details) => const AppErrorView();
+  FlutterError.onError = (details) {};
   try {
     await Firebase.initializeApp(
       options: DefaultFirebaseOptions.currentPlatform,

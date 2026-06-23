@@ -9,6 +9,9 @@ import 'package:intl/intl.dart';
 import 'package:uuid/uuid.dart';
 
 import '../../../app/theme/app_theme.dart';
+import '../../../app/widgets/resilient_asset_image.dart';
+import '../../../core/branches/branch_repository.dart';
+import '../../../core/branches/branch_resolver.dart';
 import '../../../core/enums/booking_status.dart';
 import '../../auth/data/auth_repository.dart';
 import '../../bookings/data/booking_repository.dart';
@@ -86,9 +89,16 @@ class _BookServiceScreenState extends ConsumerState<BookServiceScreen> {
   Future<void> _submit() async {
     if (!_formKey.currentState!.validate()) return;
     final user = ref.read(currentUserProvider).valueOrNull;
+    final branches = ref.read(branchesProvider).valueOrNull ?? const [];
     if (user == null) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Please sign in before booking.')),
+      );
+      return;
+    }
+    if (branches.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('No service branches are configured yet.')),
       );
       return;
     }
@@ -105,6 +115,17 @@ class _BookServiceScreenState extends ConsumerState<BookServiceScreen> {
             );
       }
       final location = await _position();
+      final branchResolution = BranchResolver.resolve(
+        branches: branches,
+        address: _address.text.trim(),
+        latitude: location?.latitude,
+        longitude: location?.longitude,
+      );
+      await ref.read(authRepositoryProvider).updateUserBranch(
+            uid: user.uid,
+            branchId: branchResolution.branch.id,
+            branchName: branchResolution.branch.name,
+          );
       final id = await ref.read(bookingRepositoryProvider).createBooking(
             Booking(
               id: '',
@@ -119,6 +140,8 @@ class _BookServiceScreenState extends ConsumerState<BookServiceScreen> {
               status: BookingStatus.booked,
               createdAt: DateTime.now(),
               imageUrl: imageUrl,
+              branchId: branchResolution.branch.id,
+              branchName: branchResolution.branch.name,
               latitude: location?.latitude,
               longitude: location?.longitude,
             ),
@@ -357,7 +380,12 @@ class _ServiceIntro extends StatelessWidget {
             borderRadius: BorderRadius.circular(8),
             child: AspectRatio(
               aspectRatio: 16 / 10,
-              child: Image.asset(profile.assetName, fit: BoxFit.cover),
+              child: ResilientAssetImage(
+                assetName: profile.assetName,
+                fit: BoxFit.cover,
+                fallbackIcon: Icons.home_repair_service_outlined,
+                fallbackIconSize: 40,
+              ),
             ),
           ),
           const SizedBox(height: 18),

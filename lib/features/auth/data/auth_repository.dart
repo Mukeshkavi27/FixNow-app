@@ -2,6 +2,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../core/enums/account_status.dart';
 import '../../../core/enums/user_role.dart';
 import '../../../core/providers/firebase_providers.dart';
 import '../domain/app_user.dart';
@@ -36,8 +37,22 @@ class AuthRepository {
     });
   }
 
-  Future<void> signIn(String email, String password) {
-    return _auth.signInWithEmailAndPassword(email: email, password: password);
+  Future<void> signIn(String email, String password) async {
+    final credential = await _auth.signInWithEmailAndPassword(
+      email: email,
+      password: password,
+    );
+    final uid = credential.user?.uid;
+    if (uid == null) {
+      throw StateError('Unable to sign in right now. Please try again.');
+    }
+    final profile = await _firestore.collection('users').doc(uid).get();
+    if (!profile.exists) {
+      await signOut();
+      throw StateError(
+        'Account profile not found for this login. Please contact FixNow admin.',
+      );
+    }
   }
 
   Future<void> createUser({
@@ -45,6 +60,8 @@ class AuthRepository {
     required String email,
     required String password,
     required String phone,
+    String? branchId,
+    String? branchName,
   }) async {
     final credential = await _auth.createUserWithEmailAndPassword(
         email: email, password: password);
@@ -55,8 +72,48 @@ class AuthRepository {
       email: email,
       phone: phone,
       role: UserRole.customer,
+      accountStatus: AccountStatus.approved,
       createdAt: DateTime.now(),
       isActive: true,
+      branchId: branchId,
+      branchName: branchName,
+    );
+    try {
+      await _firestore.collection('users').doc(uid).set(user.toJson());
+    } catch (_) {
+      await credential.user?.delete();
+      rethrow;
+    }
+  }
+
+  Future<void> createTechnicianRequest({
+    required String name,
+    required String email,
+    required String password,
+    required String phone,
+    required String branchId,
+    required String branchName,
+    double? requestLatitude,
+    double? requestLongitude,
+  }) async {
+    final credential = await _auth.createUserWithEmailAndPassword(
+      email: email,
+      password: password,
+    );
+    final uid = credential.user!.uid;
+    final user = AppUser(
+      uid: uid,
+      name: name,
+      email: email,
+      phone: phone,
+      role: UserRole.technician,
+      accountStatus: AccountStatus.pendingApproval,
+      createdAt: DateTime.now(),
+      isActive: false,
+      branchId: branchId,
+      branchName: branchName,
+      requestLatitude: requestLatitude,
+      requestLongitude: requestLongitude,
     );
     try {
       await _firestore.collection('users').doc(uid).set(user.toJson());
@@ -73,6 +130,8 @@ class AuthRepository {
     required String name,
     required String phone,
     String? profilePhoto,
+    String? branchId,
+    String? branchName,
   }) async {
     final changes = <String, dynamic>{
       'name': name.trim(),
@@ -80,11 +139,25 @@ class AuthRepository {
       'updatedAt': FieldValue.serverTimestamp(),
     };
     if (profilePhoto != null) changes['profilePhoto'] = profilePhoto;
+    if (branchId != null) changes['branchId'] = branchId;
+    if (branchName != null) changes['branchName'] = branchName;
     await _firestore.collection('users').doc(uid).update(changes);
     await _auth.currentUser?.updateDisplayName(name.trim());
     if (profilePhoto != null) {
       await _auth.currentUser?.updatePhotoURL(profilePhoto);
     }
+  }
+
+  Future<void> updateUserBranch({
+    required String uid,
+    required String branchId,
+    required String branchName,
+  }) {
+    return _firestore.collection('users').doc(uid).update({
+      'branchId': branchId,
+      'branchName': branchName,
+      'updatedAt': FieldValue.serverTimestamp(),
+    });
   }
 
   Future<void> sendPasswordReset() async {

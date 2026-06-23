@@ -5,6 +5,8 @@ import 'package:go_router/go_router.dart';
 import '../../core/enums/user_role.dart';
 import '../../features/admin/presentation/admin_dashboard_screen.dart';
 import '../../features/auth/data/auth_repository.dart';
+import '../../features/auth/presentation/auth_error_screen.dart';
+import '../../features/auth/presentation/approval_pending_screen.dart';
 import '../../features/auth/presentation/login_screen.dart';
 import '../../features/bookings/presentation/booking_detail_screen.dart';
 import '../../features/customer/presentation/book_service_screen.dart';
@@ -29,13 +31,24 @@ final appRouterProvider = Provider<GoRouter>((ref) {
       final location = state.matchedLocation;
 
       if (firebaseUser == null) return location == '/login' ? null : '/login';
-      if (appUser == null || !appUser.isActive) return '/login';
+      if (user.hasError) {
+        return location == '/auth-error' ? null : '/auth-error';
+      }
+      if (appUser == null) return '/login';
+      if (!appUser.isActive) {
+        return location == '/approval-pending' ? null : '/approval-pending';
+      }
       final home = switch (appUser.role) {
         UserRole.customer => '/customer',
         UserRole.technician => '/technician',
         UserRole.admin => '/admin',
       };
-      if (location == '/login' || location == '/splash') return home;
+      if (location == '/login' ||
+          location == '/splash' ||
+          location == '/approval-pending' ||
+          location == '/auth-error') {
+        return home;
+      }
 
       final isRoleDashboard = location == '/customer' ||
           location == '/technician' ||
@@ -54,6 +67,14 @@ final appRouterProvider = Provider<GoRouter>((ref) {
       GoRoute(
           path: '/splash', builder: (context, state) => const SplashScreen()),
       GoRoute(path: '/login', builder: (context, state) => const LoginScreen()),
+      GoRoute(
+        path: '/approval-pending',
+        builder: (context, state) => const ApprovalPendingScreen(),
+      ),
+      GoRoute(
+        path: '/auth-error',
+        builder: (context, state) => const AuthErrorScreen(),
+      ),
       GoRoute(
           path: '/customer',
           builder: (context, state) => const CustomerDashboardScreen()),

@@ -8,6 +8,7 @@ import 'package:url_launcher/url_launcher.dart';
 import 'package:uuid/uuid.dart';
 
 import '../../../app/theme/app_theme.dart';
+import '../../../core/branches/branch_repository.dart';
 import '../../../core/data/app_config_repository.dart';
 import '../../../core/enums/booking_status.dart';
 import '../../../core/services/location_tracking_service.dart';
@@ -489,9 +490,8 @@ class _TechnicianJobCard extends ConsumerWidget {
                 ScaffoldMessenger.of(context).showSnackBar(
                   const SnackBar(
                       content: Text(
-                          'Estimate sent. Customer can approve in app or via WhatsApp fallback.')),
+                          'Estimate sent in app. Customer can approve it from the booking details screen.')),
                 );
-                await _openWhatsApp(context, booking);
               }
             },
             child: const Text('Send estimate'),
@@ -565,13 +565,14 @@ class _TechnicianJobCard extends ConsumerWidget {
   Future<void> _openWhatsApp(BuildContext context, Booking booking) async {
     final phone = booking.phone.replaceAll(RegExp(r'[^0-9]'), '');
     final text =
-        'FixNow estimate approval for ${booking.applianceType}: please approve in the app, or reply APPROVE here to continue.';
+        'FixNow technician update for ${booking.applianceType}: we are working on your service request.';
     final uri =
         Uri.parse('https://wa.me/$phone?text=${Uri.encodeComponent(text)}');
     if (!await launchUrl(uri, mode: LaunchMode.externalApplication) &&
         context.mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-          content: Text('WhatsApp fallback could not be opened')));
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('WhatsApp could not be opened')),
+      );
     }
   }
 }
@@ -626,14 +627,23 @@ class _AttendanceViewState extends ConsumerState<_AttendanceView> {
       bool geofencePassed = false;
       final config = ref.read(operationsConfigProvider).valueOrNull ??
           OperationsConfig.fromJson(const {});
+      final branches = ref.read(branchesProvider).valueOrNull ?? const [];
+      final branch = branches.where((item) => item.id == user.branchId).isEmpty
+          ? null
+          : branches.firstWhere((item) => item.id == user.branchId);
+      final branchLatitude =
+          branch?.hasCoordinates == true ? branch!.latitude : config.branchLatitude;
+      final branchLongitude =
+          branch?.hasCoordinates == true ? branch!.longitude : config.branchLongitude;
+      final branchRadius = branch?.radiusMeters ?? config.geofenceRadiusMeters;
       if (position != null) {
         final distance = Geolocator.distanceBetween(
           position.latitude,
           position.longitude,
-          config.branchLatitude,
-          config.branchLongitude,
+          branchLatitude,
+          branchLongitude,
         );
-        geofencePassed = distance <= config.geofenceRadiusMeters;
+        geofencePassed = distance <= branchRadius;
       } else {
         // Web / location unavailable â€” skip geo-fence, mark as requires review
         geofencePassed = false;
