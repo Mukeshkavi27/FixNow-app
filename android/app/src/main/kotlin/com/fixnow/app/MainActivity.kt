@@ -1,4 +1,4 @@
-package com.example.fixnow
+package com.fixnow.app
 
 import io.flutter.embedding.android.FlutterActivity
 

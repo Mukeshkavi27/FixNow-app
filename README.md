@@ -18,7 +18,7 @@ Flutter/Firebase foundation for a home appliance service management platform.
 ## Current release blockers
 
 - Generate Android and iOS Firebase app credentials with `flutterfire configure`.
-- Replace the Android Maps placeholder and configure the iOS Maps SDK key.
+- Configure Android and iOS Google Maps SDK keys before release.
 - Deploy the included Firestore and Storage rules and verify them with the Firebase Emulator Suite.
 - Add trusted Cloud Functions for push notifications, nearest-technician assignment, WhatsApp webhooks, analytics aggregation, and idle-alert delivery.
 - Integrate a reviewed face-verification provider. Attendance currently stores face matching as pending.

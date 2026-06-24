@@ -3,9 +3,17 @@
 ## Android Play Store
 
 1. Run `flutterfire configure` and commit generated Firebase options plus `google-services.json`. The checked-in `firebase_options.dart` only contains working web options; Android and iOS intentionally show a configuration error until their Firebase apps are generated.
-2. Set `applicationId` to your package, for example `com.fixnow.app`.
-3. Add release signing in `android/key.properties` and `android/app/build.gradle`.
-4. Add a real Google Maps API key with Android app restrictions.
+2. The default Android package is `com.fixnow.app`. To override it, set `FIXNOW_APPLICATION_ID` in `android/local.properties`, as a Gradle property, or as an environment variable.
+3. Add release signing in `android/key.properties`:
+
+   ```properties
+   storeFile=../release.keystore
+   storePassword=...
+   keyAlias=...
+   keyPassword=...
+   ```
+
+4. Add a real Google Maps API key with Android app restrictions by setting `GOOGLE_MAPS_API_KEY` in `android/local.properties`, as a Gradle property, or as an environment variable.
 5. Configure launcher icons and adaptive icon assets.
 6. Build:
 

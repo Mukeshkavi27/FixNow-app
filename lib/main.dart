@@ -1,3 +1,5 @@
+import 'dart:ui';
+
 import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -9,7 +11,13 @@ import 'firebase_options.dart';
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   ErrorWidget.builder = (details) => const AppErrorView();
-  FlutterError.onError = (details) {};
+  FlutterError.onError = FlutterError.presentError;
+  PlatformDispatcher.instance.onError = (error, stack) {
+    FlutterError.presentError(
+      FlutterErrorDetails(exception: error, stack: stack),
+    );
+    return true;
+  };
   try {
     await Firebase.initializeApp(
       options: DefaultFirebaseOptions.currentPlatform,
@@ -53,7 +61,7 @@ class _ConfigurationErrorApp extends StatelessWidget {
                     Text(message, textAlign: TextAlign.center),
                     const SizedBox(height: 12),
                     const Text(
-                      'Run flutterfire configure and add the platform Google Maps key before release.',
+                      'Run flutterfire configure for the missing platform before release.',
                       textAlign: TextAlign.center,
                     ),
                   ],

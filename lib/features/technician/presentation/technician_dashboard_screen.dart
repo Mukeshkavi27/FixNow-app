@@ -506,7 +506,7 @@ class _TechnicianJobCard extends ConsumerWidget {
     XFile? image;
 
     if (kIsWeb) {
-      // On web, camera source is unreliable â€” use gallery (file picker) instead
+      // On web, camera source is unreliable - use gallery (file picker) instead.
       image = await ImagePicker()
           .pickImage(source: ImageSource.gallery, imageQuality: 75);
     } else {
@@ -605,7 +605,7 @@ class _AttendanceViewState extends ConsumerState<_AttendanceView> {
         return;
       }
 
-      // On web, location may not be available â€” handle gracefully
+      // On web, location may not be available - handle gracefully.
       Position? position;
       try {
         position = await TechnicianDashboardScreen._position();
@@ -613,7 +613,7 @@ class _AttendanceViewState extends ConsumerState<_AttendanceView> {
         position = null;
       }
 
-      // On web, camera is not supported â€” use gallery (file picker) instead
+      // On web, camera is not supported - use gallery (file picker) instead.
       final image = await ImagePicker().pickImage(
         source: kIsWeb ? ImageSource.gallery : ImageSource.camera,
         imageQuality: 70,
@@ -631,10 +631,12 @@ class _AttendanceViewState extends ConsumerState<_AttendanceView> {
       final branch = branches.where((item) => item.id == user.branchId).isEmpty
           ? null
           : branches.firstWhere((item) => item.id == user.branchId);
-      final branchLatitude =
-          branch?.hasCoordinates == true ? branch!.latitude : config.branchLatitude;
-      final branchLongitude =
-          branch?.hasCoordinates == true ? branch!.longitude : config.branchLongitude;
+      final branchLatitude = branch?.hasCoordinates == true
+          ? branch!.latitude
+          : config.branchLatitude;
+      final branchLongitude = branch?.hasCoordinates == true
+          ? branch!.longitude
+          : config.branchLongitude;
       final branchRadius = branch?.radiusMeters ?? config.geofenceRadiusMeters;
       if (position != null) {
         final distance = Geolocator.distanceBetween(
@@ -645,7 +647,7 @@ class _AttendanceViewState extends ConsumerState<_AttendanceView> {
         );
         geofencePassed = distance <= branchRadius;
       } else {
-        // Web / location unavailable â€” skip geo-fence, mark as requires review
+        // Web / location unavailable - skip geo-fence, mark as requires review.
         geofencePassed = false;
       }
 
@@ -676,7 +678,7 @@ class _AttendanceViewState extends ConsumerState<_AttendanceView> {
         _result = geofencePassed
             ? 'Geo-fence passed. Face verification is pending admin review.'
             : kIsWeb
-                ? 'Selfie saved. Location check skipped on web â€” admin review required.'
+                ? 'Selfie saved. Location check skipped on web - admin review required.'
                 : 'Selfie saved, geo-fence review required';
       });
     } catch (e) {
