@@ -21,17 +21,15 @@ class BranchRepository {
       _firestore.collection('branches');
 
   Stream<List<BranchInfo>> watchBranches() {
-    return _branches
-        .orderBy('name')
-        .snapshots()
-        .map(
-          (snapshot) => snapshot.docs
-              .map((doc) => BranchInfo.fromJson(doc.id, doc.data()))
-              .where((branch) =>
-                  branch.name.isNotEmpty &&
-                  branch.city.isNotEmpty)
-              .toList(),
-        );
+    return _branches.orderBy('name').snapshots().map(
+      (snapshot) {
+        final branches = snapshot.docs
+            .map((doc) => BranchInfo.fromJson(doc.id, doc.data()))
+            .where((branch) => branch.name.isNotEmpty && branch.city.isNotEmpty)
+            .toList();
+        return branches.isEmpty ? BranchInfo.fallbackBranches : branches;
+      },
+    );
   }
 
   Future<void> createBranch(BranchInfo branch) async {

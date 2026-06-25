@@ -8,8 +8,6 @@ import 'package:url_launcher/url_launcher.dart';
 import 'package:uuid/uuid.dart';
 
 import '../../../app/theme/app_theme.dart';
-import '../../../core/branches/branch_repository.dart';
-import '../../../core/data/app_config_repository.dart';
 import '../../../core/enums/booking_status.dart';
 import '../../../core/services/location_tracking_service.dart';
 import '../../auth/data/auth_repository.dart';
@@ -589,13 +587,6 @@ class _AttendanceViewState extends ConsumerState<_AttendanceView> {
   bool _marked = false;
   String? _result;
 
-  bool _isWindowOpen(OperationsConfig config) {
-    final now = DateTime.now();
-    final start = config.startFor(now);
-    final end = config.endFor(now);
-    return !now.isBefore(start) && !now.isAfter(end);
-  }
-
   Future<void> _markAttendance() async {
     setState(() => _loading = true);
     try {
@@ -605,15 +596,6 @@ class _AttendanceViewState extends ConsumerState<_AttendanceView> {
         return;
       }
 
-      // On web, location may not be available - handle gracefully.
-      Position? position;
-      try {
-        position = await TechnicianDashboardScreen._position();
-      } catch (_) {
-        position = null;
-      }
-
-      // On web, camera is not supported - use gallery (file picker) instead.
       final image = await ImagePicker().pickImage(
         source: kIsWeb ? ImageSource.gallery : ImageSource.camera,
         imageQuality: 70,
@@ -623,35 +605,6 @@ class _AttendanceViewState extends ConsumerState<_AttendanceView> {
         setState(() => _result = 'No photo selected. Please try again.');
         return;
       }
-
-      bool geofencePassed = false;
-      final config = ref.read(operationsConfigProvider).valueOrNull ??
-          OperationsConfig.fromJson(const {});
-      final branches = ref.read(branchesProvider).valueOrNull ?? const [];
-      final branch = branches.where((item) => item.id == user.branchId).isEmpty
-          ? null
-          : branches.firstWhere((item) => item.id == user.branchId);
-      final branchLatitude = branch?.hasCoordinates == true
-          ? branch!.latitude
-          : config.branchLatitude;
-      final branchLongitude = branch?.hasCoordinates == true
-          ? branch!.longitude
-          : config.branchLongitude;
-      final branchRadius = branch?.radiusMeters ?? config.geofenceRadiusMeters;
-      if (position != null) {
-        final distance = Geolocator.distanceBetween(
-          position.latitude,
-          position.longitude,
-          branchLatitude,
-          branchLongitude,
-        );
-        geofencePassed = distance <= branchRadius;
-      } else {
-        // Web / location unavailable - skip geo-fence, mark as requires review.
-        geofencePassed = false;
-      }
-
-      const faceMatchPassed = false;
 
       final url = await ref.read(storageRepositoryProvider).uploadXFile(
             file: image,
@@ -665,21 +618,17 @@ class _AttendanceViewState extends ConsumerState<_AttendanceView> {
               id: '',
               technicianId: user.uid,
               selfieUrl: url,
-              latitude: position?.latitude ?? 0,
-              longitude: position?.longitude ?? 0,
+              latitude: 0,
+              longitude: 0,
               timestamp: DateTime.now(),
-              faceMatchPassed: faceMatchPassed,
-              geofencePassed: geofencePassed,
+              faceMatchPassed: false,
+              geofencePassed: false,
             ),
           );
 
       setState(() {
         _marked = true;
-        _result = geofencePassed
-            ? 'Geo-fence passed. Face verification is pending admin review.'
-            : kIsWeb
-                ? 'Selfie saved. Location check skipped on web - admin review required.'
-                : 'Selfie saved, geo-fence review required';
+        _result = 'Attendance sent to admin for review.';
       });
     } catch (e) {
       setState(() => _result = 'Error: ${e.toString()}');
@@ -690,9 +639,6 @@ class _AttendanceViewState extends ConsumerState<_AttendanceView> {
 
   @override
   Widget build(BuildContext context) {
-    final config = ref.watch(operationsConfigProvider).valueOrNull ??
-        OperationsConfig.fromJson(const {});
-    final isWindowOpen = _isWindowOpen(config);
     return ListView(
       padding: const EdgeInsets.all(16),
       children: [
@@ -703,13 +649,13 @@ class _AttendanceViewState extends ConsumerState<_AttendanceView> {
           child: const Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text('9:30 AM attendance',
+              Text('Daily attendance',
                   style: TextStyle(
                       color: Colors.white,
                       fontSize: 22,
                       fontWeight: FontWeight.w900)),
               SizedBox(height: 6),
-              Text('Selfie, geo-fence, and AI face-match verification',
+              Text('Selfie attendance sent to admin review',
                   style: TextStyle(color: Colors.white70)),
             ],
           ),
@@ -732,7 +678,7 @@ class _AttendanceViewState extends ConsumerState<_AttendanceView> {
                 const SizedBox(width: 8),
                 const Expanded(
                   child: Text(
-                    'You are on a laptop/web browser. Please select a selfie photo from your files. For full geo-fence verification, use the mobile app.',
+                    'Please upload a selfie photo. Your marked time and image will be sent to admin for review.',
                     style: TextStyle(fontSize: 13),
                   ),
                 ),
@@ -756,24 +702,18 @@ class _AttendanceViewState extends ConsumerState<_AttendanceView> {
                 const SizedBox(height: 6),
                 Text(
                     _result ??
-                        (isWindowOpen
-                            ? 'Attendance window is open'
-                            : 'Attendance window is closed'),
+                        'Mark attendance with a selfie. Admin will verify it.',
                     textAlign: TextAlign.center),
                 const SizedBox(height: 16),
-                const _CheckRow(label: 'Face match verified', passed: false),
-                _CheckRow(label: 'Inside branch geo-fence', passed: !kIsWeb),
-                _CheckRow(label: 'Attendance window', passed: isWindowOpen),
-                const SizedBox(height: 16),
                 FilledButton.icon(
-                  onPressed: _loading || !isWindowOpen ? null : _markAttendance,
+                  onPressed: _loading ? null : _markAttendance,
                   icon: _loading
                       ? const SizedBox.square(
                           dimension: 18,
                           child: CircularProgressIndicator(strokeWidth: 2))
                       : Icon(kIsWeb ? Icons.upload_file : Icons.photo_camera),
                   label: Text(_loading
-                      ? 'Verifying...'
+                      ? 'Submitting...'
                       : kIsWeb
                           ? 'Upload selfie photo'
                           : 'Take selfie'),
@@ -987,28 +927,6 @@ class _InlineMetric extends StatelessWidget {
                 style: const TextStyle(color: Colors.white70, fontSize: 12)),
           ],
         ),
-      ),
-    );
-  }
-}
-
-class _CheckRow extends StatelessWidget {
-  const _CheckRow({required this.label, required this.passed});
-
-  final String label;
-  final bool passed;
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 4),
-      child: Row(
-        children: [
-          Icon(passed ? Icons.check_circle : Icons.radio_button_unchecked,
-              size: 18, color: passed ? AppTheme.accent : AppTheme.textHint),
-          const SizedBox(width: 8),
-          Text(label),
-        ],
       ),
     );
   }

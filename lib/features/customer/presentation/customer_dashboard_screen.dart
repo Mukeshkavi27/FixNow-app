@@ -8,6 +8,7 @@ import '../../../app/theme/app_theme.dart';
 import '../../../app/widgets/resilient_asset_image.dart';
 import '../../../core/constants/app_constants.dart';
 import '../../../core/enums/booking_status.dart';
+import '../../../core/services/reverse_geocoding_service.dart';
 import '../../auth/data/auth_repository.dart';
 import '../../bookings/domain/booking.dart';
 import '../../services/data/service_catalog_repository.dart';
@@ -1220,16 +1221,16 @@ class _SupportIconBadge extends StatelessWidget {
   }
 }
 
-class _LocationSheet extends StatefulWidget {
+class _LocationSheet extends ConsumerStatefulWidget {
   const _LocationSheet({required this.onSelected});
 
   final ValueChanged<String> onSelected;
 
   @override
-  State<_LocationSheet> createState() => _LocationSheetState();
+  ConsumerState<_LocationSheet> createState() => _LocationSheetState();
 }
 
-class _LocationSheetState extends State<_LocationSheet> {
+class _LocationSheetState extends ConsumerState<_LocationSheet> {
   final controller = TextEditingController();
   bool loading = false;
   String? error;
@@ -1255,8 +1256,18 @@ class _LocationSheetState extends State<_LocationSheet> {
         throw StateError('Location permission is required.');
       }
       final position = await Geolocator.getCurrentPosition();
+      ReverseGeocodingResult? result;
+      try {
+        result = await ref.read(reverseGeocodingServiceProvider).reverse(
+              latitude: position.latitude,
+              longitude: position.longitude,
+            );
+      } catch (_) {
+        result = null;
+      }
       widget.onSelected(
-        '${position.latitude.toStringAsFixed(4)}, ${position.longitude.toStringAsFixed(4)}',
+        result?.address ??
+            '${position.latitude.toStringAsFixed(4)}, ${position.longitude.toStringAsFixed(4)}',
       );
     } catch (_) {
       if (mounted) {

@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:geolocator/geolocator.dart';
@@ -10,9 +11,12 @@ import 'package:uuid/uuid.dart';
 
 import '../../../app/theme/app_theme.dart';
 import '../../../app/widgets/resilient_asset_image.dart';
+import '../../../core/branches/branch_info.dart';
 import '../../../core/branches/branch_repository.dart';
 import '../../../core/branches/branch_resolver.dart';
 import '../../../core/enums/booking_status.dart';
+import '../../../core/services/reverse_geocoding_service.dart';
+import '../../auth/domain/app_user.dart';
 import '../../auth/data/auth_repository.dart';
 import '../../bookings/data/booking_repository.dart';
 import '../../bookings/domain/booking.dart';
@@ -37,7 +41,9 @@ class _BookServiceScreenState extends ConsumerState<BookServiceScreen> {
   TimeOfDay _time = const TimeOfDay(hour: 10, minute: 0);
   XFile? _image;
   bool _isSaving = false;
+  bool _isLocating = false;
   bool _profileLoaded = false;
+  Position? _detectedPosition;
 
   @override
   void didChangeDependencies() {
@@ -47,6 +53,16 @@ class _BookServiceScreenState extends ConsumerState<BookServiceScreen> {
     if (user == null) return;
     _name.text = user.name;
     _phone.text = user.phone;
+    if ((user.lastServiceAddress ?? '').isNotEmpty) {
+      _address.text = user.lastServiceAddress!;
+      if (user.lastServiceLatitude != null &&
+          user.lastServiceLongitude != null) {
+        _detectedPosition = _storedPosition(
+          latitude: user.lastServiceLatitude!,
+          longitude: user.lastServiceLongitude!,
+        );
+      }
+    }
     _profileLoaded = true;
   }
 
@@ -86,19 +102,74 @@ class _BookServiceScreenState extends ConsumerState<BookServiceScreen> {
     }
   }
 
+  Future<void> _useCurrentLocation() async {
+    setState(() => _isLocating = true);
+    try {
+      final position = await _position();
+      if (!mounted) return;
+      if (position == null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content:
+                Text('Could not access live location. Enter address manually.'),
+          ),
+        );
+        return;
+      }
+      String? resolvedAddress;
+      try {
+        final result = await ref.read(reverseGeocodingServiceProvider).reverse(
+              latitude: position.latitude,
+              longitude: position.longitude,
+            );
+        resolvedAddress = result?.address;
+      } catch (_) {
+        resolvedAddress = null;
+      }
+      if (!mounted) return;
+      setState(() {
+        _detectedPosition = position;
+        _address.text = resolvedAddress?.trim().isNotEmpty == true
+            ? resolvedAddress!.trim()
+            : 'Current location (${position.latitude.toStringAsFixed(5)}, ${position.longitude.toStringAsFixed(5)})';
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            resolvedAddress == null
+                ? 'Live location added. Address lookup was unavailable.'
+                : 'Live location converted to address.',
+          ),
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _isLocating = false);
+    }
+  }
+
+  void _useSavedAddress(AppUser user) {
+    final address = user.lastServiceAddress;
+    if (address == null || address.trim().isEmpty) return;
+    setState(() {
+      _address.text = address.trim();
+      if (user.lastServiceLatitude != null &&
+          user.lastServiceLongitude != null) {
+        _detectedPosition = _storedPosition(
+          latitude: user.lastServiceLatitude!,
+          longitude: user.lastServiceLongitude!,
+        );
+      }
+    });
+  }
+
   Future<void> _submit() async {
     if (!_formKey.currentState!.validate()) return;
     final user = ref.read(currentUserProvider).valueOrNull;
-    final branches = ref.read(branchesProvider).valueOrNull ?? const [];
+    final branches =
+        ref.read(branchesProvider).valueOrNull ?? BranchInfo.fallbackBranches;
     if (user == null) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Please sign in before booking.')),
-      );
-      return;
-    }
-    if (branches.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('No service branches are configured yet.')),
       );
       return;
     }
@@ -108,24 +179,23 @@ class _BookServiceScreenState extends ConsumerState<BookServiceScreen> {
     try {
       String? imageUrl;
       if (_image != null) {
-        imageUrl = await ref.read(storageRepositoryProvider).uploadXFile(
-              file: _image!,
-              folder: 'customer_uploads/${user.uid}',
-              fileName: '${const Uuid().v4()}.jpg',
-            );
+        try {
+          imageUrl = await ref.read(storageRepositoryProvider).uploadXFile(
+                file: _image!,
+                folder: 'customer_uploads/${user.uid}',
+                fileName: '${const Uuid().v4()}.jpg',
+              );
+        } catch (_) {
+          imageUrl = null;
+        }
       }
-      final location = await _position();
+      final location = _detectedPosition ?? await _position();
       final branchResolution = BranchResolver.resolve(
         branches: branches,
         address: _address.text.trim(),
         latitude: location?.latitude,
         longitude: location?.longitude,
       );
-      await ref.read(authRepositoryProvider).updateUserBranch(
-            uid: user.uid,
-            branchId: branchResolution.branch.id,
-            branchName: branchResolution.branch.name,
-          );
       final id = await ref.read(bookingRepositoryProvider).createBooking(
             Booking(
               id: '',
@@ -146,13 +216,31 @@ class _BookServiceScreenState extends ConsumerState<BookServiceScreen> {
               longitude: location?.longitude,
             ),
           );
+      try {
+        await ref.read(authRepositoryProvider).updateUserBranch(
+              uid: user.uid,
+              branchId: branchResolution.branch.id,
+              branchName: branchResolution.branch.name,
+            );
+        await ref.read(authRepositoryProvider).updateLastServiceLocation(
+              uid: user.uid,
+              address: _address.text.trim(),
+              latitude: location?.latitude,
+              longitude: location?.longitude,
+            );
+      } catch (_) {
+        // Profile updates are conveniences; booking creation already succeeded.
+      }
       if (!mounted) return;
       context.go('/booking/$id/confirmed');
     } catch (error) {
       if (mounted) {
+        final message = error is FirebaseException
+            ? 'Booking could not be saved: ${error.code}. ${error.message ?? ''}'
+            : error.toString();
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text(error.toString()),
+            content: Text(message),
             behavior: SnackBarBehavior.floating,
             backgroundColor: Colors.red.shade700,
           ),
@@ -166,12 +254,25 @@ class _BookServiceScreenState extends ConsumerState<BookServiceScreen> {
   @override
   Widget build(BuildContext context) {
     final user = ref.watch(currentUserProvider).valueOrNull;
+    final branches =
+        ref.watch(branchesProvider).valueOrNull ?? BranchInfo.fallbackBranches;
     if (!_profileLoaded && user != null) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted || _profileLoaded) return;
         setState(() {
           _name.text = user.name;
           _phone.text = user.phone;
+          if ((user.lastServiceAddress ?? '').isNotEmpty &&
+              _address.text.trim().isEmpty) {
+            _address.text = user.lastServiceAddress!;
+            if (user.lastServiceLatitude != null &&
+                user.lastServiceLongitude != null) {
+              _detectedPosition = _storedPosition(
+                latitude: user.lastServiceLatitude!,
+                longitude: user.lastServiceLongitude!,
+              );
+            }
+          }
           _profileLoaded = true;
         });
       });
@@ -190,14 +291,24 @@ class _BookServiceScreenState extends ConsumerState<BookServiceScreen> {
                   children: [
                     SizedBox(width: 340, child: _ServiceIntro(profile)),
                     const SizedBox(width: 18),
-                    Expanded(child: _bookingForm(profile: profile)),
+                    Expanded(
+                      child: _bookingForm(
+                        profile: profile,
+                        user: user,
+                        branches: branches,
+                      ),
+                    ),
                   ],
                 )
               : Column(
                   children: [
                     _ServiceIntro(profile),
                     const SizedBox(height: 16),
-                    _bookingForm(profile: profile),
+                    _bookingForm(
+                      profile: profile,
+                      user: user,
+                      branches: branches,
+                    ),
                   ],
                 );
 
@@ -215,7 +326,20 @@ class _BookServiceScreenState extends ConsumerState<BookServiceScreen> {
     );
   }
 
-  Widget _bookingForm({required _ServiceProfile profile}) {
+  Widget _bookingForm({
+    required _ServiceProfile profile,
+    required AppUser? user,
+    required List<BranchInfo> branches,
+  }) {
+    final savedAddress = user?.lastServiceAddress?.trim();
+    final branchResolution = _address.text.trim().isEmpty
+        ? null
+        : BranchResolver.resolve(
+            branches: branches,
+            address: _address.text.trim(),
+            latitude: _detectedPosition?.latitude,
+            longitude: _detectedPosition?.longitude,
+          );
     return Form(
       key: _formKey,
       child: _Panel(
@@ -259,6 +383,7 @@ class _BookServiceScreenState extends ConsumerState<BookServiceScreen> {
                 const SizedBox(height: 12),
                 TextFormField(
                   controller: _address,
+                  onChanged: (_) => setState(() {}),
                   decoration: const InputDecoration(
                     labelText: 'Service address',
                     prefixIcon: Icon(Icons.location_on_outlined),
@@ -267,6 +392,41 @@ class _BookServiceScreenState extends ConsumerState<BookServiceScreen> {
                   maxLines: 4,
                   validator: _required,
                 ),
+                const SizedBox(height: 10),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    OutlinedButton.icon(
+                      onPressed: _isLocating ? null : _useCurrentLocation,
+                      icon: _isLocating
+                          ? const SizedBox.square(
+                              dimension: 16,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : const Icon(Icons.my_location_outlined),
+                      label: Text(
+                        _isLocating ? 'Detecting...' : 'Use current location',
+                      ),
+                    ),
+                    if (user != null &&
+                        savedAddress != null &&
+                        savedAddress.isNotEmpty)
+                      OutlinedButton.icon(
+                        onPressed: () => _useSavedAddress(user),
+                        icon: const Icon(Icons.history_outlined),
+                        label: const Text('Use saved address'),
+                      ),
+                  ],
+                ),
+                if (branchResolution != null) ...[
+                  const SizedBox(height: 10),
+                  _BranchPreview(
+                    branchName: branchResolution.branch.name,
+                    reason: branchResolution.reason,
+                    hasLiveLocation: _detectedPosition != null,
+                  ),
+                ],
                 const SizedBox(height: 12),
                 TextFormField(
                   controller: _problem,
@@ -579,6 +739,66 @@ class _InfoChip extends StatelessWidget {
   }
 }
 
+class _BranchPreview extends StatelessWidget {
+  const _BranchPreview({
+    required this.branchName,
+    required this.reason,
+    required this.hasLiveLocation,
+  });
+
+  final String branchName;
+  final String reason;
+  final bool hasLiveLocation;
+
+  @override
+  Widget build(BuildContext context) {
+    final label = switch (reason) {
+      'matched_branch_by_address' => 'Matched from address',
+      'nearest_branch_by_location' => 'Nearest to live location',
+      _ => hasLiveLocation
+          ? 'Selected from live location'
+          : 'Default service branch',
+    };
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: AppTheme.primary.withValues(alpha: 0.06),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: AppTheme.primary.withValues(alpha: 0.14)),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.account_tree_outlined, color: AppTheme.primary),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  branchName,
+                  style: const TextStyle(
+                    color: AppTheme.textPrimary,
+                    fontWeight: FontWeight.w800,
+                    fontSize: 13,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  label,
+                  style: const TextStyle(
+                    color: AppTheme.textSecondary,
+                    fontSize: 11,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class _Panel extends StatelessWidget {
   const _Panel({required this.child});
 
@@ -604,6 +824,24 @@ class _Panel extends StatelessWidget {
       child: child,
     );
   }
+}
+
+Position _storedPosition({
+  required double latitude,
+  required double longitude,
+}) {
+  return Position(
+    latitude: latitude,
+    longitude: longitude,
+    timestamp: DateTime.now(),
+    accuracy: 0,
+    altitude: 0,
+    altitudeAccuracy: 0,
+    heading: 0,
+    headingAccuracy: 0,
+    speed: 0,
+    speedAccuracy: 0,
+  );
 }
 
 class _ServiceProfile {

@@ -18,6 +18,9 @@ class AppUser {
     this.requestLatitude,
     this.requestLongitude,
     this.profilePhoto,
+    this.lastServiceAddress,
+    this.lastServiceLatitude,
+    this.lastServiceLongitude,
   });
 
   final String uid;
@@ -33,6 +36,9 @@ class AppUser {
   final String? branchName;
   final double? requestLatitude;
   final double? requestLongitude;
+  final String? lastServiceAddress;
+  final double? lastServiceLatitude;
+  final double? lastServiceLongitude;
 
   factory AppUser.fromFirestore(DocumentSnapshot<Map<String, dynamic>> doc) {
     final data = doc.data() ?? {};
@@ -42,8 +48,7 @@ class AppUser {
       email: data['email'] as String? ?? '',
       phone: data['phone'] as String? ?? '',
       role: UserRole.fromString(data['role'] as String? ?? 'customer'),
-      accountStatus:
-          AccountStatus.fromString(data['accountStatus'] as String?),
+      accountStatus: AccountStatus.fromString(data['accountStatus'] as String?),
       profilePhoto: data['profilePhoto'] as String?,
       createdAt: (data['createdAt'] as Timestamp?)?.toDate() ?? DateTime.now(),
       isActive: data['isActive'] as bool? ?? true,
@@ -51,6 +56,9 @@ class AppUser {
       branchName: data['branchName'] as String?,
       requestLatitude: (data['requestLatitude'] as num?)?.toDouble(),
       requestLongitude: (data['requestLongitude'] as num?)?.toDouble(),
+      lastServiceAddress: data['lastServiceAddress'] as String?,
+      lastServiceLatitude: (data['lastServiceLatitude'] as num?)?.toDouble(),
+      lastServiceLongitude: (data['lastServiceLongitude'] as num?)?.toDouble(),
     );
   }
 
@@ -69,6 +77,9 @@ class AppUser {
       'branchName': branchName,
       'requestLatitude': requestLatitude,
       'requestLongitude': requestLongitude,
+      'lastServiceAddress': lastServiceAddress,
+      'lastServiceLatitude': lastServiceLatitude,
+      'lastServiceLongitude': lastServiceLongitude,
     };
   }
 }

@@ -83,6 +83,9 @@ service cloud.firestore {
             'profilePhoto',
             'branchId',
             'branchName',
+            'lastServiceAddress',
+            'lastServiceLatitude',
+            'lastServiceLongitude',
             'updatedAt'
           ]));
       allow delete: if isAdmin();
@@ -108,8 +111,10 @@ service cloud.firestore {
         || (isCustomer()
           && request.resource.data.customerId == request.auth.uid
           && request.resource.data.status == 'booked'
-          && request.resource.data.technicianId == null
-          && request.resource.data.servicePhotos.size() == 0);
+          && (!('technicianId' in request.resource.data)
+            || request.resource.data.technicianId == null)
+          && (!('servicePhotos' in request.resource.data)
+            || request.resource.data.servicePhotos.size() == 0));
 
       allow read: if isAdmin()
         || ownsBooking(resource.data)

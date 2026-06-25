@@ -27,6 +27,14 @@ class TechnicianRepository {
     });
   }
 
+  Stream<List<Attendance>> watchAttendance() {
+    return _firestore
+        .collection('attendance')
+        .orderBy('timestamp', descending: true)
+        .snapshots()
+        .map((snap) => snap.docs.map(Attendance.fromFirestore).toList());
+  }
+
   Future<void> updateLocation(TechnicianLocation location) {
     return _firestore
         .collection('technician_locations')

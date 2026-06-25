@@ -159,18 +159,33 @@ class BookingRepository {
     required String technicianName,
   }) async {
     final bookingRef = _firestore.collection('bookings').doc(bookingId);
+    final notificationRef = _firestore.collection('notifications').doc();
     await _firestore.runTransaction((transaction) async {
       final snapshot = await transaction.get(bookingRef);
       final data = snapshot.data();
       if (data == null) throw StateError('Booking not found.');
-      if (data['status'] != BookingStatus.booked.name) {
-        throw StateError('Only unassigned bookings can be assigned.');
+      final current =
+          BookingStatus.fromString(data['status'] as String? ?? 'booked');
+      if (current == BookingStatus.closed) {
+        throw StateError('Closed bookings cannot be reassigned.');
       }
       transaction.update(bookingRef, {
         'technicianId': technicianId,
         'technicianName': technicianName,
-        'status': BookingStatus.technicianAssigned.name,
+        'status': current == BookingStatus.booked
+            ? BookingStatus.technicianAssigned.name
+            : current.name,
         'updatedAt': FieldValue.serverTimestamp(),
+      });
+      transaction.set(notificationRef, {
+        'userId': technicianId,
+        'bookingId': bookingId,
+        'type': 'technicianAssignment',
+        'title': 'New service assigned',
+        'body':
+            '${data['applianceType'] ?? 'Service'} for ${data['customerName'] ?? 'customer'} is assigned to you.',
+        'isRead': false,
+        'createdAt': FieldValue.serverTimestamp(),
       });
     });
   }

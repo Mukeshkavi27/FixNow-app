@@ -160,6 +160,20 @@ class AuthRepository {
     });
   }
 
+  Future<void> updateLastServiceLocation({
+    required String uid,
+    required String address,
+    double? latitude,
+    double? longitude,
+  }) {
+    return _firestore.collection('users').doc(uid).update({
+      'lastServiceAddress': address.trim(),
+      'lastServiceLatitude': latitude,
+      'lastServiceLongitude': longitude,
+      'updatedAt': FieldValue.serverTimestamp(),
+    });
+  }
+
   Future<void> sendPasswordReset() async {
     final email = _auth.currentUser?.email;
     if (email == null || email.isEmpty) {

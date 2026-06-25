@@ -55,7 +55,8 @@ class Booking {
       address: data['address'] as String? ?? '',
       applianceType: data['applianceType'] as String? ?? '',
       problemDescription: data['problemDescription'] as String? ?? '',
-      preferredDate: (data['preferredDate'] as Timestamp?)?.toDate() ?? DateTime.now(),
+      preferredDate:
+          (data['preferredDate'] as Timestamp?)?.toDate() ?? DateTime.now(),
       preferredTime: data['preferredTime'] as String? ?? '',
       status: BookingStatus.fromString(data['status'] as String? ?? 'booked'),
       createdAt: (data['createdAt'] as Timestamp?)?.toDate() ?? DateTime.now(),
@@ -74,7 +75,7 @@ class Booking {
   }
 
   Map<String, dynamic> toJson() {
-    return {
+    final data = <String, dynamic>{
       'customerId': customerId,
       'customerName': customerName,
       'phone': phone,
@@ -85,15 +86,22 @@ class Booking {
       'preferredTime': preferredTime,
       'status': status.name,
       'createdAt': Timestamp.fromDate(createdAt),
-      'imageUrl': imageUrl,
-      'technicianId': technicianId,
-      'technicianName': technicianName,
-      'branchId': branchId,
-      'branchName': branchName,
-      'latitude': latitude,
-      'longitude': longitude,
       'servicePhotos': servicePhotos.map((photo) => photo.toJson()).toList(),
     };
+    if (imageUrl != null && imageUrl!.isNotEmpty) data['imageUrl'] = imageUrl;
+    if (technicianId != null && technicianId!.isNotEmpty) {
+      data['technicianId'] = technicianId;
+    }
+    if (technicianName != null && technicianName!.isNotEmpty) {
+      data['technicianName'] = technicianName;
+    }
+    if (branchId != null && branchId!.isNotEmpty) data['branchId'] = branchId;
+    if (branchName != null && branchName!.isNotEmpty) {
+      data['branchName'] = branchName;
+    }
+    if (latitude != null) data['latitude'] = latitude;
+    if (longitude != null) data['longitude'] = longitude;
+    return data;
   }
 }
 
@@ -112,7 +120,8 @@ class ServicePhoto {
     return ServicePhoto(
       stage: data['stage'] as String? ?? '',
       url: data['url'] as String? ?? '',
-      uploadedAt: (data['uploadedAt'] as Timestamp?)?.toDate() ?? DateTime.now(),
+      uploadedAt:
+          (data['uploadedAt'] as Timestamp?)?.toDate() ?? DateTime.now(),
     );
   }
 

@@ -18,6 +18,63 @@ class BranchInfo {
   final double radiusMeters;
   bool get hasCoordinates => latitude != 0 && longitude != 0;
 
+  static const fallbackBranches = [
+    BranchInfo(
+      id: 'fallback-chennai',
+      name: 'FixNow Chennai',
+      city: 'Chennai',
+      latitude: 13.0827,
+      longitude: 80.2707,
+      aliases: [
+        'chennai',
+        'madras',
+        'anna nagar',
+        'adyar',
+        'velachery',
+        'tambaram',
+        'porur',
+        'chromepet',
+        'guindy',
+        'tnagar',
+        't nagar',
+      ],
+      radiusMeters: 75000,
+    ),
+    BranchInfo(
+      id: 'fallback-bengaluru',
+      name: 'FixNow Bengaluru',
+      city: 'Bengaluru',
+      latitude: 12.9716,
+      longitude: 77.5946,
+      aliases: [
+        'bengaluru',
+        'bangalore',
+        'whitefield',
+        'koramangala',
+        'indiranagar',
+        'electronic city',
+        'marathahalli',
+      ],
+      radiusMeters: 85000,
+    ),
+    BranchInfo(
+      id: 'fallback-hyderabad',
+      name: 'FixNow Hyderabad',
+      city: 'Hyderabad',
+      latitude: 17.3850,
+      longitude: 78.4867,
+      aliases: [
+        'hyderabad',
+        'secunderabad',
+        'gachibowli',
+        'madhapur',
+        'kukatpally',
+        'hitech city',
+      ],
+      radiusMeters: 85000,
+    ),
+  ];
+
   factory BranchInfo.fromJson(String id, Map<String, dynamic> data) {
     return BranchInfo(
       id: data['id'] as String? ?? id,
