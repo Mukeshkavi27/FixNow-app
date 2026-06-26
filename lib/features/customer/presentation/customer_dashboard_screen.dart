@@ -36,7 +36,7 @@ class CustomerDashboardScreen extends ConsumerWidget {
       final number = AppConstants.whatsappSupportNumber.replaceAll('+', '');
       await launchUrl(
         Uri.parse(
-          'https://wa.me/$number?text=Hello%20FixNow,%20I%20need%20help%20with%20a%20service.',
+          'https://wa.me/$number?text=Hello%20FixNow,%20I%20need%20help%20booking%20an%20appliance%20repair%20service.',
         ),
         mode: LaunchMode.externalApplication,
       );
@@ -403,7 +403,7 @@ class _WelcomeHero extends StatelessWidget {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        'Reliable home care,\nright when you need it',
+                        'Home appliance repair,\nright when you need it',
                         style: TextStyle(
                           color: Colors.white,
                           fontSize: 24,
@@ -413,7 +413,7 @@ class _WelcomeHero extends StatelessWidget {
                       ),
                       SizedBox(height: 10),
                       Text(
-                        'Verified technicians, clear estimates and live updates.',
+                        'Book AC, fridge, washing machine, TV, microwave and purifier service with verified technicians.',
                         style: TextStyle(
                           color: Color(0xFFF4F8FF),
                           fontSize: 13,

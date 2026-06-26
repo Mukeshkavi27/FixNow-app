@@ -72,7 +72,7 @@ class _BookingDetailScreenState extends ConsumerState<BookingDetailScreen> {
     return Scaffold(
       backgroundColor: AppTheme.surface,
       appBar: AppBar(
-        title: const Text('Service Details'),
+        title: const Text('Appliance Service Details'),
         backgroundColor: AppTheme.background,
         foregroundColor: AppTheme.textPrimary,
         elevation: 0,

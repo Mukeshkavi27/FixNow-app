@@ -23,13 +23,15 @@ class StorageRepository {
   }) async {
     final ref = _storage.ref('$folder/$fileName');
     if (kIsWeb) {
-      await ref.putData(
-        await file.readAsBytes(),
-        SettableMetadata(contentType: file.mimeType ?? 'image/jpeg'),
-      );
+      await ref
+          .putData(
+            await file.readAsBytes(),
+            SettableMetadata(contentType: file.mimeType ?? 'image/jpeg'),
+          )
+          .timeout(const Duration(seconds: 45));
     } else {
-      await ref.putFile(File(file.path));
+      await ref.putFile(File(file.path)).timeout(const Duration(seconds: 45));
     }
-    return ref.getDownloadURL();
+    return ref.getDownloadURL().timeout(const Duration(seconds: 20));
   }
 }

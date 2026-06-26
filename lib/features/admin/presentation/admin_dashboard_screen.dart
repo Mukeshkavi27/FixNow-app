@@ -67,6 +67,17 @@ String _registeredTechnicianName(AppUser technician) {
   return email.isNotEmpty ? email : 'Unnamed technician';
 }
 
+enum _AdminTab {
+  bookings('Bookings', Icons.assignment_outlined),
+  attendance('Attendance', Icons.fact_check_outlined),
+  revenue('Revenue', Icons.currency_rupee),
+  monitoring('Monitoring', Icons.location_searching_outlined);
+
+  const _AdminTab(this.label, this.icon);
+  final String label;
+  final IconData icon;
+}
+
 class AdminDashboardScreen extends ConsumerStatefulWidget {
   const AdminDashboardScreen({super.key});
 
@@ -81,6 +92,7 @@ class _AdminDashboardScreenState extends ConsumerState<AdminDashboardScreen> {
   String? _selectedTechnicianId;
   AdminRangeFilter _selectedRange = AdminRangeFilter.all;
   String? _selectedBranchId;
+  _AdminTab _selectedAdminTab = _AdminTab.bookings;
 
   @override
   void dispose() {
@@ -101,7 +113,7 @@ class _AdminDashboardScreenState extends ConsumerState<AdminDashboardScreen> {
     final currentAdmin = ref.watch(currentUserProvider).valueOrNull;
 
     return AppScaffold(
-      title: 'Admin Dashboard',
+      title: 'FixNow Admin - Appliance Service Operations',
       floatingActionButton: FloatingActionButton.extended(
         onPressed: () => _manualBooking(context, ref),
         icon: const Icon(Icons.add),
@@ -212,16 +224,6 @@ class _AdminDashboardScreenState extends ConsumerState<AdminDashboardScreen> {
                     }
                     return deadline.difference(now) <= const Duration(hours: 1);
                   }).length;
-                  final paidBills = bills.where((bill) => bill.isPaid).toList();
-                  final revenueToday = paidBills
-                      .where((bill) => isSameDay(bill.createdAt, now))
-                      .fold<double>(0, (sum, bill) => sum + bill.amount);
-                  final revenueMonth = paidBills
-                      .where((bill) =>
-                          bill.createdAt.year == now.year &&
-                          bill.createdAt.month == now.month)
-                      .fold<double>(0, (sum, bill) => sum + bill.amount);
-
                   return locationsAsync.when(
                     loading: () => const _AdminStatePanel(
                       title: 'Loading live tracking',
@@ -250,6 +252,78 @@ class _AdminDashboardScreenState extends ConsumerState<AdminDashboardScreen> {
                           .toList();
                       final attendanceProviderValue =
                           attendanceAsync.valueOrNull ?? const <Attendance>[];
+                      final visibleLocations = locations
+                          .where(
+                            (location) => branchTechnicians.any(
+                              (technician) =>
+                                  technician.uid == location.technicianId,
+                            ),
+                          )
+                          .toList();
+                      final selectedTabContent = switch (_selectedAdminTab) {
+                        _AdminTab.bookings => _BookingsAdminTab(
+                            filteredBookings: filteredBookings,
+                            branchBookings: branchBookings,
+                            pendingRequests: pendingRequests,
+                            branches: branches,
+                            branchTechnicians: branchTechnicians,
+                            allTechnicians: technicians,
+                            allBookings: bookings,
+                            now: now,
+                            overdueBookings: overdueBookings,
+                            dueSoonBookings: dueSoonBookings,
+                            controller: _searchController,
+                            selectedStatus: _selectedStatus,
+                            selectedTechnicianId: _selectedTechnicianId,
+                            selectedRange: _selectedRange,
+                            onSearchChanged: (_) => setState(() {}),
+                            onStatusChanged: (value) =>
+                                setState(() => _selectedStatus = value),
+                            onTechnicianChanged: (value) => setState(
+                              () => _selectedTechnicianId =
+                                  value == 'all' ? null : value,
+                            ),
+                            onRangeChanged: (value) =>
+                                setState(() => _selectedRange = value),
+                            onClear: () {
+                              setState(() {
+                                _searchController.clear();
+                                _selectedStatus = null;
+                                _selectedTechnicianId = null;
+                                _selectedRange = AdminRangeFilter.all;
+                              });
+                            },
+                            onAutoAllocate: () => _autoAllocateBranchBookings(
+                              context: context,
+                              ref: ref,
+                              bookings: branchBookings,
+                              technicians: branchTechnicians,
+                              locations: locations,
+                            ),
+                          ),
+                        _AdminTab.attendance => _TechnicianWorkspaceSection(
+                            performance: performance,
+                            bookings: branchBookings,
+                            locations: locations,
+                            attendance: attendanceProviderValue,
+                            attendanceLoading: attendanceAsync.isLoading,
+                            now: now,
+                          ),
+                        _AdminTab.revenue => _RevenueAdminTab(
+                            bills: bills,
+                            bookings: branchBookings,
+                            technicians: branchTechnicians,
+                            branchName: effectiveBranch.name,
+                            now: now,
+                          ),
+                        _AdminTab.monitoring => _LiveMonitoringSection(
+                            locations: visibleLocations,
+                            bookings: branchBookings,
+                            selectedTechnicianId: _selectedTechnicianId,
+                            branchName: effectiveBranch.name,
+                            branchCity: effectiveBranch.city,
+                          ),
+                      };
                       return RefreshIndicator(
                         onRefresh: () async {
                           ref.invalidate(allBookingsProvider);
@@ -284,146 +358,13 @@ class _AdminDashboardScreenState extends ConsumerState<AdminDashboardScreen> {
                                 ),
                               ),
                               const SizedBox(height: 18),
-                              _AdminMetricGrid(
-                                metrics: [
-                                  _MetricData(
-                                    label: 'Filtered bookings',
-                                    value: '${filteredBookings.length}',
-                                    caption:
-                                        '${branchBookings.length} total jobs',
-                                    color: AppTheme.primary,
-                                    icon: Icons.filter_alt_outlined,
-                                  ),
-                                  _MetricData(
-                                    label: 'Revenue today',
-                                    value: _formatCurrency(revenueToday),
-                                    caption: 'Paid bills only',
-                                    color: AppTheme.accent,
-                                    icon: Icons.currency_rupee,
-                                  ),
-                                  _MetricData(
-                                    label: 'Revenue month',
-                                    value: _formatCurrency(revenueMonth),
-                                    caption: 'This month',
-                                    color: const Color(0xFF6B7CFF),
-                                    icon: Icons.insights_outlined,
-                                  ),
-                                  _MetricData(
-                                    label: 'Jobs at risk',
-                                    value: '${overdueBookings.length}',
-                                    caption:
-                                        '$dueSoonBookings due within 1 hour',
-                                    color: const Color(0xFFD95C2A),
-                                    icon: Icons.alarm_on_outlined,
-                                  ),
-                                ],
+                              _AdminTabSelector(
+                                selected: _selectedAdminTab,
+                                onSelected: (tab) =>
+                                    setState(() => _selectedAdminTab = tab),
                               ),
                               const SizedBox(height: 18),
-                              _AdminFilterPanel(
-                                controller: _searchController,
-                                selectedStatus: _selectedStatus,
-                                selectedTechnicianId: _selectedTechnicianId,
-                                selectedRange: _selectedRange,
-                                technicians: branchTechnicians,
-                                onSearchChanged: (_) => setState(() {}),
-                                onStatusChanged: (value) =>
-                                    setState(() => _selectedStatus = value),
-                                onTechnicianChanged: (value) => setState(
-                                  () => _selectedTechnicianId =
-                                      value == 'all' ? null : value,
-                                ),
-                                onRangeChanged: (value) =>
-                                    setState(() => _selectedRange = value),
-                                onClear: () {
-                                  setState(() {
-                                    _searchController.clear();
-                                    _selectedStatus = null;
-                                    _selectedTechnicianId = null;
-                                    _selectedRange = AdminRangeFilter.all;
-                                  });
-                                },
-                              ),
-                              if (pendingRequests.isNotEmpty) ...[
-                                const SizedBox(height: 18),
-                                _PendingTechnicianSection(
-                                  requests: pendingRequests,
-                                  branches: branches,
-                                ),
-                              ],
-                              const SizedBox(height: 18),
-                              _LiveMonitoringSection(
-                                locations: locations
-                                    .where(
-                                      (location) => branchTechnicians.any(
-                                        (technician) =>
-                                            technician.uid ==
-                                            location.technicianId,
-                                      ),
-                                    )
-                                    .toList(),
-                                bookings: branchBookings,
-                                selectedTechnicianId: _selectedTechnicianId,
-                                branchName: effectiveBranch.name,
-                                branchCity: effectiveBranch.city,
-                              ),
-                              const SizedBox(height: 18),
-                              _TechnicianWorkspaceSection(
-                                performance: performance,
-                                bookings: branchBookings,
-                                locations: locations,
-                                attendance: attendanceProviderValue,
-                                attendanceLoading: attendanceAsync.isLoading,
-                              ),
-                              const SizedBox(height: 18),
-                              _SectionCard(
-                                title: 'Booking control',
-                                subtitle:
-                                    'Filter, assign, collect payments, and watch service deadlines.',
-                                action: FilledButton.icon(
-                                  onPressed: branchTechnicians
-                                          .where((tech) => tech.isActive)
-                                          .isEmpty
-                                      ? null
-                                      : () => _autoAllocateBranchBookings(
-                                            context: context,
-                                            ref: ref,
-                                            bookings: branchBookings,
-                                            technicians: branchTechnicians,
-                                            locations: locations,
-                                          ),
-                                  icon: const Icon(Icons.auto_awesome),
-                                  label: const Text('Auto allocate all'),
-                                ),
-                                child: filteredBookings.isEmpty
-                                    ? const Padding(
-                                        padding: EdgeInsets.all(24),
-                                        child: Text(
-                                          'No bookings match the current filters.',
-                                          style: TextStyle(
-                                            color: AppTheme.textSecondary,
-                                          ),
-                                        ),
-                                      )
-                                    : Column(
-                                        children: [
-                                          for (var i = 0;
-                                              i < filteredBookings.length;
-                                              i++) ...[
-                                            _AdminBookingCard(
-                                              booking: filteredBookings[i],
-                                              now: now,
-                                              branchTechnicians:
-                                                  branchTechnicians,
-                                              allTechnicians: technicians,
-                                              allBookings: bookings,
-                                            ),
-                                            if (i !=
-                                                filteredBookings.length - 1)
-                                              const SizedBox(height: 12),
-                                          ],
-                                        ],
-                                      ),
-                              ),
+                              selectedTabContent,
                             ],
                           ),
                         ),
@@ -1458,6 +1399,42 @@ class _MetricCard extends StatelessWidget {
   }
 }
 
+class _AdminTabSelector extends StatelessWidget {
+  const _AdminTabSelector({
+    required this.selected,
+    required this.onSelected,
+  });
+
+  final _AdminTab selected;
+  final ValueChanged<_AdminTab> onSelected;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: AppTheme.divider),
+      ),
+      child: Wrap(
+        spacing: 8,
+        runSpacing: 8,
+        children: [
+          for (final tab in _AdminTab.values)
+            ChoiceChip(
+              avatar: Icon(tab.icon, size: 18),
+              label: Text(tab.label),
+              selected: selected == tab,
+              onSelected: (_) => onSelected(tab),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
 class _AdminFilterPanel extends StatelessWidget {
   const _AdminFilterPanel({
     required this.controller,
@@ -1621,6 +1598,465 @@ class _AdminFilterPanel extends StatelessWidget {
   }
 }
 
+class _BookingsAdminTab extends StatelessWidget {
+  const _BookingsAdminTab({
+    required this.filteredBookings,
+    required this.branchBookings,
+    required this.pendingRequests,
+    required this.branches,
+    required this.branchTechnicians,
+    required this.allTechnicians,
+    required this.allBookings,
+    required this.now,
+    required this.overdueBookings,
+    required this.dueSoonBookings,
+    required this.controller,
+    required this.selectedStatus,
+    required this.selectedTechnicianId,
+    required this.selectedRange,
+    required this.onSearchChanged,
+    required this.onStatusChanged,
+    required this.onTechnicianChanged,
+    required this.onRangeChanged,
+    required this.onClear,
+    required this.onAutoAllocate,
+  });
+
+  final List<Booking> filteredBookings;
+  final List<Booking> branchBookings;
+  final List<AppUser> pendingRequests;
+  final List<BranchInfo> branches;
+  final List<AppUser> branchTechnicians;
+  final List<AppUser> allTechnicians;
+  final List<Booking> allBookings;
+  final DateTime now;
+  final List<Booking> overdueBookings;
+  final int dueSoonBookings;
+  final TextEditingController controller;
+  final BookingStatus? selectedStatus;
+  final String? selectedTechnicianId;
+  final AdminRangeFilter selectedRange;
+  final ValueChanged<String> onSearchChanged;
+  final ValueChanged<BookingStatus?> onStatusChanged;
+  final ValueChanged<String?> onTechnicianChanged;
+  final ValueChanged<AdminRangeFilter> onRangeChanged;
+  final VoidCallback onClear;
+  final VoidCallback onAutoAllocate;
+
+  @override
+  Widget build(BuildContext context) {
+    final unassigned = filteredBookings
+        .where((booking) =>
+            booking.status == BookingStatus.booked &&
+            (booking.technicianId == null || booking.technicianId!.isEmpty))
+        .toList();
+    final closed = filteredBookings
+        .where((booking) => booking.status == BookingStatus.closed)
+        .toList();
+    final ongoing = filteredBookings
+        .where((booking) =>
+            booking.status != BookingStatus.closed &&
+            !unassigned.contains(booking))
+        .toList();
+
+    return Column(
+      children: [
+        _AdminMetricGrid(
+          metrics: [
+            _MetricData(
+              label: 'Filtered bookings',
+              value: '${filteredBookings.length}',
+              caption: '${branchBookings.length} total jobs',
+              color: AppTheme.primary,
+              icon: Icons.filter_alt_outlined,
+            ),
+            _MetricData(
+              label: 'Unassigned',
+              value: '${unassigned.length}',
+              caption: 'Ready for technician allocation',
+              color: const Color(0xFFD95C2A),
+              icon: Icons.person_add_alt_1_outlined,
+            ),
+            _MetricData(
+              label: 'Ongoing',
+              value: '${ongoing.length}',
+              caption: 'Active service pipeline',
+              color: AppTheme.accent,
+              icon: Icons.handyman_outlined,
+            ),
+            _MetricData(
+              label: 'Jobs at risk',
+              value: '${overdueBookings.length}',
+              caption: '$dueSoonBookings due within 1 hour',
+              color: const Color(0xFFF38A1F),
+              icon: Icons.alarm_on_outlined,
+            ),
+          ],
+        ),
+        const SizedBox(height: 18),
+        _AdminFilterPanel(
+          controller: controller,
+          selectedStatus: selectedStatus,
+          selectedTechnicianId: selectedTechnicianId,
+          selectedRange: selectedRange,
+          technicians: branchTechnicians,
+          onSearchChanged: onSearchChanged,
+          onStatusChanged: onStatusChanged,
+          onTechnicianChanged: onTechnicianChanged,
+          onRangeChanged: onRangeChanged,
+          onClear: onClear,
+        ),
+        if (pendingRequests.isNotEmpty) ...[
+          const SizedBox(height: 18),
+          _PendingTechnicianSection(
+            requests: pendingRequests,
+            branches: branches,
+          ),
+        ],
+        const SizedBox(height: 18),
+        _SectionCard(
+          title: 'Booking control',
+          subtitle:
+              'Assign technicians, collect payments, and track service progress.',
+          action: FilledButton.icon(
+            onPressed: branchTechnicians.where((tech) => tech.isActive).isEmpty
+                ? null
+                : onAutoAllocate,
+            icon: const Icon(Icons.auto_awesome),
+            label: const Text('Auto allocate all'),
+          ),
+          child: filteredBookings.isEmpty
+              ? const Padding(
+                  padding: EdgeInsets.all(24),
+                  child: Text(
+                    'No bookings match the current filters.',
+                    style: TextStyle(color: AppTheme.textSecondary),
+                  ),
+                )
+              : Column(
+                  children: [
+                    _BookingGroupSection(
+                      title: 'Unassigned bookings',
+                      emptyText: 'No unassigned bookings in this filter.',
+                      bookings: unassigned,
+                      now: now,
+                      branchTechnicians: branchTechnicians,
+                      allTechnicians: allTechnicians,
+                      allBookings: allBookings,
+                    ),
+                    const SizedBox(height: 14),
+                    _BookingGroupSection(
+                      title: 'Ongoing bookings',
+                      emptyText: 'No ongoing bookings in this filter.',
+                      bookings: ongoing,
+                      now: now,
+                      branchTechnicians: branchTechnicians,
+                      allTechnicians: allTechnicians,
+                      allBookings: allBookings,
+                    ),
+                    const SizedBox(height: 14),
+                    _BookingGroupSection(
+                      title: 'Closed orders',
+                      emptyText: 'No closed orders in this filter.',
+                      bookings: closed,
+                      now: now,
+                      branchTechnicians: branchTechnicians,
+                      allTechnicians: allTechnicians,
+                      allBookings: allBookings,
+                    ),
+                  ],
+                ),
+        ),
+      ],
+    );
+  }
+}
+
+class _BookingGroupSection extends StatelessWidget {
+  const _BookingGroupSection({
+    required this.title,
+    required this.emptyText,
+    required this.bookings,
+    required this.now,
+    required this.branchTechnicians,
+    required this.allTechnicians,
+    required this.allBookings,
+  });
+
+  final String title;
+  final String emptyText;
+  final List<Booking> bookings;
+  final DateTime now;
+  final List<AppUser> branchTechnicians;
+  final List<AppUser> allTechnicians;
+  final List<Booking> allBookings;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: AppTheme.surface,
+        borderRadius: BorderRadius.circular(14),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            '$title (${bookings.length})',
+            style: const TextStyle(
+              fontSize: 15,
+              fontWeight: FontWeight.w900,
+              color: AppTheme.textPrimary,
+            ),
+          ),
+          const SizedBox(height: 10),
+          if (bookings.isEmpty)
+            _InlineEmptyState(
+              icon: Icons.inbox_outlined,
+              message: emptyText,
+            )
+          else
+            Column(
+              children: [
+                for (var i = 0; i < bookings.length; i++) ...[
+                  _AdminBookingCard(
+                    booking: bookings[i],
+                    now: now,
+                    branchTechnicians: branchTechnicians,
+                    allTechnicians: allTechnicians,
+                    allBookings: allBookings,
+                  ),
+                  if (i != bookings.length - 1) const SizedBox(height: 12),
+                ],
+              ],
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+class _RevenueAdminTab extends StatelessWidget {
+  const _RevenueAdminTab({
+    required this.bills,
+    required this.bookings,
+    required this.technicians,
+    required this.branchName,
+    required this.now,
+  });
+
+  final List<Bill> bills;
+  final List<Booking> bookings;
+  final List<AppUser> technicians;
+  final String branchName;
+  final DateTime now;
+
+  @override
+  Widget build(BuildContext context) {
+    final branchBookingIds = {for (final booking in bookings) booking.id};
+    final branchTechnicianIds = {
+      for (final technician in technicians) technician.uid,
+    };
+    final branchBills = bills.where((bill) {
+      return branchBookingIds.contains(bill.bookingId) ||
+          branchTechnicianIds.contains(bill.technicianId);
+    }).toList();
+    final paidBills = branchBills.where((bill) => bill.isPaid).toList();
+    final weekStart = DateTime(now.year, now.month, now.day)
+        .subtract(Duration(days: now.weekday - 1));
+    final todayRevenue = _sumBills(
+      paidBills.where((bill) => isSameDay(bill.createdAt, now)),
+    );
+    final weekRevenue = _sumBills(
+      paidBills.where((bill) =>
+          bill.createdAt.isAfter(weekStart) ||
+          isSameDay(bill.createdAt, weekStart)),
+    );
+    final monthRevenue = _sumBills(
+      paidBills.where((bill) =>
+          bill.createdAt.year == now.year && bill.createdAt.month == now.month),
+    );
+    final pendingRevenue = _sumBills(branchBills.where((bill) => !bill.isPaid));
+
+    return Column(
+      children: [
+        _AdminMetricGrid(
+          metrics: [
+            _MetricData(
+              label: 'Today',
+              value: _formatCurrency(todayRevenue),
+              caption: 'Paid collections',
+              color: AppTheme.primary,
+              icon: Icons.today_outlined,
+            ),
+            _MetricData(
+              label: 'This week',
+              value: _formatCurrency(weekRevenue),
+              caption: 'Week-to-date revenue',
+              color: AppTheme.accent,
+              icon: Icons.date_range_outlined,
+            ),
+            _MetricData(
+              label: 'This month',
+              value: _formatCurrency(monthRevenue),
+              caption: DateFormat('MMMM yyyy').format(now),
+              color: const Color(0xFF6B7CFF),
+              icon: Icons.insights_outlined,
+            ),
+            _MetricData(
+              label: 'Pending',
+              value: _formatCurrency(pendingRevenue),
+              caption: 'Bills not marked paid',
+              color: const Color(0xFFD95C2A),
+              icon: Icons.receipt_long_outlined,
+            ),
+          ],
+        ),
+        const SizedBox(height: 18),
+        _SectionCard(
+          title: 'Branch revenue',
+          subtitle: '$branchName paid and pending billing report.',
+          child: Wrap(
+            spacing: 10,
+            runSpacing: 10,
+            children: [
+              _MiniStat(label: 'Paid bills', value: '${paidBills.length}'),
+              _MiniStat(
+                label: 'Pending bills',
+                value: '${branchBills.where((bill) => !bill.isPaid).length}',
+              ),
+              _MiniStat(
+                label: 'All-time paid',
+                value: _formatCurrency(_sumBills(paidBills)),
+              ),
+              _MiniStat(
+                label: 'Closed orders',
+                value:
+                    '${bookings.where((booking) => booking.status == BookingStatus.closed).length}',
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 18),
+        _SectionCard(
+          title: 'Technician-wise revenue',
+          subtitle: 'Paid collections and pending bills by technician.',
+          child: technicians.isEmpty
+              ? const _InlineEmptyState(
+                  icon: Icons.engineering_outlined,
+                  message: 'No technicians are approved for this branch yet.',
+                )
+              : Column(
+                  children: [
+                    for (var i = 0; i < technicians.length; i++) ...[
+                      _RevenueTechnicianRow(
+                        technician: technicians[i],
+                        bills: branchBills
+                            .where((bill) =>
+                                bill.technicianId == technicians[i].uid)
+                            .toList(),
+                        now: now,
+                      ),
+                      if (i != technicians.length - 1)
+                        const SizedBox(height: 10),
+                    ],
+                  ],
+                ),
+        ),
+      ],
+    );
+  }
+
+  static double _sumBills(Iterable<Bill> bills) =>
+      bills.fold<double>(0, (sum, bill) => sum + bill.amount);
+}
+
+class _RevenueTechnicianRow extends StatelessWidget {
+  const _RevenueTechnicianRow({
+    required this.technician,
+    required this.bills,
+    required this.now,
+  });
+
+  final AppUser technician;
+  final List<Bill> bills;
+  final DateTime now;
+
+  @override
+  Widget build(BuildContext context) {
+    final paidBills = bills.where((bill) => bill.isPaid).toList();
+    final today = _sumBills(
+      paidBills.where((bill) => isSameDay(bill.createdAt, now)),
+    );
+    final month = _sumBills(
+      paidBills.where((bill) =>
+          bill.createdAt.year == now.year && bill.createdAt.month == now.month),
+    );
+    final pending = _sumBills(bills.where((bill) => !bill.isPaid));
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: AppTheme.divider),
+      ),
+      child: Row(
+        children: [
+          CircleAvatar(
+            backgroundColor: AppTheme.primary.withValues(alpha: 0.12),
+            foregroundColor: AppTheme.primary,
+            child: Text(
+              _registeredTechnicianName(technician)
+                  .substring(0, 1)
+                  .toUpperCase(),
+              style: const TextStyle(fontWeight: FontWeight.w900),
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  _registeredTechnicianName(technician),
+                  style: const TextStyle(
+                    fontWeight: FontWeight.w900,
+                    color: AppTheme.textPrimary,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  '${paidBills.length} paid bill(s)',
+                  style: const TextStyle(
+                    fontSize: 12,
+                    color: AppTheme.textSecondary,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              _MiniStat(label: 'Today', value: _formatCurrency(today)),
+              _MiniStat(label: 'Month', value: _formatCurrency(month)),
+              _MiniStat(label: 'Pending', value: _formatCurrency(pending)),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  static double _sumBills(Iterable<Bill> bills) =>
+      bills.fold<double>(0, (sum, bill) => sum + bill.amount);
+}
+
 class _LiveMonitoringSection extends StatelessWidget {
   const _LiveMonitoringSection({
     required this.locations,
@@ -1769,6 +2205,7 @@ class _TechnicianWorkspaceSection extends StatelessWidget {
     required this.locations,
     required this.attendance,
     required this.attendanceLoading,
+    required this.now,
   });
 
   final List<TechnicianPerformance> performance;
@@ -1776,6 +2213,7 @@ class _TechnicianWorkspaceSection extends StatelessWidget {
   final List<TechnicianLocation> locations;
   final List<Attendance> attendance;
   final bool attendanceLoading;
+  final DateTime now;
 
   @override
   Widget build(BuildContext context) {
@@ -1796,13 +2234,18 @@ class _TechnicianWorkspaceSection extends StatelessWidget {
       activeBookingsByTechnician.putIfAbsent(technicianId, () => []);
       activeBookingsByTechnician[technicianId]!.add(booking);
     }
+    final monthAttendance = attendance
+        .where((record) =>
+            record.timestamp.year == now.year &&
+            record.timestamp.month == now.month)
+        .toList();
     final needsReview =
-        attendance.where((record) => !record.geofencePassed).length;
+        monthAttendance.where((record) => !record.geofencePassed).length;
 
     return _SectionCard(
-      title: 'Technician availability & attendance',
+      title: 'Attendance report',
       subtitle:
-          'Available technicians, attendance, admin review, and live status.',
+          'Monthly technician sheets with punch-in time, selfie, availability, and admin review.',
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -1817,7 +2260,9 @@ class _TechnicianWorkspaceSection extends StatelessWidget {
                     '${performance.where((item) => item.technician.isActive).length}',
               ),
               _MiniStat(
-                  label: 'Attendance entries', value: '${attendance.length}'),
+                label: DateFormat('MMM yyyy').format(now),
+                value: '${monthAttendance.length} punch-in(s)',
+              ),
               _MiniStat(label: 'Needs review', value: '$needsReview'),
             ],
           ),
@@ -1833,23 +2278,38 @@ class _TechnicianWorkspaceSection extends StatelessWidget {
               message: 'No technicians are approved for this branch yet.',
             )
           else
-            Column(
-              children: [
-                for (var i = 0; i < performance.length; i++) ...[
-                  _TechnicianAvailabilityRow(
-                    item: performance[i],
-                    records:
-                        attendanceByTechnician[performance[i].technician.uid] ??
-                            const [],
-                    location:
-                        locationByTechnician[performance[i].technician.uid],
-                    activeBookings: activeBookingsByTechnician[
-                            performance[i].technician.uid] ??
-                        const [],
-                  ),
-                  if (i != performance.length - 1) const SizedBox(height: 10),
-                ],
-              ],
+            LayoutBuilder(
+              builder: (context, constraints) {
+                final columns = constraints.maxWidth >= 1120
+                    ? 3
+                    : constraints.maxWidth >= 720
+                        ? 2
+                        : 1;
+                final spacing = 12.0;
+                final cardWidth =
+                    (constraints.maxWidth - spacing * (columns - 1)) / columns;
+                return Wrap(
+                  spacing: spacing,
+                  runSpacing: spacing,
+                  children: [
+                    for (final item in performance)
+                      SizedBox(
+                        width: cardWidth,
+                        child: _AttendanceTechnicianCard(
+                          item: item,
+                          records:
+                              attendanceByTechnician[item.technician.uid] ??
+                                  const [],
+                          location: locationByTechnician[item.technician.uid],
+                          activeBookings:
+                              activeBookingsByTechnician[item.technician.uid] ??
+                                  const [],
+                          now: now,
+                        ),
+                      ),
+                  ],
+                );
+              },
             ),
         ],
       ),
@@ -1857,124 +2317,359 @@ class _TechnicianWorkspaceSection extends StatelessWidget {
   }
 }
 
-class _TechnicianAvailabilityRow extends ConsumerWidget {
-  const _TechnicianAvailabilityRow({
+class _AttendanceTechnicianCard extends ConsumerWidget {
+  const _AttendanceTechnicianCard({
     required this.item,
     required this.records,
     required this.location,
     required this.activeBookings,
+    required this.now,
   });
 
   final TechnicianPerformance item;
   final List<Attendance> records;
   final TechnicianLocation? location;
   final List<Booking> activeBookings;
+  final DateTime now;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final technician = item.technician;
-    final latest = records.isEmpty ? null : records.first;
+    final sortedRecords = [...records]
+      ..sort((left, right) => right.timestamp.compareTo(left.timestamp));
+    final latest = sortedRecords.isEmpty ? null : sortedRecords.first;
+    final monthRecords = sortedRecords
+        .where((record) =>
+            record.timestamp.year == now.year &&
+            record.timestamp.month == now.month)
+        .toList();
     final reviewCount =
-        records.where((record) => !record.geofencePassed).length;
+        monthRecords.where((record) => !record.geofencePassed).length;
+    final availabilityColor =
+        technician.isActive ? AppTheme.accent : const Color(0xFFD95C2A);
     final locationText = location == null
         ? 'No live location'
         : 'Location ${_formatRelative(location!.updatedAt)}';
-    final attendanceText = latest == null
-        ? 'No attendance marked'
-        : 'In ${DateFormat('dd MMM, hh:mm a').format(latest.timestamp)}';
-    final availabilityColor =
-        technician.isActive ? AppTheme.accent : const Color(0xFFD95C2A);
 
-    return Container(
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: Colors.white,
+    return Material(
+      color: Colors.white,
+      borderRadius: BorderRadius.circular(16),
+      child: InkWell(
+        onTap: () => showDialog<void>(
+          context: context,
+          builder: (context) => _AttendanceDetailDialog(
+            technician: technician,
+            records: sortedRecords,
+            activeBookings: activeBookings,
+            now: now,
+          ),
+        ),
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: AppTheme.divider),
-      ),
-      child: Column(
-        children: [
-          Row(
+        child: Container(
+          padding: const EdgeInsets.all(14),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: AppTheme.divider),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              CircleAvatar(
-                backgroundColor: availabilityColor.withValues(alpha: 0.12),
-                foregroundColor: availabilityColor,
+              Row(
+                children: [
+                  CircleAvatar(
+                    backgroundColor: availabilityColor.withValues(alpha: 0.12),
+                    foregroundColor: availabilityColor,
+                    child: Text(
+                      _registeredTechnicianName(technician)
+                          .substring(0, 1)
+                          .toUpperCase(),
+                      style: const TextStyle(fontWeight: FontWeight.w900),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          _registeredTechnicianName(technician),
+                          style: const TextStyle(
+                            fontWeight: FontWeight.w900,
+                            color: AppTheme.textPrimary,
+                          ),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          '${technician.phone} - ${technician.email}',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            fontSize: 12,
+                            color: AppTheme.textSecondary,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  Switch(
+                    value: technician.isActive,
+                    onChanged: (value) => ref
+                        .read(adminRepositoryProvider)
+                        .setTechnicianActive(technician.uid, value),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  _StatusPill(
+                    label: technician.isActive ? 'Available' : 'Inactive',
+                    color: availabilityColor,
+                  ),
+                  _StatusPill(
+                    label: '${activeBookings.length} active job(s)',
+                    color: AppTheme.primary,
+                  ),
+                  _StatusPill(
+                    label: '${monthRecords.length} this month',
+                    color: AppTheme.accent,
+                  ),
+                  _StatusPill(
+                    label: '$reviewCount admin review',
+                    color: reviewCount > 0
+                        ? const Color(0xFFD95C2A)
+                        : AppTheme.accent,
+                  ),
+                  _StatusPill(
+                    label: latest == null
+                        ? 'No punch-in yet'
+                        : 'Latest ${DateFormat('dd MMM, hh:mm a').format(latest.timestamp)}',
+                    color: latest == null
+                        ? const Color(0xFFD95C2A)
+                        : AppTheme.textSecondary,
+                  ),
+                  _StatusPill(
+                    label: latest?.selfieUrl.trim().isNotEmpty == true
+                        ? 'Selfie received'
+                        : 'Selfie missing',
+                    color: latest?.selfieUrl.trim().isNotEmpty == true
+                        ? AppTheme.primary
+                        : const Color(0xFFD95C2A),
+                  ),
+                  _StatusPill(
+                    label: locationText,
+                    color: item.highlightRisk
+                        ? const Color(0xFFD95C2A)
+                        : AppTheme.textSecondary,
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              const Align(
+                alignment: Alignment.centerRight,
                 child: Text(
-                  technician.name.isEmpty
-                      ? 'T'
-                      : technician.name.substring(0, 1).toUpperCase(),
-                  style: const TextStyle(fontWeight: FontWeight.w900),
+                  'Open monthly sheet',
+                  style: TextStyle(
+                    color: AppTheme.primary,
+                    fontWeight: FontWeight.w800,
+                  ),
                 ),
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      technician.name,
-                      style: const TextStyle(
-                        fontWeight: FontWeight.w900,
-                        color: AppTheme.textPrimary,
-                      ),
-                    ),
-                    const SizedBox(height: 2),
-                    Text(
-                      '${technician.phone} - ${technician.email}',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        fontSize: 12,
-                        color: AppTheme.textSecondary,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              Switch(
-                value: technician.isActive,
-                onChanged: (value) => ref
-                    .read(adminRepositoryProvider)
-                    .setTechnicianActive(technician.uid, value),
               ),
             ],
           ),
-          const SizedBox(height: 10),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
+        ),
+      ),
+    );
+  }
+}
+
+class _AttendanceDetailDialog extends StatelessWidget {
+  const _AttendanceDetailDialog({
+    required this.technician,
+    required this.records,
+    required this.activeBookings,
+    required this.now,
+  });
+
+  final AppUser technician;
+  final List<Attendance> records;
+  final List<Booking> activeBookings;
+  final DateTime now;
+
+  @override
+  Widget build(BuildContext context) {
+    final monthRecords = records
+        .where((record) =>
+            record.timestamp.year == now.year &&
+            record.timestamp.month == now.month)
+        .toList();
+
+    return AlertDialog(
+      title: Text('${_registeredTechnicianName(technician)} attendance'),
+      content: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 760, maxHeight: 620),
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              _StatusPill(
-                label: technician.isActive ? 'Available' : 'Inactive',
-                color: availabilityColor,
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  _MiniStat(
+                    label: 'Sheet',
+                    value: DateFormat('MMMM yyyy').format(now),
+                  ),
+                  _MiniStat(
+                    label: 'Punch-ins',
+                    value: '${monthRecords.length}',
+                  ),
+                  _MiniStat(
+                    label: 'Active jobs',
+                    value: '${activeBookings.length}',
+                  ),
+                  _MiniStat(
+                    label: 'Review pending',
+                    value:
+                        '${monthRecords.where((item) => !item.geofencePassed).length}',
+                  ),
+                ],
               ),
-              _StatusPill(
-                label: '${activeBookings.length} active job(s)',
-                color: AppTheme.primary,
-              ),
-              _StatusPill(
-                label: records.isEmpty ? 'Attendance missing' : attendanceText,
-                color:
-                    records.isEmpty ? const Color(0xFFD95C2A) : AppTheme.accent,
-              ),
-              _StatusPill(
-                label: '$reviewCount admin review',
-                color:
-                    reviewCount > 0 ? const Color(0xFFD95C2A) : AppTheme.accent,
-              ),
-              _StatusPill(
-                label: locationText,
-                color: item.highlightRisk
-                    ? const Color(0xFFD95C2A)
-                    : AppTheme.textSecondary,
-              ),
+              const SizedBox(height: 16),
+              if (monthRecords.isEmpty)
+                const _InlineEmptyState(
+                  icon: Icons.event_busy_outlined,
+                  message: 'No attendance marked for this month.',
+                )
+              else
+                Column(
+                  children: [
+                    const _AttendanceSheetHeader(),
+                    for (final record in monthRecords)
+                      _AttendanceSheetRow(record: record),
+                  ],
+                ),
             ],
+          ),
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Close'),
+        ),
+      ],
+    );
+  }
+}
+
+class _AttendanceSheetHeader extends StatelessWidget {
+  const _AttendanceSheetHeader();
+
+  @override
+  Widget build(BuildContext context) {
+    return const Padding(
+      padding: EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      child: Row(
+        children: [
+          Expanded(flex: 2, child: Text('Date', style: _sheetHeaderStyle)),
+          Expanded(flex: 2, child: Text('Punch in', style: _sheetHeaderStyle)),
+          Expanded(flex: 2, child: Text('Selfie', style: _sheetHeaderStyle)),
+          Expanded(
+              flex: 2, child: Text('Admin review', style: _sheetHeaderStyle)),
+        ],
+      ),
+    );
+  }
+}
+
+class _AttendanceSheetRow extends StatelessWidget {
+  const _AttendanceSheetRow({required this.record});
+
+  final Attendance record;
+
+  @override
+  Widget build(BuildContext context) {
+    final hasSelfie = record.selfieUrl.trim().isNotEmpty;
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: AppTheme.surface,
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            flex: 2,
+            child: Text(DateFormat('dd MMM yyyy').format(record.timestamp)),
+          ),
+          Expanded(
+            flex: 2,
+            child: Text(DateFormat('hh:mm a').format(record.timestamp)),
+          ),
+          Expanded(
+            flex: 2,
+            child: hasSelfie
+                ? TextButton.icon(
+                    onPressed: () => _openSelfieDialog(context, record),
+                    icon: const Icon(Icons.image_outlined, size: 16),
+                    label: const Text('View selfie'),
+                  )
+                : const Text('Not received'),
+          ),
+          Expanded(
+            flex: 2,
+            child: Text(
+              record.geofencePassed ? 'Verified' : 'Needs review',
+              style: TextStyle(
+                fontWeight: FontWeight.w800,
+                color: record.geofencePassed
+                    ? AppTheme.accent
+                    : const Color(0xFFD95C2A),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _openSelfieDialog(BuildContext context, Attendance record) {
+    showDialog<void>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(
+          'Selfie - ${DateFormat('dd MMM, hh:mm a').format(record.timestamp)}',
+        ),
+        content: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 420, maxHeight: 520),
+          child: Image.network(
+            record.selfieUrl,
+            fit: BoxFit.contain,
+            errorBuilder: (_, __, ___) =>
+                const Text('Selfie could not be previewed.'),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Close'),
           ),
         ],
       ),
     );
   }
 }
+
+const _sheetHeaderStyle = TextStyle(
+  fontSize: 12,
+  fontWeight: FontWeight.w900,
+  color: AppTheme.textSecondary,
+);
 
 class _InlineEmptyState extends StatelessWidget {
   const _InlineEmptyState({required this.icon, required this.message});

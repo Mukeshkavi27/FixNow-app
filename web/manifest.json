@@ -1,11 +1,11 @@
 {
-    "name": "FixNow Home Services",
+    "name": "FixNow Home Appliance Repair & Service Booking",
     "short_name": "FixNow",
     "start_url": ".",
     "display": "standalone",
     "background_color": "#F7FAFF",
     "theme_color": "#0B5EEA",
-    "description": "Book and track trusted home appliance service.",
+    "description": "Book trusted AC, refrigerator, washing machine, TV, microwave, fan, and water purifier repair with verified technicians and live service tracking.",
     "prefer_related_applications": false,
     "icons": [
         {

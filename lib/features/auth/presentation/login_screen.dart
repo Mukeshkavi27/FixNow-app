@@ -226,9 +226,9 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                 Text(
                   _isRegister
                       ? (_isTechnicianRequest
-                          ? 'Request technician access for your branch'
-                          : 'Create your customer account')
-                      : 'Home services at your doorstep',
+                          ? 'Join your branch as a verified service technician'
+                          : 'Create your appliance service booking account')
+                      : 'Trusted appliance repair and service booking',
                   style: TextStyle(
                     color: AppTheme.textSecondary,
                     fontSize: isMobile ? 13 : 14,
@@ -241,7 +241,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                     Padding(
                       padding: EdgeInsets.only(bottom: fieldGap),
                       child: Text(
-                        'Branch list could not be loaded right now. Customer login still works, but technician signup needs branch access.',
+                        'Branch list could not be loaded right now. Customer login still works, but technician signup needs an approved service branch.',
                         style: const TextStyle(
                           color: Color(0xFFD95C2A),
                           fontSize: 12,
@@ -253,7 +253,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                     Padding(
                       padding: EdgeInsets.only(bottom: fieldGap),
                       child: const Text(
-                        'No branches are available yet. Ask admin to create a branch before technician signup.',
+                        'No service branches are available yet. Ask admin to create a branch before technician signup.',
                         style: TextStyle(
                           color: Color(0xFFD95C2A),
                           fontSize: 12,
@@ -357,7 +357,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                     ),
                     SizedBox(height: fieldGap),
                     const Text(
-                      'Technician access stays pending until the selected branch admin approves it.',
+                      'Technician access stays pending until the selected branch admin verifies and approves the request.',
                       style: TextStyle(
                         color: AppTheme.textSecondary,
                         fontSize: 12,
@@ -366,7 +366,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                     SizedBox(height: fieldGap),
                   ] else ...[
                     const Text(
-                      'Customer accounts are created instantly. Technician accounts need branch admin approval.',
+                      'Customer accounts can book services instantly. Technician accounts need branch admin approval.',
                       style: TextStyle(
                         color: AppTheme.textSecondary,
                         fontSize: 12,
@@ -434,7 +434,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                         : Text(_isRegister
                             ? (_isTechnicianRequest
                                 ? 'Request Technician Access'
-                                : 'Create Account')
+                                : 'Create Service Account')
                             : 'Sign In'),
                   ),
                 ),

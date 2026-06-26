@@ -24,7 +24,7 @@ class TechnicianRepository {
         .set({
       ...attendance.toJson(),
       'timestamp': FieldValue.serverTimestamp(),
-    });
+    }).timeout(const Duration(seconds: 20));
   }
 
   Stream<List<Attendance>> watchAttendance() {

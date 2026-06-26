@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -51,7 +53,7 @@ class TechnicianDashboardScreen extends ConsumerWidget {
     return Scaffold(
       backgroundColor: AppTheme.background,
       appBar: AppBar(
-        title: const Text('FixNow Technician'),
+        title: const Text('FixNow Technician App'),
         actions: [
           IconButton(
             tooltip: 'Share live location',
@@ -588,7 +590,10 @@ class _AttendanceViewState extends ConsumerState<_AttendanceView> {
   String? _result;
 
   Future<void> _markAttendance() async {
-    setState(() => _loading = true);
+    setState(() {
+      _loading = true;
+      _result = 'Opening selfie picker...';
+    });
     try {
       final user = ref.read(currentUserProvider).valueOrNull;
       if (user == null) {
@@ -598,7 +603,9 @@ class _AttendanceViewState extends ConsumerState<_AttendanceView> {
 
       final image = await ImagePicker().pickImage(
         source: kIsWeb ? ImageSource.gallery : ImageSource.camera,
-        imageQuality: 70,
+        imageQuality: 45,
+        maxWidth: 640,
+        maxHeight: 640,
       );
 
       if (image == null) {
@@ -606,18 +613,24 @@ class _AttendanceViewState extends ConsumerState<_AttendanceView> {
         return;
       }
 
-      final url = await ref.read(storageRepositoryProvider).uploadXFile(
-            file: image,
-            folder: 'attendance/${user.uid}',
-            fileName:
-                '${user.uid}_${DateTime.now().millisecondsSinceEpoch}.jpg',
+      setState(() => _result = 'Saving marked time and selfie...');
+      final bytes = await image.readAsBytes().timeout(
+            const Duration(seconds: 12),
           );
-
+      if (bytes.length > 650 * 1024) {
+        setState(() {
+          _result =
+              'Selfie image is too large. Please choose a smaller selfie photo.';
+        });
+        return;
+      }
+      final contentType = image.mimeType ?? 'image/jpeg';
+      final selfieDataUrl = 'data:$contentType;base64,${base64Encode(bytes)}';
       await ref.read(technicianRepositoryProvider).markAttendance(
             Attendance(
               id: '',
               technicianId: user.uid,
-              selfieUrl: url,
+              selfieUrl: selfieDataUrl,
               latitude: 0,
               longitude: 0,
               timestamp: DateTime.now(),
@@ -631,7 +644,11 @@ class _AttendanceViewState extends ConsumerState<_AttendanceView> {
         _result = 'Attendance sent to admin for review.';
       });
     } catch (e) {
-      setState(() => _result = 'Error: ${e.toString()}');
+      setState(() {
+        _marked = false;
+        _result =
+            'Attendance was not sent. Please check your connection and try again. ${e.toString()}';
+      });
     } finally {
       if (mounted) setState(() => _loading = false);
     }
@@ -649,7 +666,7 @@ class _AttendanceViewState extends ConsumerState<_AttendanceView> {
           child: const Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text('Daily attendance',
+              Text('Technician attendance',
                   style: TextStyle(
                       color: Colors.white,
                       fontSize: 22,

@@ -112,7 +112,7 @@ final appRouterProvider = Provider<GoRouter>((ref) {
           builder: (context, state) => const AdminDashboardScreen()),
     ],
     errorBuilder: (context, state) => Scaffold(
-      appBar: AppBar(title: const Text('FixNow')),
+      appBar: AppBar(title: const Text('FixNow Appliance Repair')),
       body: Center(child: Text(state.error.toString())),
     ),
   );
