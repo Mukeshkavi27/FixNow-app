@@ -1,0 +1,61 @@
+Flutter crash report.
+Please report a bug at https://github.com/flutter/flutter/issues.
+
+## command
+
+flutter run -d edge
+
+## exception
+
+StateError: Bad state: No element
+
+```
+#0      List.first (dart:core-patch/growable_array.dart:352:5)
+#1      ResidentHandlers.debugTogglePlatform (package:flutter_tools/src/resident_runner.dart:818:24)
+<asynchronous suspension>
+#2      TerminalHandler.processTerminalInput (package:flutter_tools/src/resident_runner.dart:1805:7)
+<asynchronous suspension>
+```
+
+## flutter doctor
+
+```
+[32m[✓][39m Flutter (Channel stable, 3.44.1, on Microsoft Windows [Version 10.0.26200.8737], locale en-US) [377ms]
+    [32m•[39m Flutter version 3.44.1 on channel stable at D:\flutter\flutter
+    [32m•[39m Upstream repository https://github.com/flutter/flutter.git
+    [32m•[39m Framework revision 924134a44c (4 weeks ago), 2026-05-29 12:13:22 -0400
+    [32m•[39m Engine revision c416acfeb8
+    [32m•[39m Dart version 3.12.1
+    [32m•[39m DevTools version 2.57.0
+    [32m•[39m Feature flags: enable-web, enable-linux-desktop, enable-macos-desktop, enable-windows-desktop, enable-android,
+      enable-ios, cli-animations, enable-native-assets, enable-swift-package-manager, omit-legacy-version-file,
+      enable-lldb-debugging, enable-uiscene-migration
+
+[32m[✓][39m Windows Version (11 Home Single Language 64-bit, 25H2, 2009) [3.8s]
+
+[33m[!][39m Android toolchain - develop for Android devices (Android SDK version 36.1.0) [2.9s]
+    [32m•[39m Android SDK at C:\Users\asus\AppData\Local\Android\sdk
+    [32m•[39m Emulator version 36.2.12.0 (build_id 14214601) (CL:N/A)
+    [32m•[39m Platform android-36, build-tools 36.1.0
+    [32m•[39m Java binary at: C:\Program Files\Common Files\Oracle\Java\javapath\java.exe
+      This JDK was found in the system PATH.
+      To manually set the JDK path, use: `flutter config --jdk-dir="path/to/jdk"`.
+    [31m✗[39m Could not determine java version
+
+[31m[✗][39m Chrome - develop for the web (Cannot find Chrome executable at .\Google\Chrome\Application\chrome.exe) [24ms]
+    [33m![39m Cannot find Chrome. Try setting CHROME_EXECUTABLE to a Chrome executable.
+
+[31m[✗][39m Visual Studio - develop Windows apps [23ms]
+    [31m✗[39m Visual Studio not installed; this is necessary to develop Windows apps.
+      Download at https://visualstudio.microsoft.com/downloads/.
+      Please install the "Desktop development with C++" workload, including all of its default components
+
+[32m[✓][39m Connected device (2 available) [208ms]
+    [32m•[39m Windows (desktop) • windows • windows-x64    • Microsoft Windows [Version 10.0.26200.8737]
+    [32m•[39m Edge (web)        • edge    • web-javascript • Microsoft Edge 149.0.4022.98
+
+[32m[✓][39m Network resources [1,013ms]
+    [32m•[39m All expected network resources are available.
+
+[33m![39m Doctor found issues in 3 categories.
+```

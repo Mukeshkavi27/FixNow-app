@@ -46,7 +46,7 @@ void main() {
 
     expect(tester.takeException(), isNull);
     expect(
-      find.text('Reliable home care,\nright when you need it'),
+      find.text('Home appliance repair,\nright when you need it'),
       findsOneWidget,
     );
   });

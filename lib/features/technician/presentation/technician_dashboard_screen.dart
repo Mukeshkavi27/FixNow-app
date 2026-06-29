@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:ui' as ui;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -6,6 +7,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:go_router/go_router.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:intl/intl.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:uuid/uuid.dart';
 
@@ -43,6 +45,16 @@ final technicianEstimateProvider =
 });
 
 final _technicianTabProvider = StateProvider.autoDispose<int>((ref) => 0);
+final _earningsRangeProvider =
+    StateProvider.autoDispose<_EarningsRange>((ref) => _EarningsRange.week);
+
+enum _EarningsRange {
+  week('Week'),
+  month('Month');
+
+  const _EarningsRange(this.label);
+  final String label;
+}
 
 class TechnicianDashboardScreen extends ConsumerWidget {
   const TechnicianDashboardScreen({super.key});
@@ -751,23 +763,33 @@ class _EarningsView extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final bills =
         ref.watch(technicianBillsProvider).valueOrNull ?? const <Bill>[];
+    final range = ref.watch(_earningsRangeProvider);
     final now = DateTime.now();
-    final daily = bills
+    final paidBills = bills.where((bill) => bill.isPaid).toList();
+    final daily = _sumBillsForDay(paidBills, now);
+    final monthly = paidBills
         .where((bill) =>
-            bill.isPaid &&
-            bill.createdAt.year == now.year &&
-            bill.createdAt.month == now.month &&
-            bill.createdAt.day == now.day)
-        .fold<double>(0, (sum, bill) => sum + bill.amount);
-    final monthly = bills
-        .where((bill) =>
-            bill.isPaid &&
             bill.createdAt.year == now.year &&
             bill.createdAt.month == now.month)
         .fold<double>(0, (sum, bill) => sum + bill.amount);
     final pending = bills
         .where((bill) => !bill.isPaid)
         .fold<double>(0, (sum, bill) => sum + bill.amount);
+    final monthDates = _datesForRange(_EarningsRange.month, now);
+    final monthlyIncentive = monthDates.fold<double>(
+      0,
+      (sum, date) => sum + _dailyIncentive(_sumBillsForDay(paidBills, date)),
+    );
+    final chartPoints = _earningPointsForRange(
+      range: range,
+      now: now,
+      paidBills: paidBills,
+    );
+    final rangeCollection =
+        chartPoints.fold<double>(0, (sum, point) => sum + point.collection);
+    final rangeIncentive =
+        chartPoints.fold<double>(0, (sum, point) => sum + point.incentive);
+
     return ListView(
       padding: const EdgeInsets.all(16),
       children: [
@@ -776,7 +798,7 @@ class _EarningsView extends ConsumerWidget {
           runSpacing: 12,
           children: [
             _MetricCard(
-              label: 'Today',
+              label: 'Today collection',
               value: 'Rs. ${daily.toStringAsFixed(0)}',
             ),
             _MetricCard(
@@ -784,10 +806,83 @@ class _EarningsView extends ConsumerWidget {
               value: 'Rs. ${monthly.toStringAsFixed(0)}',
             ),
             _MetricCard(
+              label: 'Incentives',
+              value: 'Rs. ${monthlyIncentive.toStringAsFixed(0)}',
+            ),
+            _MetricCard(
               label: 'Pending release',
               value: 'Rs. ${pending.toStringAsFixed(0)}',
             ),
           ],
+        ),
+        const SizedBox(height: 16),
+        Card(
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    const Expanded(
+                      child: Text(
+                        'Earnings growth',
+                        style: TextStyle(
+                            fontSize: 18, fontWeight: FontWeight.w800),
+                      ),
+                    ),
+                    SegmentedButton<_EarningsRange>(
+                      segments: [
+                        for (final item in _EarningsRange.values)
+                          ButtonSegment(
+                            value: item,
+                            label: Text(item.label),
+                          ),
+                      ],
+                      selected: {range},
+                      onSelectionChanged: (value) {
+                        ref.read(_earningsRangeProvider.notifier).state =
+                            value.first;
+                      },
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  'Collection + daily incentive for ${range.label.toLowerCase()} view',
+                  style: const TextStyle(color: AppTheme.textSecondary),
+                ),
+                const SizedBox(height: 18),
+                SizedBox(
+                  height: 220,
+                  width: double.infinity,
+                  child: CustomPaint(
+                    painter: _EarningsLineChartPainter(points: chartPoints),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                Wrap(
+                  spacing: 10,
+                  runSpacing: 10,
+                  children: [
+                    _MiniEarningChip(
+                      label: '${range.label} collection',
+                      value: 'Rs. ${rangeCollection.toStringAsFixed(0)}',
+                    ),
+                    _MiniEarningChip(
+                      label: '${range.label} incentive',
+                      value: 'Rs. ${rangeIncentive.toStringAsFixed(0)}',
+                    ),
+                    _MiniEarningChip(
+                      label: 'Total',
+                      value:
+                          'Rs. ${(rangeCollection + rangeIncentive).toStringAsFixed(0)}',
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
         ),
         const SizedBox(height: 16),
         Card(
@@ -806,16 +901,245 @@ class _EarningsView extends ConsumerWidget {
                   value: 'Rs. ${monthly.toStringAsFixed(0)}',
                 ),
                 _PayoutRow(
+                  label: 'Incentive this month',
+                  value: 'Rs. ${monthlyIncentive.toStringAsFixed(0)}',
+                ),
+                _PayoutRow(
+                  label: 'Total earnings this month',
+                  value:
+                      'Rs. ${(monthly + monthlyIncentive).toStringAsFixed(0)}',
+                ),
+                _PayoutRow(
                   label: 'Pending release',
                   value: 'Rs. ${pending.toStringAsFixed(0)}',
                 ),
                 const Divider(height: 24),
                 _PayoutRow(label: 'Recorded bills', value: '${bills.length}'),
+                const SizedBox(height: 8),
+                const Text(
+                  'Incentive starts at Rs. 8,000 collection and increases with higher daily collection.',
+                  style: TextStyle(color: AppTheme.textSecondary),
+                ),
               ],
             ),
           ),
         ),
       ],
+    );
+  }
+}
+
+class _EarningPoint {
+  const _EarningPoint({
+    required this.date,
+    required this.collection,
+    required this.incentive,
+  });
+
+  final DateTime date;
+  final double collection;
+  final double incentive;
+
+  double get total => collection + incentive;
+}
+
+List<DateTime> _datesForRange(_EarningsRange range, DateTime now) {
+  final today = DateTime(now.year, now.month, now.day);
+  return switch (range) {
+    _EarningsRange.week => List.generate(
+        7,
+        (index) => today.subtract(Duration(days: 6 - index)),
+      ),
+    _EarningsRange.month => List.generate(
+        today.day,
+        (index) => DateTime(today.year, today.month, index + 1),
+      ),
+  };
+}
+
+List<_EarningPoint> _earningPointsForRange({
+  required _EarningsRange range,
+  required DateTime now,
+  required List<Bill> paidBills,
+}) {
+  return _datesForRange(range, now).map((date) {
+    final collection = _sumBillsForDay(paidBills, date);
+    return _EarningPoint(
+      date: date,
+      collection: collection,
+      incentive: _dailyIncentive(collection),
+    );
+  }).toList();
+}
+
+double _sumBillsForDay(List<Bill> bills, DateTime date) {
+  return bills
+      .where((bill) =>
+          bill.createdAt.year == date.year &&
+          bill.createdAt.month == date.month &&
+          bill.createdAt.day == date.day)
+      .fold<double>(0, (sum, bill) => sum + bill.amount);
+}
+
+double _dailyIncentive(double collection) {
+  if (collection >= 20000) {
+    return 1000 + ((collection - 20000) / 1000).floor() * 100;
+  }
+  if (collection >= 17500) return 750;
+  if (collection >= 15000) return 500;
+  if (collection >= 12500) return 400;
+  if (collection >= 10000) return 300;
+  if (collection >= 9000) return 200;
+  if (collection >= 8000) return 100;
+  return 0;
+}
+
+class _EarningsLineChartPainter extends CustomPainter {
+  const _EarningsLineChartPainter({required this.points});
+
+  final List<_EarningPoint> points;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final axisPaint = Paint()
+      ..color = AppTheme.divider
+      ..strokeWidth = 1;
+    final gridPaint = Paint()
+      ..color = AppTheme.divider.withValues(alpha: .55)
+      ..strokeWidth = 1;
+    final linePaint = Paint()
+      ..color = AppTheme.primary
+      ..strokeWidth = 3
+      ..style = PaintingStyle.stroke
+      ..strokeCap = StrokeCap.round
+      ..strokeJoin = StrokeJoin.round;
+    final dotPaint = Paint()..color = AppTheme.accent;
+    const left = 46.0;
+    const right = 12.0;
+    const top = 14.0;
+    const bottom = 34.0;
+    final chart = Rect.fromLTWH(
+      left,
+      top,
+      size.width - left - right,
+      size.height - top - bottom,
+    );
+    if (chart.width <= 0 || chart.height <= 0) return;
+
+    canvas.drawLine(chart.bottomLeft, chart.bottomRight, axisPaint);
+    canvas.drawLine(chart.topLeft, chart.bottomLeft, axisPaint);
+
+    final maxValue = points.fold<double>(
+      0,
+      (max, point) => point.total > max ? point.total : max,
+    );
+    final scaleMax = maxValue <= 0 ? 1000.0 : maxValue * 1.15;
+    for (var i = 0; i <= 3; i++) {
+      final y = chart.bottom - chart.height * (i / 3);
+      canvas.drawLine(Offset(chart.left, y), Offset(chart.right, y), gridPaint);
+      _paintText(
+        canvas,
+        'Rs.${(scaleMax * i / 3).round()}',
+        Offset(0, y - 8),
+        const TextStyle(fontSize: 10, color: AppTheme.textSecondary),
+      );
+    }
+
+    if (points.isEmpty) return;
+    final path = Path();
+    for (var i = 0; i < points.length; i++) {
+      final x = points.length == 1
+          ? chart.center.dx
+          : chart.left + (chart.width * i / (points.length - 1));
+      final y = chart.bottom - (points[i].total / scaleMax) * chart.height;
+      if (i == 0) {
+        path.moveTo(x, y);
+      } else {
+        path.lineTo(x, y);
+      }
+    }
+    canvas.drawPath(path, linePaint);
+    for (var i = 0; i < points.length; i++) {
+      final x = points.length == 1
+          ? chart.center.dx
+          : chart.left + (chart.width * i / (points.length - 1));
+      final y = chart.bottom - (points[i].total / scaleMax) * chart.height;
+      canvas.drawCircle(Offset(x, y), 4, dotPaint);
+    }
+
+    final labelIndexes = points.length <= 7
+        ? List.generate(points.length, (index) => index)
+        : [0, (points.length / 2).floor(), points.length - 1];
+    for (final index in labelIndexes) {
+      final x = points.length == 1
+          ? chart.center.dx
+          : chart.left + (chart.width * index / (points.length - 1));
+      _paintText(
+        canvas,
+        DateFormat('d MMM').format(points[index].date),
+        Offset(x - 18, chart.bottom + 10),
+        const TextStyle(fontSize: 10, color: AppTheme.textSecondary),
+      );
+    }
+  }
+
+  void _paintText(
+    Canvas canvas,
+    String text,
+    Offset offset,
+    TextStyle style,
+  ) {
+    final span = TextSpan(text: text, style: style);
+    final painter = TextPainter(
+      text: span,
+      textDirection: ui.TextDirection.ltr,
+      maxLines: 1,
+    )..layout();
+    painter.paint(canvas, offset);
+  }
+
+  @override
+  bool shouldRepaint(covariant _EarningsLineChartPainter oldDelegate) {
+    return oldDelegate.points != points;
+  }
+}
+
+class _MiniEarningChip extends StatelessWidget {
+  const _MiniEarningChip({required this.label, required this.value});
+
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: AppTheme.primary.withValues(alpha: .08),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: AppTheme.primary.withValues(alpha: .18)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            value,
+            style: const TextStyle(
+              fontWeight: FontWeight.w900,
+              color: AppTheme.textPrimary,
+            ),
+          ),
+          const SizedBox(height: 2),
+          Text(
+            label,
+            style: const TextStyle(
+              fontSize: 12,
+              color: AppTheme.textSecondary,
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:geolocator/geolocator.dart';
@@ -278,6 +280,8 @@ class _CustomerHeader extends StatelessWidget {
                       ),
                     ],
                   ),
+                  const SizedBox(height: 3),
+                  const _ServiceCityRotator(),
                 ],
               ),
             ),
@@ -322,6 +326,82 @@ class _CustomerHeader extends StatelessWidget {
     final parts =
         name.trim().split(RegExp(r'\s+')).where((part) => part.isNotEmpty);
     return parts.take(2).map((part) => part[0].toUpperCase()).join();
+  }
+}
+
+class _ServiceCityRotator extends StatefulWidget {
+  const _ServiceCityRotator();
+
+  @override
+  State<_ServiceCityRotator> createState() => _ServiceCityRotatorState();
+}
+
+class _ServiceCityRotatorState extends State<_ServiceCityRotator> {
+  static const _cities = [
+    'Coimbatore',
+    'Chennai',
+    'Tiruppur',
+    'Madurai',
+  ];
+
+  Timer? _timer;
+  int _index = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _timer = Timer.periodic(const Duration(seconds: 3), (_) {
+      if (!mounted) return;
+      setState(() => _index = (_index + 1) % _cities.length);
+    });
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        const Icon(
+          Icons.storefront_outlined,
+          size: 13,
+          color: AppTheme.primary,
+        ),
+        const SizedBox(width: 4),
+        Flexible(
+          child: AnimatedSwitcher(
+            duration: const Duration(milliseconds: 350),
+            transitionBuilder: (child, animation) {
+              return FadeTransition(
+                opacity: animation,
+                child: SlideTransition(
+                  position: Tween<Offset>(
+                    begin: const Offset(0, .35),
+                    end: Offset.zero,
+                  ).animate(animation),
+                  child: child,
+                ),
+              );
+            },
+            child: Text(
+              'Available in ${_cities[_index]}',
+              key: ValueKey(_cities[_index]),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                fontSize: 11,
+                fontWeight: FontWeight.w700,
+                color: AppTheme.primary,
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
   }
 }
 

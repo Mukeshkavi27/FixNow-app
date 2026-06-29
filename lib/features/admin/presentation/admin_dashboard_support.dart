@@ -1,5 +1,6 @@
 import '../../../core/enums/booking_status.dart';
 import '../../auth/domain/app_user.dart';
+import '../../bookings/data/booking_repository.dart';
 import '../../bookings/domain/booking.dart';
 import '../../shared/domain/bill.dart';
 import '../../technician/domain/technician_location.dart';
@@ -108,7 +109,7 @@ List<TechnicianPerformance> buildTechnicianPerformance({
     final activeBookings = bookings
         .where((booking) =>
             booking.technicianId == technician.uid &&
-            booking.status != BookingStatus.closed)
+            isTechnicianBusyStatus(booking.status))
         .length;
     final location = locationByTechnician[technician.uid];
     final isStale = location != null &&

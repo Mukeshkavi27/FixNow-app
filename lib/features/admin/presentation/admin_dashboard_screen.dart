@@ -177,11 +177,11 @@ class _AdminDashboardScreenState extends ConsumerState<AdminDashboardScreen> {
                 data: (bills) {
                   final now = DateTime.now();
                   final branchBookings = bookings.where((booking) {
-                    return booking.branchId == effectiveBranchId ||
-                        booking.branchName == effectiveBranch.name ||
-                        booking.branchName == effectiveBranch.city ||
-                        booking.branchId == null ||
-                        booking.branchId!.isEmpty;
+                    return _bookingMatchesBranch(
+                      booking: booking,
+                      branch: effectiveBranch,
+                      branchId: effectiveBranchId,
+                    );
                   }).toList();
                   final branchTechnicians = technicians
                       .where((technician) =>
@@ -517,8 +517,11 @@ class _AdminDashboardScreenState extends ConsumerState<AdminDashboardScreen> {
     required List<AppUser> technicians,
     required List<TechnicianLocation> locations,
   }) async {
-    final activeTechnicians =
-        technicians.where((technician) => technician.isActive).toList();
+    final activeTechnicians = technicians
+        .where((technician) =>
+            technician.isActive &&
+            technician.accountStatus == AccountStatus.approved)
+        .toList();
     final unassignedBookings = bookings
         .where((booking) => booking.status == BookingStatus.booked)
         .where((booking) => booking.technicianId == null)
@@ -540,7 +543,7 @@ class _AdminDashboardScreenState extends ConsumerState<AdminDashboardScreen> {
       final technicianId = booking.technicianId;
       if (technicianId != null &&
           activeLoad.containsKey(technicianId) &&
-          booking.status != BookingStatus.closed) {
+          isTechnicianBusyStatus(booking.status)) {
         activeLoad[technicianId] = activeLoad[technicianId]! + 1;
       }
     }
@@ -600,7 +603,9 @@ class _AdminDashboardScreenState extends ConsumerState<AdminDashboardScreen> {
       if (loadCompare != 0) return loadCompare;
       return left.name.compareTo(right.name);
     });
-    return ranked.first;
+    return ranked.where((technician) {
+      return (activeLoad[technician.uid] ?? 0) == 0;
+    }).firstOrNull;
   }
 
   double _distanceToBooking(
@@ -2735,7 +2740,7 @@ class _AdminBookingCard extends ConsumerWidget {
     final activeLoad = <String, int>{};
     for (final item in allBookings) {
       final technicianId = item.technicianId;
-      if (technicianId == null || item.status == BookingStatus.closed) {
+      if (technicianId == null || !isTechnicianBusyStatus(item.status)) {
         continue;
       }
       activeLoad[technicianId] = (activeLoad[technicianId] ?? 0) + 1;
@@ -2759,10 +2764,15 @@ class _AdminBookingCard extends ConsumerWidget {
     final technicianById = {
       for (final technician in technicians) technician.uid: technician,
     };
+    final assignableTechnicians = technicians.where((tech) {
+      final isCurrent = tech.uid == booking.technicianId;
+      return isCurrent || (activeLoad[tech.uid] ?? 0) == 0;
+    }).toList();
     final recommendedTechnician =
-        technicians.isEmpty ? null : technicians.first;
+        assignableTechnicians.isEmpty ? null : assignableTechnicians.first;
     final bill = ref.watch(bookingBillProvider(booking.id)).valueOrNull;
-    final canChangeTechnician = booking.status != BookingStatus.closed;
+    final canChangeTechnician =
+        booking.status == BookingStatus.booked && booking.technicianId == null;
     final assignmentValue = booking.technicianId != null &&
             technicianById.containsKey(booking.technicianId)
         ? booking.technicianId
@@ -2885,7 +2895,7 @@ class _AdminBookingCard extends ConsumerWidget {
             ],
           ),
           const SizedBox(height: 14),
-          if (technicians.isEmpty)
+          if (assignableTechnicians.isEmpty)
             const _AssignmentEmptyState()
           else ...[
             if (booking.technicianId == null &&
@@ -2916,11 +2926,13 @@ class _AdminBookingCard extends ConsumerWidget {
                     : 'Change technician',
                 prefixIcon: const Icon(Icons.engineering_outlined),
               ),
-              items: technicians
+              items: assignableTechnicians
                   .map(
                     (tech) => DropdownMenuItem(
                       value: tech.uid,
-                      child: Text(_registeredTechnicianName(tech)),
+                      child: Text(
+                        '${_registeredTechnicianName(tech)} - ${activeLoad[tech.uid] ?? 0} active',
+                      ),
                     ),
                   )
                   .toList(),
@@ -3623,6 +3635,42 @@ Color _statusColor(BookingStatus status) {
 
 String _formatCurrency(double amount) {
   return 'Rs. ${amount.toStringAsFixed(0)}';
+}
+
+bool _bookingMatchesBranch({
+  required Booking booking,
+  required BranchInfo branch,
+  required String branchId,
+}) {
+  final bookingBranchId = booking.branchId?.trim();
+  if (bookingBranchId == null || bookingBranchId.isEmpty) return true;
+  if (bookingBranchId == branchId) return true;
+
+  final bookingTerms = <String>[
+    bookingBranchId,
+    booking.branchName ?? '',
+  ].map(_branchKey).where((item) => item.isNotEmpty).toSet();
+  final branchTerms = <String>[
+    branch.id,
+    branch.name,
+    branch.city,
+    ...branch.aliases,
+  ].map(_branchKey).where((item) => item.isNotEmpty).toSet();
+
+  for (final bookingTerm in bookingTerms) {
+    if (branchTerms.contains(bookingTerm)) return true;
+    for (final branchTerm in branchTerms) {
+      if (bookingTerm.contains(branchTerm) ||
+          branchTerm.contains(bookingTerm)) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+String _branchKey(String value) {
+  return value.toLowerCase().replaceAll(RegExp(r'[^a-z0-9]+'), '');
 }
 
 String _formatDuration(Duration duration) {

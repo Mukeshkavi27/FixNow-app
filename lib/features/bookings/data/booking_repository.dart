@@ -9,6 +9,24 @@ final bookingRepositoryProvider = Provider<BookingRepository>((ref) {
   return BookingRepository(ref.watch(firebaseRefsProvider).firestore);
 });
 
+const technicianBusyStatuses = {
+  BookingStatus.technicianAssigned,
+  BookingStatus.accepted,
+  BookingStatus.onTheWay,
+  BookingStatus.arrived,
+  BookingStatus.estimateSent,
+  BookingStatus.estimateApproved,
+  BookingStatus.serviceStarted,
+};
+
+bool isTechnicianBusyStatus(BookingStatus status) {
+  return technicianBusyStatuses.contains(status);
+}
+
+bool isTechnicianVisibleStatus(BookingStatus status) {
+  return status != BookingStatus.booked && status != BookingStatus.closed;
+}
+
 class BookingRepository {
   BookingRepository(this._firestore);
 
@@ -28,8 +46,13 @@ class BookingRepository {
         .collection('bookings')
         .where('technicianId', isEqualTo: technicianId)
         .snapshots()
-        .map((snapshot) => _sortNewestFirst(
-            snapshot.docs.map(Booking.fromFirestore).toList()));
+        .map((snapshot) {
+      final bookings = snapshot.docs
+          .map(Booking.fromFirestore)
+          .where((booking) => isTechnicianVisibleStatus(booking.status))
+          .toList();
+      return _sortNewestFirst(bookings);
+    });
   }
 
   Stream<List<Booking>> watchAllBookings({String? branchId}) {
@@ -158,6 +181,21 @@ class BookingRepository {
     required String technicianId,
     required String technicianName,
   }) async {
+    final activeAssignments = await _firestore
+        .collection('bookings')
+        .where('technicianId', isEqualTo: technicianId)
+        .get();
+    final busyBooking = activeAssignments.docs
+        .map(Booking.fromFirestore)
+        .where((booking) => booking.id != bookingId)
+        .where((booking) => isTechnicianBusyStatus(booking.status))
+        .firstOrNull;
+    if (busyBooking != null) {
+      throw StateError(
+        '$technicianName already has an active job. Assign another booking after the current job is completed.',
+      );
+    }
+
     final bookingRef = _firestore.collection('bookings').doc(bookingId);
     final notificationRef = _firestore.collection('notifications').doc();
     await _firestore.runTransaction((transaction) async {
@@ -168,6 +206,12 @@ class BookingRepository {
           BookingStatus.fromString(data['status'] as String? ?? 'booked');
       if (current == BookingStatus.closed) {
         throw StateError('Closed bookings cannot be reassigned.');
+      }
+      if (current != BookingStatus.booked &&
+          data['technicianId'] != technicianId) {
+        throw StateError(
+          'This booking is already in progress. Reassign it only after moving it back to unassigned.',
+        );
       }
       transaction.update(bookingRef, {
         'technicianId': technicianId,

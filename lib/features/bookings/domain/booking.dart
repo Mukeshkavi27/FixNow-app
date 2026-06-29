@@ -15,6 +15,7 @@ class Booking {
     required this.preferredTime,
     required this.status,
     required this.createdAt,
+    DateTime? updatedAt,
     this.imageUrl,
     this.technicianId,
     this.technicianName,
@@ -23,7 +24,7 @@ class Booking {
     this.latitude,
     this.longitude,
     this.servicePhotos = const [],
-  });
+  }) : updatedAt = updatedAt ?? createdAt;
 
   final String id;
   final String customerId;
@@ -36,6 +37,7 @@ class Booking {
   final String preferredTime;
   final BookingStatus status;
   final DateTime createdAt;
+  final DateTime updatedAt;
   final String? imageUrl;
   final String? technicianId;
   final String? technicianName;
@@ -60,6 +62,7 @@ class Booking {
       preferredTime: data['preferredTime'] as String? ?? '',
       status: BookingStatus.fromString(data['status'] as String? ?? 'booked'),
       createdAt: (data['createdAt'] as Timestamp?)?.toDate() ?? DateTime.now(),
+      updatedAt: (data['updatedAt'] as Timestamp?)?.toDate(),
       imageUrl: data['imageUrl'] as String?,
       technicianId: data['technicianId'] as String?,
       technicianName: data['technicianName'] as String?,
