@@ -154,8 +154,15 @@ class _JobsView extends ConsumerWidget {
     return bookings.when(
       data: (items) {
         final active =
-            items.where((b) => b.status != BookingStatus.closed).toList();
-        final done = items.length - active.length;
+            items.where((b) => isTechnicianBusyStatus(b.status)).toList();
+        final held =
+            items.where((b) => b.status == BookingStatus.onHold).toList();
+        final billing = items
+            .where((b) =>
+                b.status == BookingStatus.serviceCompleted ||
+                b.status == BookingStatus.billGenerated)
+            .toList();
+        final done = billing.length;
         return ListView(
           padding: const EdgeInsets.all(16),
           children: [
@@ -167,8 +174,29 @@ class _JobsView extends ConsumerWidget {
                     .titleLarge
                     ?.copyWith(fontWeight: FontWeight.w800)),
             const SizedBox(height: 10),
-            if (active.isEmpty) const _EmptyJobsCard(),
+            if (active.isEmpty && billing.isEmpty && held.isEmpty)
+              const _EmptyJobsCard(),
             ...active.map((booking) => _TechnicianJobCard(booking: booking)),
+            if (billing.isNotEmpty) ...[
+              const SizedBox(height: 18),
+              Text('Completed and billing',
+                  style: Theme.of(context)
+                      .textTheme
+                      .titleMedium
+                      ?.copyWith(fontWeight: FontWeight.w800)),
+              const SizedBox(height: 10),
+              ...billing.map((booking) => _TechnicianJobCard(booking: booking)),
+            ],
+            if (held.isNotEmpty) ...[
+              const SizedBox(height: 18),
+              Text('On hold',
+                  style: Theme.of(context)
+                      .textTheme
+                      .titleMedium
+                      ?.copyWith(fontWeight: FontWeight.w800)),
+              const SizedBox(height: 10),
+              ...held.map((booking) => _TechnicianJobCard(booking: booking)),
+            ],
           ],
         );
       },
@@ -295,14 +323,22 @@ class _TechnicianJobCard extends ConsumerWidget {
                   FilledButton.tonalIcon(
                     onPressed: user == null
                         ? null
-                        : () => repo.transitionStatus(
+                        : () async {
+                            await repo.transitionStatus(
                               bookingId: booking.id,
                               technicianId: user.uid,
                               expected: BookingStatus.technicianAssigned,
                               next: BookingStatus.accepted,
-                            ),
+                            );
+                            await ref
+                                .read(locationTrackingServiceProvider)
+                                .start(
+                                  technicianId: user.uid,
+                                  bookingId: booking.id,
+                                );
+                          },
                     icon: const Icon(Icons.check_circle_outline),
-                    label: const Text('Accept'),
+                    label: const Text('Start job'),
                   ),
                   OutlinedButton.icon(
                     onPressed: user == null
@@ -344,12 +380,6 @@ class _TechnicianJobCard extends ConsumerWidget {
                               expected: BookingStatus.onTheWay,
                               next: BookingStatus.arrived,
                             );
-                            await ref
-                                .read(locationTrackingServiceProvider)
-                                .stop();
-                            await ref
-                                .read(technicianRepositoryProvider)
-                                .stopSharingLocation(user.uid);
                           },
                     icon: const Icon(Icons.location_on_outlined),
                     label: const Text('Arrived'),
@@ -364,7 +394,13 @@ class _TechnicianJobCard extends ConsumerWidget {
                   OutlinedButton.icon(
                     onPressed: () => _openWhatsApp(context, booking),
                     icon: const Icon(Icons.hourglass_top),
-                    label: const Text('Awaiting approval'),
+                    label: const Text('Waiting for customer approval'),
+                  ),
+                if (booking.status == BookingStatus.estimateRejected)
+                  FilledButton.icon(
+                    onPressed: () => _showEstimateDialog(context, ref),
+                    icon: const Icon(Icons.request_quote_outlined),
+                    label: const Text('Revise estimate'),
                   ),
                 if (booking.status == BookingStatus.estimateApproved)
                   FilledButton.icon(
@@ -389,9 +425,23 @@ class _TechnicianJobCard extends ConsumerWidget {
                         expected: BookingStatus.serviceStarted,
                         next: BookingStatus.serviceCompleted,
                       );
+                      await ref.read(locationTrackingServiceProvider).stop();
+                      await ref
+                          .read(technicianRepositoryProvider)
+                          .stopSharingLocation(user.uid);
                     },
                     icon: const Icon(Icons.done_all),
                     label: const Text('Complete'),
+                  ),
+                if (booking.status == BookingStatus.onHold)
+                  OutlinedButton.icon(
+                    onPressed: null,
+                    icon: const Icon(Icons.pause_circle_outline),
+                    label: Text(
+                      booking.holdReason == null || booking.holdReason!.isEmpty
+                          ? 'On hold by admin'
+                          : 'On hold: ${booking.holdReason}',
+                    ),
                   ),
                 if (booking.status == BookingStatus.serviceCompleted)
                   FilledButton.icon(
@@ -1157,8 +1207,10 @@ class _StatusRail extends StatelessWidget {
       BookingStatus.onTheWay,
       BookingStatus.arrived,
       BookingStatus.estimateSent,
+      BookingStatus.estimateRejected,
       BookingStatus.estimateApproved,
       BookingStatus.serviceStarted,
+      BookingStatus.onHold,
       BookingStatus.serviceCompleted,
     ];
     final index = steps.indexOf(status);

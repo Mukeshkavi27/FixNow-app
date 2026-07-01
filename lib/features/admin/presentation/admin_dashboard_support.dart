@@ -181,6 +181,11 @@ DateTime? bookingDeadline(Booking booking) {
   if (booking.technicianId == null || booking.status == BookingStatus.closed) {
     return null;
   }
+  if (booking.status == BookingStatus.onHold ||
+      booking.status == BookingStatus.serviceCompleted ||
+      booking.status == BookingStatus.billGenerated) {
+    return null;
+  }
   final scheduledAt = bookingScheduledAt(booking);
   return scheduledAt?.add(const Duration(hours: 2));
 }
@@ -188,7 +193,8 @@ DateTime? bookingDeadline(Booking booking) {
 bool isBookingOverdue(Booking booking, DateTime now) {
   final deadline = bookingDeadline(booking);
   if (deadline == null) return false;
-  if (booking.status == BookingStatus.billGenerated ||
+  if (booking.status == BookingStatus.serviceCompleted ||
+      booking.status == BookingStatus.billGenerated ||
       booking.status == BookingStatus.closed) {
     return false;
   }

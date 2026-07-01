@@ -9,6 +9,7 @@ class Estimate {
     required this.partsCharge,
     required this.notes,
     required this.isApproved,
+    this.isRejected = false,
     required this.createdAt,
   });
 
@@ -19,6 +20,7 @@ class Estimate {
   final double partsCharge;
   final String notes;
   final bool isApproved;
+  final bool isRejected;
   final DateTime createdAt;
 
   double get total => labourCharge + partsCharge;
@@ -33,6 +35,7 @@ class Estimate {
       partsCharge: (data['partsCharge'] as num?)?.toDouble() ?? 0,
       notes: data['notes'] as String? ?? '',
       isApproved: data['isApproved'] as bool? ?? false,
+      isRejected: data['isRejected'] as bool? ?? false,
       createdAt: (data['createdAt'] as Timestamp?)?.toDate() ?? DateTime.now(),
     );
   }
@@ -44,6 +47,7 @@ class Estimate {
         'partsCharge': partsCharge,
         'notes': notes,
         'isApproved': isApproved,
+        'isRejected': isRejected,
         'createdAt': Timestamp.fromDate(createdAt),
       };
 }

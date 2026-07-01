@@ -293,13 +293,6 @@ class _AdminDashboardScreenState extends ConsumerState<AdminDashboardScreen> {
                                 _selectedRange = AdminRangeFilter.all;
                               });
                             },
-                            onAutoAllocate: () => _autoAllocateBranchBookings(
-                              context: context,
-                              ref: ref,
-                              bookings: branchBookings,
-                              technicians: branchTechnicians,
-                              locations: locations,
-                            ),
                           ),
                         _AdminTab.attendance => _TechnicianWorkspaceSection(
                             performance: performance,
@@ -483,7 +476,25 @@ class _AdminDashboardScreenState extends ConsumerState<AdminDashboardScreen> {
                         branchName: branch.name,
                       ),
                     );
+                if (mounted) {
+                  setState(() {
+                    _selectedAdminTab = _AdminTab.bookings;
+                    _selectedBranchId = branch.id;
+                    _selectedStatus = null;
+                    _selectedTechnicianId = null;
+                    _selectedRange = AdminRangeFilter.all;
+                    _searchController.clear();
+                  });
+                }
+                ref.invalidate(allBookingsProvider);
                 if (dialogContext.mounted) Navigator.pop(dialogContext);
+                if (context.mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text('Manual booking created for admin review.'),
+                    ),
+                  );
+                }
               },
               child: const Text('Create booking'),
             ),
@@ -508,121 +519,6 @@ class _AdminDashboardScreenState extends ConsumerState<AdminDashboardScreen> {
       if (branch.id == branchId) return branch;
     }
     return null;
-  }
-
-  Future<void> _autoAllocateBranchBookings({
-    required BuildContext context,
-    required WidgetRef ref,
-    required List<Booking> bookings,
-    required List<AppUser> technicians,
-    required List<TechnicianLocation> locations,
-  }) async {
-    final activeTechnicians = technicians
-        .where((technician) =>
-            technician.isActive &&
-            technician.accountStatus == AccountStatus.approved)
-        .toList();
-    final unassignedBookings = bookings
-        .where((booking) => booking.status == BookingStatus.booked)
-        .where((booking) => booking.technicianId == null)
-        .toList();
-    if (activeTechnicians.isEmpty || unassignedBookings.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('No unassigned bookings to allocate.')),
-      );
-      return;
-    }
-
-    final locationByTechnician = {
-      for (final location in locations) location.technicianId: location,
-    };
-    final activeLoad = <String, int>{
-      for (final technician in activeTechnicians) technician.uid: 0,
-    };
-    for (final booking in bookings) {
-      final technicianId = booking.technicianId;
-      if (technicianId != null &&
-          activeLoad.containsKey(technicianId) &&
-          isTechnicianBusyStatus(booking.status)) {
-        activeLoad[technicianId] = activeLoad[technicianId]! + 1;
-      }
-    }
-
-    var allocated = 0;
-    for (final booking in unassignedBookings) {
-      final technician = _recommendedTechnicianForBooking(
-        booking: booking,
-        technicians: activeTechnicians,
-        locationByTechnician: locationByTechnician,
-        activeLoad: activeLoad,
-      );
-      if (technician == null) continue;
-      await ref.read(bookingRepositoryProvider).assignTechnician(
-            bookingId: booking.id,
-            technicianId: technician.uid,
-            technicianName: _registeredTechnicianName(technician),
-          );
-      activeLoad[technician.uid] = (activeLoad[technician.uid] ?? 0) + 1;
-      allocated++;
-    }
-
-    if (!context.mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('Auto allocated $allocated booking(s).')),
-    );
-  }
-
-  AppUser? _recommendedTechnicianForBooking({
-    required Booking booking,
-    required List<AppUser> technicians,
-    required Map<String, TechnicianLocation> locationByTechnician,
-    required Map<String, int> activeLoad,
-  }) {
-    if (technicians.isEmpty) return null;
-    final ranked = [...technicians];
-    ranked.sort((left, right) {
-      final leftDistance = _distanceToBooking(
-        booking,
-        locationByTechnician[left.uid],
-      );
-      final rightDistance = _distanceToBooking(
-        booking,
-        locationByTechnician[right.uid],
-      );
-      final leftHasDistance = !leftDistance.isInfinite;
-      final rightHasDistance = !rightDistance.isInfinite;
-      if (leftHasDistance != rightHasDistance) {
-        return leftHasDistance ? -1 : 1;
-      }
-      if (leftHasDistance && rightHasDistance) {
-        final distanceCompare = leftDistance.compareTo(rightDistance);
-        if (distanceCompare != 0) return distanceCompare;
-      }
-      final loadCompare =
-          (activeLoad[left.uid] ?? 0).compareTo(activeLoad[right.uid] ?? 0);
-      if (loadCompare != 0) return loadCompare;
-      return left.name.compareTo(right.name);
-    });
-    return ranked.where((technician) {
-      return (activeLoad[technician.uid] ?? 0) == 0;
-    }).firstOrNull;
-  }
-
-  double _distanceToBooking(
-    Booking booking,
-    TechnicianLocation? location,
-  ) {
-    if (booking.latitude == null ||
-        booking.longitude == null ||
-        location == null) {
-      return double.infinity;
-    }
-    return Geolocator.distanceBetween(
-      booking.latitude!,
-      booking.longitude!,
-      location.latitude,
-      location.longitude,
-    );
   }
 
   Future<void> _openBranchDialog(
@@ -1624,7 +1520,6 @@ class _BookingsAdminTab extends StatelessWidget {
     required this.onTechnicianChanged,
     required this.onRangeChanged,
     required this.onClear,
-    required this.onAutoAllocate,
   });
 
   final List<Booking> filteredBookings;
@@ -1646,7 +1541,6 @@ class _BookingsAdminTab extends StatelessWidget {
   final ValueChanged<String?> onTechnicianChanged;
   final ValueChanged<AdminRangeFilter> onRangeChanged;
   final VoidCallback onClear;
-  final VoidCallback onAutoAllocate;
 
   @override
   Widget build(BuildContext context) {
@@ -1655,12 +1549,16 @@ class _BookingsAdminTab extends StatelessWidget {
             booking.status == BookingStatus.booked &&
             (booking.technicianId == null || booking.technicianId!.isEmpty))
         .toList();
+    final held = filteredBookings
+        .where((booking) => booking.status == BookingStatus.onHold)
+        .toList();
     final closed = filteredBookings
         .where((booking) => booking.status == BookingStatus.closed)
         .toList();
     final ongoing = filteredBookings
         .where((booking) =>
             booking.status != BookingStatus.closed &&
+            booking.status != BookingStatus.onHold &&
             !unassigned.contains(booking))
         .toList();
 
@@ -1681,6 +1579,13 @@ class _BookingsAdminTab extends StatelessWidget {
               caption: 'Ready for technician allocation',
               color: const Color(0xFFD95C2A),
               icon: Icons.person_add_alt_1_outlined,
+            ),
+            _MetricData(
+              label: 'On hold',
+              value: '${held.length}',
+              caption: 'Paused with reason',
+              color: const Color(0xFF845EF7),
+              icon: Icons.pause_circle_outline,
             ),
             _MetricData(
               label: 'Ongoing',
@@ -1723,13 +1628,6 @@ class _BookingsAdminTab extends StatelessWidget {
           title: 'Booking control',
           subtitle:
               'Assign technicians, collect payments, and track service progress.',
-          action: FilledButton.icon(
-            onPressed: branchTechnicians.where((tech) => tech.isActive).isEmpty
-                ? null
-                : onAutoAllocate,
-            icon: const Icon(Icons.auto_awesome),
-            label: const Text('Auto allocate all'),
-          ),
           child: filteredBookings.isEmpty
               ? const Padding(
                   padding: EdgeInsets.all(24),
@@ -1744,6 +1642,16 @@ class _BookingsAdminTab extends StatelessWidget {
                       title: 'Unassigned bookings',
                       emptyText: 'No unassigned bookings in this filter.',
                       bookings: unassigned,
+                      now: now,
+                      branchTechnicians: branchTechnicians,
+                      allTechnicians: allTechnicians,
+                      allBookings: allBookings,
+                    ),
+                    const SizedBox(height: 14),
+                    _BookingGroupSection(
+                      title: 'On hold bookings',
+                      emptyText: 'No bookings are currently on hold.',
+                      bookings: held,
                       now: now,
                       branchTechnicians: branchTechnicians,
                       allTechnicians: allTechnicians,
@@ -2764,17 +2672,22 @@ class _AdminBookingCard extends ConsumerWidget {
     final technicianById = {
       for (final technician in technicians) technician.uid: technician,
     };
+    final canAssignTechnician =
+        booking.status == BookingStatus.booked && booking.technicianId == null;
+    final canResumeHeldBooking = booking.status == BookingStatus.onHold;
+    final canChangeTechnician = canAssignTechnician || canResumeHeldBooking;
     final assignableTechnicians = technicians.where((tech) {
-      final isCurrent = tech.uid == booking.technicianId;
-      return isCurrent || (activeLoad[tech.uid] ?? 0) == 0;
+      if (canChangeTechnician) return (activeLoad[tech.uid] ?? 0) == 0;
+      return tech.uid == booking.technicianId;
     }).toList();
+    final assignableTechnicianIds = {
+      for (final technician in assignableTechnicians) technician.uid,
+    };
     final recommendedTechnician =
         assignableTechnicians.isEmpty ? null : assignableTechnicians.first;
     final bill = ref.watch(bookingBillProvider(booking.id)).valueOrNull;
-    final canChangeTechnician =
-        booking.status == BookingStatus.booked && booking.technicianId == null;
     final assignmentValue = booking.technicianId != null &&
-            technicianById.containsKey(booking.technicianId)
+            assignableTechnicianIds.contains(booking.technicianId)
         ? booking.technicianId
         : null;
     final overdue = isBookingOverdue(booking, now);
@@ -2892,6 +2805,13 @@ class _AdminBookingCard extends ConsumerWidget {
                   label:
                       '${bill.isPaid ? 'Paid' : 'Pending'} ${_formatCurrency(bill.amount)}',
                 ),
+              if (booking.status == BookingStatus.onHold &&
+                  booking.holdReason != null &&
+                  booking.holdReason!.isNotEmpty)
+                _BookingInfoChip(
+                  icon: Icons.pause_circle_outline,
+                  label: 'Hold: ${booking.holdReason}',
+                ),
             ],
           ),
           const SizedBox(height: 14),
@@ -2923,7 +2843,9 @@ class _AdminBookingCard extends ConsumerWidget {
               decoration: InputDecoration(
                 labelText: booking.technicianId == null
                     ? 'Assign technician'
-                    : 'Change technician',
+                    : canResumeHeldBooking
+                        ? 'Resume with technician'
+                        : 'Assigned technician',
                 prefixIcon: const Icon(Icons.engineering_outlined),
               ),
               items: assignableTechnicians
@@ -2956,6 +2878,17 @@ class _AdminBookingCard extends ConsumerWidget {
                       );
                     }
                   : null,
+            ),
+          ],
+          if (_canPlaceOnHold(booking.status)) ...[
+            const SizedBox(height: 12),
+            Align(
+              alignment: Alignment.centerRight,
+              child: OutlinedButton.icon(
+                onPressed: () => _showHoldDialog(context, ref),
+                icon: const Icon(Icons.pause_circle_outline),
+                label: const Text('Place on hold'),
+              ),
             ),
           ],
           if (bill != null && !bill.isPaid) ...[
@@ -3040,6 +2973,80 @@ class _AdminBookingCard extends ConsumerWidget {
         (activeLoad[left.uid] ?? 0).compareTo(activeLoad[right.uid] ?? 0);
     if (loadCompare != 0) return loadCompare;
     return left.name.compareTo(right.name);
+  }
+
+  static bool _canPlaceOnHold(BookingStatus status) {
+    return status != BookingStatus.booked &&
+        status != BookingStatus.onHold &&
+        status != BookingStatus.serviceCompleted &&
+        status != BookingStatus.billGenerated &&
+        status != BookingStatus.closed;
+  }
+
+  Future<void> _showHoldDialog(BuildContext context, WidgetRef ref) async {
+    final reason = TextEditingController();
+    final formKey = GlobalKey<FormState>();
+    try {
+      await showDialog<void>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          title: const Text('Place booking on hold'),
+          content: Form(
+            key: formKey,
+            child: TextFormField(
+              controller: reason,
+              minLines: 3,
+              maxLines: 5,
+              decoration: const InputDecoration(
+                labelText: 'Hold reason',
+                hintText: 'Example: AC board taken to service center',
+              ),
+              validator: (value) =>
+                  value == null || value.trim().isEmpty ? 'Required' : null,
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('Cancel'),
+            ),
+            FilledButton.icon(
+              onPressed: () async {
+                if (!formKey.currentState!.validate()) return;
+                try {
+                  await ref.read(bookingRepositoryProvider).placeOnHold(
+                        bookingId: booking.id,
+                        reason: reason.text,
+                      );
+                  if (dialogContext.mounted) Navigator.pop(dialogContext);
+                  if (context.mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content: Text(
+                          'Booking placed on hold. Technician is now available.',
+                        ),
+                      ),
+                    );
+                  }
+                } catch (error) {
+                  if (!dialogContext.mounted) return;
+                  ScaffoldMessenger.of(dialogContext).showSnackBar(
+                    SnackBar(
+                      content: Text(error.toString()),
+                      backgroundColor: Colors.red.shade700,
+                    ),
+                  );
+                }
+              },
+              icon: const Icon(Icons.pause_circle_outline),
+              label: const Text('Hold booking'),
+            ),
+          ],
+        ),
+      );
+    } finally {
+      reason.dispose();
+    }
   }
 
   Future<void> _assignTechnician({
@@ -3625,8 +3632,10 @@ Color _statusColor(BookingStatus status) {
     BookingStatus.onTheWay => const Color(0xFF0088CC),
     BookingStatus.arrived => const Color(0xFF5C7CFA),
     BookingStatus.estimateSent => const Color(0xFFF08C00),
+    BookingStatus.estimateRejected => const Color(0xFFD95C2A),
     BookingStatus.estimateApproved => const Color(0xFF2B8A3E),
     BookingStatus.serviceStarted => const Color(0xFF7B61FF),
+    BookingStatus.onHold => const Color(0xFF845EF7),
     BookingStatus.serviceCompleted => const Color(0xFF1C7ED6),
     BookingStatus.billGenerated => const Color(0xFF845EF7),
     BookingStatus.closed => const Color(0xFF6C757D),

@@ -15,6 +15,7 @@ const technicianBusyStatuses = {
   BookingStatus.onTheWay,
   BookingStatus.arrived,
   BookingStatus.estimateSent,
+  BookingStatus.estimateRejected,
   BookingStatus.estimateApproved,
   BookingStatus.serviceStarted,
 };
@@ -60,14 +61,17 @@ class BookingRepository {
     if (branchId != null && branchId.isNotEmpty) {
       query = query.where('branchId', isEqualTo: branchId);
     }
-    return query
-        .orderBy('createdAt', descending: true)
-        .snapshots()
-        .map((snapshot) => snapshot.docs.map(Booking.fromFirestore).toList());
+    return query.orderBy('createdAt', descending: true).snapshots().map(
+        (snapshot) => _sortNewestFirst(
+            snapshot.docs.map(Booking.fromFirestore).toList()));
   }
 
   List<Booking> _sortNewestFirst(List<Booking> bookings) {
-    bookings.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+    bookings.sort((a, b) {
+      final updatedCompare = b.updatedAt.compareTo(a.updatedAt);
+      if (updatedCompare != 0) return updatedCompare;
+      return b.createdAt.compareTo(a.createdAt);
+    });
     return bookings;
   }
 
@@ -80,10 +84,18 @@ class BookingRepository {
 
   Future<String> createBooking(Booking booking) async {
     final doc = _firestore.collection('bookings').doc();
-    await doc.set({
+    final data = {
       ...booking.toJson(),
+      'status': BookingStatus.booked.name,
       'createdAt': FieldValue.serverTimestamp(),
-    });
+      'updatedAt': FieldValue.serverTimestamp(),
+    };
+    data
+      ..remove('technicianId')
+      ..remove('technicianName')
+      ..remove('holdReason')
+      ..remove('heldAt');
+    await doc.set(data);
     return doc.id;
   }
 
@@ -204,21 +216,22 @@ class BookingRepository {
       if (data == null) throw StateError('Booking not found.');
       final current =
           BookingStatus.fromString(data['status'] as String? ?? 'booked');
-      if (current == BookingStatus.closed) {
-        throw StateError('Closed bookings cannot be reassigned.');
+      if (current == BookingStatus.closed ||
+          current == BookingStatus.serviceCompleted ||
+          current == BookingStatus.billGenerated) {
+        throw StateError('Completed bookings cannot be assigned.');
       }
-      if (current != BookingStatus.booked &&
-          data['technicianId'] != technicianId) {
+      if (current != BookingStatus.booked && current != BookingStatus.onHold) {
         throw StateError(
-          'This booking is already in progress. Reassign it only after moving it back to unassigned.',
+          'This booking is already in progress. Put it on hold before assigning another technician.',
         );
       }
       transaction.update(bookingRef, {
         'technicianId': technicianId,
         'technicianName': technicianName,
-        'status': current == BookingStatus.booked
-            ? BookingStatus.technicianAssigned.name
-            : current.name,
+        'status': BookingStatus.technicianAssigned.name,
+        'holdReason': FieldValue.delete(),
+        'heldAt': FieldValue.delete(),
         'updatedAt': FieldValue.serverTimestamp(),
       });
       transaction.set(notificationRef, {
@@ -251,6 +264,39 @@ class BookingRepository {
         'technicianId': FieldValue.delete(),
         'technicianName': FieldValue.delete(),
         'status': BookingStatus.booked.name,
+        'holdReason': FieldValue.delete(),
+        'heldAt': FieldValue.delete(),
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+    });
+  }
+
+  Future<void> placeOnHold({
+    required String bookingId,
+    required String reason,
+  }) {
+    final holdReason = reason.trim();
+    if (holdReason.isEmpty) {
+      throw ArgumentError('Hold reason is required.');
+    }
+    final bookingRef = _firestore.collection('bookings').doc(bookingId);
+    return _firestore.runTransaction((transaction) async {
+      final snapshot = await transaction.get(bookingRef);
+      final data = snapshot.data();
+      if (data == null) throw StateError('Booking not found.');
+      final current =
+          BookingStatus.fromString(data['status'] as String? ?? 'booked');
+      if (current == BookingStatus.booked ||
+          current == BookingStatus.onHold ||
+          current == BookingStatus.serviceCompleted ||
+          current == BookingStatus.billGenerated ||
+          current == BookingStatus.closed) {
+        throw StateError('This booking cannot be placed on hold now.');
+      }
+      transaction.update(bookingRef, {
+        'status': BookingStatus.onHold.name,
+        'holdReason': holdReason,
+        'heldAt': FieldValue.serverTimestamp(),
         'updatedAt': FieldValue.serverTimestamp(),
       });
     });

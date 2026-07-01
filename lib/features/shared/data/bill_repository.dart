@@ -82,6 +82,15 @@ class BillRepository {
         'status': BookingStatus.billGenerated.name,
         'updatedAt': FieldValue.serverTimestamp(),
       });
+      transaction.set(_firestore.collection('notifications').doc(), {
+        'userId': customerId,
+        'bookingId': bookingId,
+        'type': 'billGenerated',
+        'title': 'Final bill generated',
+        'body': 'Your final service bill is ready.',
+        'isRead': false,
+        'createdAt': FieldValue.serverTimestamp(),
+      });
     });
   }
 

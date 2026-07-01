@@ -7,6 +7,7 @@ import 'package:latlong2/latlong.dart';
 
 import '../../../app/theme/app_theme.dart';
 import '../../../core/enums/booking_status.dart';
+import '../../../core/enums/user_role.dart';
 import '../../auth/data/auth_repository.dart';
 import '../../estimates/data/estimate_repository.dart';
 import '../../shared/data/bill_repository.dart';
@@ -86,6 +87,12 @@ class _BookingDetailScreenState extends ConsumerState<BookingDetailScreen> {
           if (booking == null) {
             return const Center(child: Text('Booking not found'));
           }
+          if (user?.role == UserRole.customer &&
+              user?.uid != booking.customerId) {
+            return const Center(
+              child: Text('You can only view your own booking details.'),
+            );
+          }
           final canHaveEstimate =
               booking.status.index >= BookingStatus.estimateSent.index;
           final canHaveBill =
@@ -128,6 +135,44 @@ class _BookingDetailScreenState extends ConsumerState<BookingDetailScreen> {
               ],
               _StatusBanner(status: booking.status),
               const SizedBox(height: 14),
+              if (booking.status == BookingStatus.onHold &&
+                  booking.holdReason != null &&
+                  booking.holdReason!.isNotEmpty) ...[
+                _UCCard(
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Icon(
+                        Icons.pause_circle_outline,
+                        color: Color(0xFF845EF7),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Text(
+                              'Service on hold',
+                              style: TextStyle(
+                                fontWeight: FontWeight.w800,
+                                color: AppTheme.textPrimary,
+                              ),
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              booking.holdReason!,
+                              style: const TextStyle(
+                                color: AppTheme.textSecondary,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 14),
+              ],
               _UCCard(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -392,6 +437,27 @@ class _BookingDetailScreenState extends ConsumerState<BookingDetailScreen> {
                                     color: Colors.green,
                                   ),
                                 ),
+                              )
+                            else if (estimate.isRejected ||
+                                booking.status ==
+                                    BookingStatus.estimateRejected)
+                              Container(
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 8, vertical: 3),
+                                decoration: BoxDecoration(
+                                  color: Colors.red.shade50,
+                                  borderRadius: BorderRadius.circular(8),
+                                  border:
+                                      Border.all(color: Colors.red.shade200),
+                                ),
+                                child: const Text(
+                                  'Rejected',
+                                  style: TextStyle(
+                                    fontSize: 11,
+                                    fontWeight: FontWeight.w700,
+                                    color: Colors.red,
+                                  ),
+                                ),
                               ),
                           ],
                         ),
@@ -421,28 +487,49 @@ class _BookingDetailScreenState extends ConsumerState<BookingDetailScreen> {
                           ),
                         ],
                         if (!estimate.isApproved &&
+                            !estimate.isRejected &&
+                            booking.status == BookingStatus.estimateSent &&
                             user?.uid == booking.customerId) ...[
                           const SizedBox(height: 14),
-                          SizedBox(
-                            width: double.infinity,
-                            child: ElevatedButton.icon(
-                              style: ElevatedButton.styleFrom(
-                                backgroundColor: AppTheme.accent,
-                                foregroundColor: Colors.white,
-                                elevation: 0,
-                                shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(10),
+                          Row(
+                            children: [
+                              Expanded(
+                                child: OutlinedButton.icon(
+                                  onPressed: () => ref
+                                      .read(estimateRepositoryProvider)
+                                      .reject(estimate.id, booking.id),
+                                  icon: const Icon(Icons.close, size: 18),
+                                  label: const Text(
+                                    'Reject',
+                                    style:
+                                        TextStyle(fontWeight: FontWeight.w700),
+                                  ),
                                 ),
                               ),
-                              onPressed: () => ref
-                                  .read(estimateRepositoryProvider)
-                                  .approve(estimate.id, booking.id),
-                              icon: const Icon(Icons.check_circle_outline,
-                                  size: 18),
-                              label: const Text('Approve Estimate',
-                                  style:
-                                      TextStyle(fontWeight: FontWeight.w700)),
-                            ),
+                              const SizedBox(width: 10),
+                              Expanded(
+                                child: ElevatedButton.icon(
+                                  style: ElevatedButton.styleFrom(
+                                    backgroundColor: AppTheme.accent,
+                                    foregroundColor: Colors.white,
+                                    elevation: 0,
+                                    shape: RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(10),
+                                    ),
+                                  ),
+                                  onPressed: () => ref
+                                      .read(estimateRepositoryProvider)
+                                      .approve(estimate.id, booking.id),
+                                  icon: const Icon(Icons.check_circle_outline,
+                                      size: 18),
+                                  label: const Text(
+                                    'Approve',
+                                    style:
+                                        TextStyle(fontWeight: FontWeight.w700),
+                                  ),
+                                ),
+                              ),
+                            ],
                           ),
                         ],
                       ],
@@ -1231,10 +1318,10 @@ class _TrackingSteps extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final steps = [
-      (BookingStatus.booked, 'Booked'),
+      (BookingStatus.booked, 'Review'),
       (BookingStatus.technicianAssigned, 'Assigned'),
       (BookingStatus.onTheWay, 'On way'),
-      (BookingStatus.arrived, 'Arrived'),
+      (BookingStatus.estimateSent, 'Estimate'),
       (BookingStatus.serviceCompleted, 'Done'),
     ];
     return Row(
@@ -1386,6 +1473,8 @@ class _StatusBanner extends StatelessWidget {
     final color = switch (status) {
       BookingStatus.closed => Colors.green,
       BookingStatus.booked => AppTheme.badgeOrange,
+      BookingStatus.onHold => const Color(0xFF845EF7),
+      BookingStatus.estimateRejected => Colors.red,
       BookingStatus.serviceStarted ||
       BookingStatus.serviceCompleted ||
       BookingStatus.billGenerated =>

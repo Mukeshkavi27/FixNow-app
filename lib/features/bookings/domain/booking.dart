@@ -23,6 +23,8 @@ class Booking {
     this.branchName,
     this.latitude,
     this.longitude,
+    this.holdReason,
+    this.heldAt,
     this.servicePhotos = const [],
   }) : updatedAt = updatedAt ?? createdAt;
 
@@ -45,6 +47,8 @@ class Booking {
   final String? branchName;
   final double? latitude;
   final double? longitude;
+  final String? holdReason;
+  final DateTime? heldAt;
   final List<ServicePhoto> servicePhotos;
 
   factory Booking.fromFirestore(DocumentSnapshot<Map<String, dynamic>> doc) {
@@ -70,6 +74,8 @@ class Booking {
       branchName: data['branchName'] as String?,
       latitude: (data['latitude'] as num?)?.toDouble(),
       longitude: (data['longitude'] as num?)?.toDouble(),
+      holdReason: data['holdReason'] as String?,
+      heldAt: (data['heldAt'] as Timestamp?)?.toDate(),
       servicePhotos: (data['servicePhotos'] as List<dynamic>? ?? const [])
           .whereType<Map<String, dynamic>>()
           .map(ServicePhoto.fromJson)
@@ -104,6 +110,10 @@ class Booking {
     }
     if (latitude != null) data['latitude'] = latitude;
     if (longitude != null) data['longitude'] = longitude;
+    if (holdReason != null && holdReason!.isNotEmpty) {
+      data['holdReason'] = holdReason;
+    }
+    if (heldAt != null) data['heldAt'] = Timestamp.fromDate(heldAt!);
     return data;
   }
 }

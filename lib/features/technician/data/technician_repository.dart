@@ -43,13 +43,10 @@ class TechnicianRepository {
   }
 
   Future<void> stopSharingLocation(String technicianId) {
-    return _firestore
-        .collection('technician_locations')
-        .doc(technicianId)
-        .update({
+    return _firestore.collection('technician_locations').doc(technicianId).set({
       'activeBookingId': FieldValue.delete(),
       'updatedAt': FieldValue.serverTimestamp(),
-    });
+    }, SetOptions(merge: true));
   }
 
   Stream<TechnicianLocation?> watchLocation(String technicianId) {
