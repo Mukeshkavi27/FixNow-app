@@ -19,10 +19,12 @@ class LocationTrackingService {
   LocationTrackingService(this._repository);
 
   final TechnicianRepository _repository;
-  StreamSubscription<Position>? _subscription;
+  Timer? _timer;
+  bool _sending = false;
+  String? _technicianId;
   String? _activeBookingId;
 
-  bool get isTracking => _subscription != null;
+  bool get isTracking => _timer != null;
   String? get activeBookingId => _activeBookingId;
 
   Future<void> start({
@@ -34,30 +36,60 @@ class LocationTrackingService {
     if (!permission) {
       throw StateError('Location permission is required for live tracking.');
     }
+    _technicianId = technicianId;
     _activeBookingId = bookingId;
-    const settings = LocationSettings(
-      accuracy: LocationAccuracy.high,
-      distanceFilter: 25,
+    await _sendCurrentPosition(
+      technicianId: technicianId,
+      bookingId: bookingId,
     );
-    _subscription = Geolocator.getPositionStream(
-      locationSettings: settings,
-    ).listen((position) {
-      _repository.updateLocation(
+    _timer = Timer.periodic(const Duration(seconds: 3), (_) {
+      _sendCurrentPosition(
+        technicianId: technicianId,
+        bookingId: bookingId,
+      );
+    });
+  }
+
+  Future<void> stop() async {
+    _timer?.cancel();
+    _timer = null;
+    final technicianId = _technicianId;
+    if (technicianId != null) {
+      await _repository.stopSharingLocation(technicianId);
+    }
+    _technicianId = null;
+    _activeBookingId = null;
+  }
+
+  Future<void> _sendCurrentPosition({
+    required String technicianId,
+    required String bookingId,
+  }) async {
+    if (_sending) return;
+    _sending = true;
+    try {
+      final position = await Geolocator.getCurrentPosition(
+        locationSettings: const LocationSettings(
+          accuracy: LocationAccuracy.bestForNavigation,
+        ),
+      ).timeout(const Duration(seconds: 8));
+      await _repository.updateLocation(
         TechnicianLocation(
           technicianId: technicianId,
           latitude: position.latitude,
           longitude: position.longitude,
           updatedAt: DateTime.now(),
           activeBookingId: bookingId,
+          heading: position.heading.isNaN ? null : position.heading,
+          bearing: position.heading.isNaN ? null : position.heading,
+          speed: position.speed.isNaN ? null : position.speed,
+          accuracy: position.accuracy.isNaN ? null : position.accuracy,
+          isOnline: true,
         ),
       );
-    });
-  }
-
-  Future<void> stop() async {
-    await _subscription?.cancel();
-    _subscription = null;
-    _activeBookingId = null;
+    } finally {
+      _sending = false;
+    }
   }
 
   Future<bool> _ensurePermission() async {

@@ -8,6 +8,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../../../app/theme/app_theme.dart';
 import '../../../app/widgets/resilient_asset_image.dart';
+import '../../../core/branches/branch_repository.dart';
 import '../../../core/constants/app_constants.dart';
 import '../../../core/enums/booking_status.dart';
 import '../../../core/services/reverse_geocoding_service.dart';
@@ -329,21 +330,15 @@ class _CustomerHeader extends StatelessWidget {
   }
 }
 
-class _ServiceCityRotator extends StatefulWidget {
+class _ServiceCityRotator extends ConsumerStatefulWidget {
   const _ServiceCityRotator();
 
   @override
-  State<_ServiceCityRotator> createState() => _ServiceCityRotatorState();
+  ConsumerState<_ServiceCityRotator> createState() =>
+      _ServiceCityRotatorState();
 }
 
-class _ServiceCityRotatorState extends State<_ServiceCityRotator> {
-  static const _cities = [
-    'Coimbatore',
-    'Chennai',
-    'Tiruppur',
-    'Madurai',
-  ];
-
+class _ServiceCityRotatorState extends ConsumerState<_ServiceCityRotator> {
   Timer? _timer;
   int _index = 0;
 
@@ -352,7 +347,7 @@ class _ServiceCityRotatorState extends State<_ServiceCityRotator> {
     super.initState();
     _timer = Timer.periodic(const Duration(seconds: 3), (_) {
       if (!mounted) return;
-      setState(() => _index = (_index + 1) % _cities.length);
+      setState(() => _index += 1);
     });
   }
 
@@ -364,6 +359,13 @@ class _ServiceCityRotatorState extends State<_ServiceCityRotator> {
 
   @override
   Widget build(BuildContext context) {
+    final cities = (ref.watch(branchesProvider).valueOrNull ?? const [])
+        .where((branch) => !branch.id.startsWith('fallback-'))
+        .map((branch) => branch.city.trim())
+        .where((city) => city.isNotEmpty)
+        .toSet()
+        .toList();
+    final city = cities.isEmpty ? 'your area' : cities[_index % cities.length];
     return Row(
       children: [
         const Icon(
@@ -388,8 +390,8 @@ class _ServiceCityRotatorState extends State<_ServiceCityRotator> {
               );
             },
             child: Text(
-              'Available in ${_cities[_index]}',
-              key: ValueKey(_cities[_index]),
+              'Available in $city',
+              key: ValueKey(city),
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: const TextStyle(
@@ -1244,7 +1246,7 @@ class _SupportActionButton extends StatelessWidget {
         onTap: onTap,
         borderRadius: BorderRadius.circular(18),
         child: Container(
-          width: expanded ? 88 : 64,
+          width: expanded ? 96 : 64,
           height: 64,
           padding: EdgeInsets.symmetric(horizontal: expanded ? 12 : 0),
           decoration: BoxDecoration(
@@ -1346,8 +1348,7 @@ class _LocationSheetState extends ConsumerState<_LocationSheet> {
         result = null;
       }
       widget.onSelected(
-        result?.address ??
-            '${position.latitude.toStringAsFixed(4)}, ${position.longitude.toStringAsFixed(4)}',
+        result?.address ?? 'Current location selected',
       );
     } catch (_) {
       if (mounted) {

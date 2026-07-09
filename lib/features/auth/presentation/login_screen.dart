@@ -492,7 +492,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
             colorBlendMode: BlendMode.screen,
             fallbackIcon: Icons.build_circle_outlined,
             fallbackIconSize: 64,
-            fallbackBackgroundColor: const Color(0xFFEAF1FF),
+            fallbackBackgroundColor: const Color(0xFFF4F8FF),
           ),
           DecoratedBox(
             decoration: BoxDecoration(

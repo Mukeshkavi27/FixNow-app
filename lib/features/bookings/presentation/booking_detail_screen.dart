@@ -1,20 +1,23 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_map/flutter_map.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:geolocator/geolocator.dart';
 import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
-import 'package:latlong2/latlong.dart';
 
 import '../../../app/theme/app_theme.dart';
 import '../../../core/enums/booking_status.dart';
 import '../../../core/enums/user_role.dart';
+import '../../../core/maps/google_static_map.dart';
+import '../../../core/services/reverse_geocoding_service.dart';
 import '../../auth/data/auth_repository.dart';
+import '../../auth/domain/app_user.dart';
 import '../../estimates/data/estimate_repository.dart';
 import '../../shared/data/bill_repository.dart';
 import '../../shared/data/review_repository.dart';
 import '../../technician/data/technician_repository.dart';
 import '../../technician/domain/technician_location.dart';
 import '../data/booking_repository.dart';
+import '../domain/booking.dart';
 
 final bookingDetailProvider =
     StreamProvider.autoDispose.family((ref, String id) {
@@ -40,6 +43,13 @@ final bookingTechnicianLocationProvider = StreamProvider.autoDispose
   return ref.watch(technicianRepositoryProvider).watchLocation(technicianId);
 });
 
+final bookingAddressPinProvider =
+    FutureProvider.autoDispose.family<AddressGeocodingResult?, String>(
+  (ref, address) {
+    return ref.watch(addressGeocodingServiceProvider).search(address);
+  },
+);
+
 class BookingDetailScreen extends ConsumerStatefulWidget {
   const BookingDetailScreen({
     required this.bookingId,
@@ -58,11 +68,142 @@ class BookingDetailScreen extends ConsumerStatefulWidget {
 class _BookingDetailScreenState extends ConsumerState<BookingDetailScreen> {
   final _review = TextEditingController();
   int _rating = 5;
+  bool _isConfirmingArrival = false;
+  bool _arrivalPromptShown = false;
 
   @override
   void dispose() {
     _review.dispose();
     super.dispose();
+  }
+
+  Future<void> _approveEstimate(String estimateId, String bookingId) async {
+    try {
+      await ref.read(estimateRepositoryProvider).approve(estimateId, bookingId);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Estimate approved.')),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(error.toString()),
+          behavior: SnackBarBehavior.floating,
+          backgroundColor: Colors.red.shade700,
+        ),
+      );
+    }
+  }
+
+  Future<void> _rejectEstimate(String estimateId, String bookingId) async {
+    try {
+      await ref.read(estimateRepositoryProvider).reject(estimateId, bookingId);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Estimate rejected.')),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(error.toString()),
+          behavior: SnackBarBehavior.floating,
+          backgroundColor: Colors.red.shade700,
+        ),
+      );
+    }
+  }
+
+  Future<void> _confirmTechnicianArrival(Booking booking) async {
+    if (_isConfirmingArrival) return;
+    setState(() => _isConfirmingArrival = true);
+    try {
+      await ref.read(bookingRepositoryProvider).confirmTechnicianArrival(
+            bookingId: booking.id,
+            customerId: booking.customerId,
+          );
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content:
+              Text('Arrival confirmed. The technician can create the estimate now.'),
+        ),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(error.toString()),
+          behavior: SnackBarBehavior.floating,
+          backgroundColor: Colors.red.shade700,
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _isConfirmingArrival = false);
+    }
+  }
+
+  Future<void> _reportTechnicianNotMet(Booking booking) async {
+    try {
+      await ref.read(bookingRepositoryProvider).reportTechnicianNotMet(
+            bookingId: booking.id,
+            customerId: booking.customerId,
+          );
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Admin has been alerted. We will check this.'),
+        ),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(error.toString()),
+          behavior: SnackBarBehavior.floating,
+          backgroundColor: Colors.red.shade700,
+        ),
+      );
+    }
+  }
+
+  void _maybeShowArrivalPrompt(Booking booking, AppUser? user) {
+    if (_arrivalPromptShown ||
+        user?.uid != booking.customerId ||
+        booking.status != BookingStatus.arrived) {
+      return;
+    }
+    _arrivalPromptShown = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      showDialog<void>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          title: const Text('Technician has arrived'),
+          content: const Text(
+            'Technician has arrived at your location. Have you met the technician?',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () {
+                Navigator.pop(dialogContext);
+                _reportTechnicianNotMet(booking);
+              },
+              child: const Text('Not yet'),
+            ),
+            FilledButton.icon(
+              onPressed: () {
+                Navigator.pop(dialogContext);
+                _confirmTechnicianArrival(booking);
+              },
+              icon: const Icon(Icons.check_circle_outline),
+              label: const Text('Yes, I have met the technician'),
+            ),
+          ],
+        ),
+      );
+    });
   }
 
   @override
@@ -93,6 +234,7 @@ class _BookingDetailScreenState extends ConsumerState<BookingDetailScreen> {
               child: Text('You can only view your own booking details.'),
             );
           }
+          _maybeShowArrivalPrompt(booking, user);
           final canHaveEstimate =
               booking.status.index >= BookingStatus.estimateSent.index;
           final canHaveBill =
@@ -130,6 +272,16 @@ class _BookingDetailScreenState extends ConsumerState<BookingDetailScreen> {
                   booking: booking,
                   onReschedule: _rescheduleBooking,
                   onCancel: _cancelBooking,
+                ),
+                const SizedBox(height: 14),
+              ],
+              if (user?.uid == booking.customerId &&
+                  booking.status == BookingStatus.arrived) ...[
+                _ArrivalConfirmationCard(
+                  booking: booking,
+                  isLoading: _isConfirmingArrival,
+                  onConfirm: () => _confirmTechnicianArrival(booking),
+                  onNotYet: () => _reportTechnicianNotMet(booking),
                 ),
                 const SizedBox(height: 14),
               ],
@@ -495,9 +647,10 @@ class _BookingDetailScreenState extends ConsumerState<BookingDetailScreen> {
                             children: [
                               Expanded(
                                 child: OutlinedButton.icon(
-                                  onPressed: () => ref
-                                      .read(estimateRepositoryProvider)
-                                      .reject(estimate.id, booking.id),
+                                  onPressed: () => _rejectEstimate(
+                                    estimate.id,
+                                    booking.id,
+                                  ),
                                   icon: const Icon(Icons.close, size: 18),
                                   label: const Text(
                                     'Reject',
@@ -517,9 +670,10 @@ class _BookingDetailScreenState extends ConsumerState<BookingDetailScreen> {
                                       borderRadius: BorderRadius.circular(10),
                                     ),
                                   ),
-                                  onPressed: () => ref
-                                      .read(estimateRepositoryProvider)
-                                      .approve(estimate.id, booking.id),
+                                  onPressed: () => _approveEstimate(
+                                    estimate.id,
+                                    booking.id,
+                                  ),
                                   icon: const Icon(Icons.check_circle_outline,
                                       size: 18),
                                   label: const Text(
@@ -564,7 +718,10 @@ class _BookingDetailScreenState extends ConsumerState<BookingDetailScreen> {
                                   ),
                                 ),
                                 Text(
-                                  'INR ${bill.amount.toStringAsFixed(0)}',
+                                  bill.isPaid || bill.hasPaymentForApproval
+                                      ? 'INR ${bill.amount.toStringAsFixed(0)}'
+                                          ' - ${bill.paymentModeLabel}'
+                                      : 'INR ${bill.amount.toStringAsFixed(0)}',
                                   style: const TextStyle(
                                     color: AppTheme.textSecondary,
                                   ),
@@ -573,9 +730,11 @@ class _BookingDetailScreenState extends ConsumerState<BookingDetailScreen> {
                             ),
                           ),
                           Chip(
-                            label: Text(bill.isPaid ? 'Paid' : 'Payment due'),
+                            label: Text(bill.paymentStatusLabel),
                             backgroundColor: bill.isPaid
                                 ? Colors.green.shade50
+                                : bill.hasPaymentForApproval
+                                    ? Colors.blue.shade50
                                 : Colors.orange.shade50,
                           ),
                         ],
@@ -910,7 +1069,7 @@ class _UCCard extends StatelessWidget {
 class _ConfirmationBanner extends StatelessWidget {
   const _ConfirmationBanner({required this.booking});
 
-  final dynamic booking;
+  final Booking booking;
 
   @override
   Widget build(BuildContext context) {
@@ -968,6 +1127,102 @@ class _ConfirmationBanner extends StatelessWidget {
   }
 }
 
+class _ArrivalConfirmationCard extends StatelessWidget {
+  const _ArrivalConfirmationCard({
+    required this.booking,
+    required this.isLoading,
+    required this.onConfirm,
+    required this.onNotYet,
+  });
+
+  final Booking booking;
+  final bool isLoading;
+  final VoidCallback onConfirm;
+  final VoidCallback onNotYet;
+
+  @override
+  Widget build(BuildContext context) {
+    final technicianName = booking.technicianName?.trim().isNotEmpty == true
+        ? booking.technicianName!.trim()
+        : 'The technician';
+    return _UCCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 44,
+                height: 44,
+                decoration: BoxDecoration(
+                  color: AppTheme.primary.withValues(alpha: 0.1),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: const Icon(
+                  Icons.location_on_outlined,
+                  color: AppTheme.primary,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'Technician has arrived',
+                      style: TextStyle(
+                        fontWeight: FontWeight.w900,
+                        color: AppTheme.textPrimary,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      '$technicianName is at your service location.',
+                      style: const TextStyle(
+                        color: AppTheme.textSecondary,
+                        fontSize: 12,
+                        height: 1.35,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 14),
+          Row(
+            children: [
+              Expanded(
+                child: OutlinedButton.icon(
+                  onPressed: isLoading ? null : onNotYet,
+                  icon: const Icon(Icons.support_agent_outlined),
+                  label: const Text('Not yet'),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: FilledButton.icon(
+                  onPressed: isLoading ? null : onConfirm,
+                  icon: isLoading
+                      ? const SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.person_pin_circle_outlined),
+                  label: Text(
+                    isLoading ? 'Confirming...' : 'I have met them',
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class _CustomerBookingActions extends StatelessWidget {
   const _CustomerBookingActions({
     required this.booking,
@@ -975,7 +1230,7 @@ class _CustomerBookingActions extends StatelessWidget {
     required this.onCancel,
   });
 
-  final dynamic booking;
+  final Booking booking;
   final ValueChanged<dynamic> onReschedule;
   final ValueChanged<dynamic> onCancel;
 
@@ -1031,31 +1286,61 @@ class _CustomerBookingActions extends StatelessWidget {
   }
 }
 
-class _TrackingCard extends StatelessWidget {
+class _TrackingCard extends ConsumerWidget {
   const _TrackingCard({
     required this.booking,
     required this.technicianLocation,
   });
 
-  final dynamic booking;
+  final Booking booking;
   final TechnicianLocation? technicianLocation;
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final hasServiceLocation =
         booking.latitude != null && booking.longitude != null;
+    final approximatePin = !hasServiceLocation
+        ? ref.watch(bookingAddressPinProvider(booking.address))
+        : null;
+    final serviceLatitude =
+        booking.latitude ?? approximatePin?.valueOrNull?.latitude;
+    final serviceLongitude =
+        booking.longitude ?? approximatePin?.valueOrNull?.longitude;
+    final hasMapLocation = serviceLatitude != null && serviceLongitude != null;
+    final usingApproximatePin = !hasServiceLocation && hasMapLocation;
     final hasTechnicianLocation = technicianLocation != null;
+    final isTrackingThisBooking =
+        technicianLocation?.activeBookingId == booking.id;
     final isAssigned = booking.technicianName != null;
-    final title = hasTechnicianLocation
-        ? 'Technician is on the map'
+    final distanceText = hasMapLocation && hasTechnicianLocation
+        ? '${(Geolocator.distanceBetween(
+              serviceLatitude!,
+              serviceLongitude!,
+              technicianLocation!.latitude,
+              technicianLocation!.longitude,
+            ) / 1000).toStringAsFixed(1)} km direct'
+        : null;
+    final title = hasTechnicianLocation && isTrackingThisBooking
+        ? '${booking.technicianName ?? 'Technician'} is on the way'
+        : hasTechnicianLocation
+            ? 'Technician location is available'
         : isAssigned
             ? 'Technician assigned'
             : 'Technician assignment pending';
-    final subtitle = hasTechnicianLocation
-        ? 'Live location updates will refresh as the technician moves.'
+    final subtitle = hasTechnicianLocation && isTrackingThisBooking
+        ? 'Live location refreshes as the technician moves toward your home.'
+        : hasTechnicianLocation
+            ? 'The technician has shared a location. Route tracking starts when the journey begins.'
         : isAssigned
             ? '${booking.technicianName} will share live location when travel starts.'
             : 'We will assign a technician before the scheduled visit.';
+    final trackingStateLabel = isTrackingThisBooking
+        ? 'Live GPS on'
+        : isAssigned
+            ? 'Waiting for journey'
+            : 'Awaiting assignment';
+    final trackingStateColor =
+        isTrackingThisBooking ? AppTheme.accent : AppTheme.primary;
 
     return _UCCard(
       child: Column(
@@ -1105,17 +1390,63 @@ class _TrackingCard extends StatelessWidget {
           const SizedBox(height: 14),
           _TrackingSteps(status: booking.status),
           const SizedBox(height: 14),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              _TrackingChip(
+                icon: isTrackingThisBooking
+                    ? Icons.radio_button_checked
+                    : Icons.schedule_outlined,
+                label: trackingStateLabel,
+                color: trackingStateColor,
+              ),
+              if (booking.technicianName != null)
+                _TrackingChip(
+                  icon: Icons.engineering_outlined,
+                  label: booking.technicianName!,
+                  color: AppTheme.primary,
+                ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          if (distanceText != null) ...[
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                _TrackingChip(
+                  icon: Icons.near_me_outlined,
+                  label: distanceText,
+                  color: AppTheme.primary,
+                ),
+                _TrackingChip(
+                  icon: Icons.update,
+                  label:
+                      'Updated ${_trackingUpdatedLabel(technicianLocation!.updatedAt)}',
+                  color: AppTheme.accent,
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+          ],
           ClipRRect(
             borderRadius: BorderRadius.circular(12),
             child: SizedBox(
               height: 220,
-              child: hasServiceLocation
+              child: hasMapLocation
                   ? _TrackingMap(
-                      serviceLatitude: booking.latitude!,
-                      serviceLongitude: booking.longitude!,
+                      serviceLatitude: serviceLatitude!,
+                      serviceLongitude: serviceLongitude!,
                       technicianLocation: technicianLocation,
+                      activeBookingId: booking.id,
+                      approximateServicePin: usingApproximatePin,
+                      showRouteLine:
+                          booking.status.index < BookingStatus.arrived.index,
                     )
-                  : const _MapPlaceholder(),
+                  : approximatePin?.isLoading == true
+                      ? const Center(child: CircularProgressIndicator())
+                      : const _MapPlaceholder(),
             ),
           ),
           const SizedBox(height: 12),
@@ -1134,98 +1465,101 @@ class _TrackingMap extends StatelessWidget {
     required this.serviceLatitude,
     required this.serviceLongitude,
     required this.technicianLocation,
+    required this.activeBookingId,
+    required this.approximateServicePin,
+    required this.showRouteLine,
   });
 
   final double serviceLatitude;
   final double serviceLongitude;
   final TechnicianLocation? technicianLocation;
+  final String activeBookingId;
+  final bool approximateServicePin;
+  final bool showRouteLine;
 
   @override
   Widget build(BuildContext context) {
-    final servicePosition = LatLng(serviceLatitude, serviceLongitude);
-    final techPosition = technicianLocation == null
+    final servicePoint = GoogleMapPoint(
+      latitude: serviceLatitude,
+      longitude: serviceLongitude,
+      label: 'S',
+      color: approximateServicePin ? const Color(0xFFF08C00) : AppTheme.accent,
+      icon: approximateServicePin
+          ? Icons.location_searching
+          : Icons.home_repair_service_outlined,
+    );
+    final techPoint = technicianLocation == null ||
+            technicianLocation!.activeBookingId != activeBookingId
         ? null
-        : LatLng(technicianLocation!.latitude, technicianLocation!.longitude);
-    return FlutterMap(
-      options: MapOptions(
-        initialCenter: techPosition ?? servicePosition,
-        initialZoom: techPosition == null ? 14 : 12,
-        interactionOptions: const InteractionOptions(
-          flags: InteractiveFlag.drag |
-              InteractiveFlag.pinchZoom |
-              InteractiveFlag.doubleTapZoom,
-        ),
-      ),
-      children: [
-        TileLayer(
-          urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-          userAgentPackageName: 'com.fixnow.app',
-        ),
-        if (techPosition != null)
-          PolylineLayer(
-            polylines: [
-              Polyline(
-                points: [techPosition, servicePosition],
-                color: AppTheme.primary,
-                strokeWidth: 4,
-              ),
-            ],
-          ),
-        MarkerLayer(
-          markers: [
-            Marker(
-              point: servicePosition,
-              width: 48,
-              height: 48,
-              child: const _TrackingMarker(
-                icon: Icons.home_repair_service_outlined,
-                color: AppTheme.accent,
-              ),
-            ),
-            if (techPosition != null)
-              Marker(
-                point: techPosition,
-                width: 48,
-                height: 48,
-                child: const _TrackingMarker(
-                  icon: Icons.engineering_outlined,
-                  color: AppTheme.primary,
-                ),
-              ),
-          ],
-        ),
-      ],
+        : GoogleMapPoint(
+            latitude: technicianLocation!.latitude,
+            longitude: technicianLocation!.longitude,
+            label: 'T',
+            color: AppTheme.primary,
+            icon: Icons.engineering_outlined,
+            bearing: technicianLocation!.bearing,
+          );
+    final points = [
+      if (techPoint != null) techPoint,
+      servicePoint,
+    ];
+    return RoadRouteMap(
+      points: points,
+      origin: techPoint,
+      destination: servicePoint,
+      zoom: techPoint == null ? 14 : 12,
+      badge: approximateServicePin
+          ? 'Approximate service pin'
+          : 'Live customer tracking',
+      showRouteLine: showRouteLine,
+      showRouteSummary: showRouteLine,
     );
   }
 }
 
-class _TrackingMarker extends StatelessWidget {
-  const _TrackingMarker({
+class _TrackingChip extends StatelessWidget {
+  const _TrackingChip({
     required this.icon,
+    required this.label,
     required this.color,
   });
 
   final IconData icon;
+  final String label;
   final Color color;
 
   @override
   Widget build(BuildContext context) {
     return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
       decoration: BoxDecoration(
-        color: Colors.white,
-        shape: BoxShape.circle,
-        border: Border.all(color: color, width: 2),
-        boxShadow: [
-          BoxShadow(
-            color: color.withValues(alpha: 0.18),
-            blurRadius: 14,
-            offset: const Offset(0, 6),
+        color: color.withValues(alpha: 0.1),
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 15, color: color),
+          const SizedBox(width: 6),
+          Text(
+            label,
+            style: TextStyle(
+              color: color,
+              fontSize: 12,
+              fontWeight: FontWeight.w800,
+            ),
           ),
         ],
       ),
-      child: Icon(icon, color: color, size: 22),
     );
   }
+}
+
+String _trackingUpdatedLabel(DateTime updatedAt) {
+  final difference = DateTime.now().difference(updatedAt);
+  if (difference.inMinutes < 1) return 'just now';
+  if (difference.inMinutes < 60) return '${difference.inMinutes} min ago';
+  return DateFormat('hh:mm a').format(updatedAt);
 }
 
 class _MapPlaceholder extends StatelessWidget {

@@ -9,6 +9,12 @@ class Bill {
     required this.amount,
     required this.createdAt,
     required this.isPaid,
+    this.paymentMode,
+    this.paymentSubmittedAt,
+    this.paymentConfirmedAt,
+    this.paymentConfirmedBy,
+    this.paymentApprovedAt,
+    this.paymentApprovedBy,
   });
 
   final String id;
@@ -18,6 +24,32 @@ class Bill {
   final double amount;
   final DateTime createdAt;
   final bool isPaid;
+  final String? paymentMode;
+  final DateTime? paymentSubmittedAt;
+  final DateTime? paymentConfirmedAt;
+  final String? paymentConfirmedBy;
+  final DateTime? paymentApprovedAt;
+  final String? paymentApprovedBy;
+
+  bool get hasPaymentForApproval =>
+      !isPaid && (paymentMode ?? '').trim().isNotEmpty;
+
+  String get paymentModeLabel {
+    return switch ((paymentMode ?? '').trim()) {
+      'cash' => 'Cash',
+      'upi' => 'UPI',
+      'card' => 'Card',
+      'bankTransfer' => 'Bank transfer',
+      'other' => 'Other',
+      _ => 'Not recorded',
+    };
+  }
+
+  String get paymentStatusLabel {
+    if (isPaid) return 'Payment confirmed';
+    if (hasPaymentForApproval) return 'Awaiting technician confirmation';
+    return 'Payment due';
+  }
 
   factory Bill.fromFirestore(DocumentSnapshot<Map<String, dynamic>> doc) {
     final data = doc.data() ?? {};
@@ -29,6 +61,14 @@ class Bill {
       amount: (data['amount'] as num?)?.toDouble() ?? 0,
       createdAt: (data['createdAt'] as Timestamp?)?.toDate() ?? DateTime.now(),
       isPaid: data['isPaid'] as bool? ?? false,
+      paymentMode: data['paymentMode'] as String?,
+      paymentSubmittedAt:
+          (data['paymentSubmittedAt'] as Timestamp?)?.toDate(),
+      paymentConfirmedAt:
+          (data['paymentConfirmedAt'] as Timestamp?)?.toDate(),
+      paymentConfirmedBy: data['paymentConfirmedBy'] as String?,
+      paymentApprovedAt: (data['paymentApprovedAt'] as Timestamp?)?.toDate(),
+      paymentApprovedBy: data['paymentApprovedBy'] as String?,
     );
   }
 }

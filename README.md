@@ -35,9 +35,15 @@ Flutter/Firebase foundation for a home appliance service management platform.
    flutterfire configure
    ```
 
-5. Add Google Maps keys:
-   - Android: `android/app/src/main/AndroidManifest.xml`
-   - iOS: `ios/Runner/AppDelegate.swift`
+5. Add a Google Maps Platform key with Geocoding API and Static Maps API enabled.
+   Pass it to Flutter at run/build time:
+
+   ```sh
+   flutter run --dart-define=GOOGLE_MAPS_API_KEY=your_key_here
+   ```
+
+   Android release builds can also read `GOOGLE_MAPS_API_KEY` from
+   `android/local.properties`, Gradle properties, or the environment.
 6. Run:
 
    ```sh

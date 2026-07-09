@@ -24,6 +24,8 @@ dependencies:
   latlong2: ^0.9.1
   url_launcher: ^6.3.1
   uuid: ^4.5.1
+  flutter_local_notifications: ^22.0.1
+  firebase_messaging: ^15.2.10
 
 dev_dependencies:
   flutter_test:
@@ -34,5 +36,14 @@ flutter:
   uses-material-design: true
   assets:
     - assets/images/
+  fonts:
+    - family: Roboto
+      fonts:
+        - asset: assets/fonts/Roboto-Regular.ttf
+          weight: 400
+        - asset: assets/fonts/Roboto-Medium.ttf
+          weight: 500
+        - asset: assets/fonts/Roboto-Bold.ttf
+          weight: 700
 
 

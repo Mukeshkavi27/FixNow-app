@@ -14,7 +14,7 @@ class ResilientAssetImage extends StatelessWidget {
     this.fallbackIcon = Icons.image_outlined,
     this.fallbackIconSize = 28,
     this.fallbackColor = AppTheme.primary,
-    this.fallbackBackgroundColor = const Color(0xFFF3F6FF),
+    this.fallbackBackgroundColor = const Color(0xFFF4F8FF),
     this.width,
     this.height,
   });

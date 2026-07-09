@@ -18,7 +18,11 @@ class AppConfigRepository {
   final FirebaseFirestore _firestore;
 
   Stream<OperationsConfig> watchOperationsConfig() {
-    return _firestore.collection('app_config').doc('operations').snapshots().map(
+    return _firestore
+        .collection('app_config')
+        .doc('operations')
+        .snapshots()
+        .map(
           (doc) => OperationsConfig.fromJson(doc.data() ?? const {}),
         );
   }
@@ -51,10 +55,10 @@ class OperationsConfig {
       branchLongitude: (data['branchLongitude'] as num?)?.toDouble() ?? 80.2707,
       geofenceRadiusMeters:
           (data['geofenceRadiusMeters'] as num?)?.toDouble() ?? 250,
-      attendanceStartHour: data['attendanceStartHour'] as int? ?? 9,
-      attendanceStartMinute: data['attendanceStartMinute'] as int? ?? 15,
+      attendanceStartHour: data['attendanceStartHour'] as int? ?? 0,
+      attendanceStartMinute: data['attendanceStartMinute'] as int? ?? 0,
       attendanceEndHour: data['attendanceEndHour'] as int? ?? 9,
-      attendanceEndMinute: data['attendanceEndMinute'] as int? ?? 45,
+      attendanceEndMinute: data['attendanceEndMinute'] as int? ?? 30,
       whatsappApprovalNumber:
           data['whatsappApprovalNumber'] as String? ?? '+919999999999',
     );

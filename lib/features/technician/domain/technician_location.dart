@@ -7,6 +7,11 @@ class TechnicianLocation {
     required this.longitude,
     required this.updatedAt,
     this.activeBookingId,
+    this.heading,
+    this.speed,
+    this.accuracy,
+    this.bearing,
+    this.isOnline = true,
   });
 
   final String technicianId;
@@ -14,6 +19,11 @@ class TechnicianLocation {
   final double longitude;
   final DateTime updatedAt;
   final String? activeBookingId;
+  final double? heading;
+  final double? speed;
+  final double? accuracy;
+  final double? bearing;
+  final bool isOnline;
 
   factory TechnicianLocation.fromFirestore(
     DocumentSnapshot<Map<String, dynamic>> doc,
@@ -25,6 +35,11 @@ class TechnicianLocation {
       longitude: (data['longitude'] as num?)?.toDouble() ?? 0,
       updatedAt: (data['updatedAt'] as Timestamp?)?.toDate() ?? DateTime.now(),
       activeBookingId: data['activeBookingId'] as String?,
+      heading: (data['heading'] as num?)?.toDouble(),
+      speed: (data['speed'] as num?)?.toDouble(),
+      accuracy: (data['accuracy'] as num?)?.toDouble(),
+      bearing: (data['bearing'] as num?)?.toDouble(),
+      isOnline: data['isOnline'] as bool? ?? true,
     );
   }
 
@@ -34,5 +49,10 @@ class TechnicianLocation {
         'longitude': longitude,
         'updatedAt': Timestamp.fromDate(updatedAt),
         'activeBookingId': activeBookingId,
+        if (heading != null) 'heading': heading,
+        if (speed != null) 'speed': speed,
+        if (accuracy != null) 'accuracy': accuracy,
+        if (bearing != null) 'bearing': bearing,
+        'isOnline': isOnline,
       };
 }

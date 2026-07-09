@@ -23,6 +23,12 @@ class Booking {
     this.branchName,
     this.latitude,
     this.longitude,
+    this.placeId,
+    this.pincode,
+    this.city,
+    this.stateName,
+    this.serviceArea,
+    this.landmark,
     this.holdReason,
     this.heldAt,
     this.servicePhotos = const [],
@@ -47,6 +53,12 @@ class Booking {
   final String? branchName;
   final double? latitude;
   final double? longitude;
+  final String? placeId;
+  final String? pincode;
+  final String? city;
+  final String? stateName;
+  final String? serviceArea;
+  final String? landmark;
   final String? holdReason;
   final DateTime? heldAt;
   final List<ServicePhoto> servicePhotos;
@@ -74,6 +86,12 @@ class Booking {
       branchName: data['branchName'] as String?,
       latitude: (data['latitude'] as num?)?.toDouble(),
       longitude: (data['longitude'] as num?)?.toDouble(),
+      placeId: data['placeId'] as String?,
+      pincode: data['pincode'] as String?,
+      city: data['city'] as String?,
+      stateName: data['stateName'] as String?,
+      serviceArea: data['serviceArea'] as String?,
+      landmark: data['landmark'] as String?,
       holdReason: data['holdReason'] as String?,
       heldAt: (data['heldAt'] as Timestamp?)?.toDate(),
       servicePhotos: (data['servicePhotos'] as List<dynamic>? ?? const [])
@@ -110,6 +128,16 @@ class Booking {
     }
     if (latitude != null) data['latitude'] = latitude;
     if (longitude != null) data['longitude'] = longitude;
+    if (placeId != null && placeId!.isNotEmpty) data['placeId'] = placeId;
+    if (pincode != null && pincode!.isNotEmpty) data['pincode'] = pincode;
+    if (city != null && city!.isNotEmpty) data['city'] = city;
+    if (stateName != null && stateName!.isNotEmpty) {
+      data['stateName'] = stateName;
+    }
+    if (serviceArea != null && serviceArea!.isNotEmpty) {
+      data['serviceArea'] = serviceArea;
+    }
+    if (landmark != null && landmark!.isNotEmpty) data['landmark'] = landmark;
     if (holdReason != null && holdReason!.isNotEmpty) {
       data['holdReason'] = holdReason;
     }

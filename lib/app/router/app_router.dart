@@ -16,6 +16,9 @@ import '../../features/customer/presentation/customer_profile_screen.dart';
 import '../../features/technician/presentation/technician_dashboard_screen.dart';
 import '../widgets/splash_screen.dart';
 
+final _splashStartedAt = DateTime.now();
+const _minimumSplashDuration = Duration(seconds: 3);
+
 final appRouterProvider = Provider<GoRouter>((ref) {
   final auth = ref.watch(authStateProvider);
   final user = ref.watch(currentUserProvider);
@@ -24,11 +27,14 @@ final appRouterProvider = Provider<GoRouter>((ref) {
     initialLocation: '/splash',
     redirect: (context, state) {
       final isAuthLoading = auth.isLoading || user.isLoading;
-      if (isAuthLoading) return '/splash';
+      final location = state.matchedLocation;
+      final splashIsStillWarm =
+          DateTime.now().difference(_splashStartedAt) < _minimumSplashDuration;
+      if (isAuthLoading) return location == '/splash' ? null : '/splash';
+      if (location == '/splash' && splashIsStillWarm) return null;
 
       final firebaseUser = auth.valueOrNull;
       final appUser = user.valueOrNull;
-      final location = state.matchedLocation;
 
       if (firebaseUser == null) return location == '/login' ? null : '/login';
       if (user.hasError) {

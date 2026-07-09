@@ -38,15 +38,27 @@ class AuthRepository {
   }
 
   Future<void> signIn(String email, String password) async {
-    final credential = await _auth.signInWithEmailAndPassword(
-      email: email,
-      password: password,
-    );
+    final credential = await _auth
+        .signInWithEmailAndPassword(
+          email: email,
+          password: password,
+        )
+        .timeout(
+          const Duration(seconds: 25),
+          onTimeout: () => throw StateError(
+            'Firebase Auth did not respond. Check internet, Firebase project, and web app config.',
+          ),
+        );
     final uid = credential.user?.uid;
     if (uid == null) {
       throw StateError('Unable to sign in right now. Please try again.');
     }
-    final profile = await _firestore.collection('users').doc(uid).get();
+    final profile = await _firestore.collection('users').doc(uid).get().timeout(
+          const Duration(seconds: 20),
+          onTimeout: () => throw StateError(
+            'Signed in, but Firestore profile did not load. Check Firestore rules and network.',
+          ),
+        );
     if (!profile.exists) {
       await signOut();
       throw StateError(
@@ -170,6 +182,19 @@ class AuthRepository {
       'lastServiceAddress': address.trim(),
       'lastServiceLatitude': latitude,
       'lastServiceLongitude': longitude,
+      'updatedAt': FieldValue.serverTimestamp(),
+    });
+  }
+
+  Future<void> updateFaceReference({
+    required String uid,
+    required String photoUrl,
+    required String signature,
+  }) {
+    return _firestore.collection('users').doc(uid).update({
+      'faceReferencePhoto': photoUrl,
+      'faceReferenceSignature': signature,
+      'faceReferenceUpdatedAt': FieldValue.serverTimestamp(),
       'updatedAt': FieldValue.serverTimestamp(),
     });
   }

@@ -3,8 +3,8 @@
     "short_name": "FixNow",
     "start_url": ".",
     "display": "standalone",
-    "background_color": "#F7FAFF",
-    "theme_color": "#0B5EEA",
+    "background_color": "#FAF7F5",
+    "theme_color": "#A23C35",
     "description": "Book trusted AC, refrigerator, washing machine, TV, microwave, fan, and water purifier repair with verified technicians and live service tracking.",
     "prefer_related_applications": false,
     "icons": [

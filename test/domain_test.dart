@@ -31,8 +31,8 @@ void main() {
       final day = DateTime(2026, 6, 12);
 
       expect(config.geofenceRadiusMeters, 250);
-      expect(config.startFor(day), DateTime(2026, 6, 12, 9, 15));
-      expect(config.endFor(day), DateTime(2026, 6, 12, 9, 45));
+      expect(config.startFor(day), DateTime(2026, 6, 12));
+      expect(config.endFor(day), DateTime(2026, 6, 12, 9, 30));
     });
 
     test('accepts remotely configured operating values', () {

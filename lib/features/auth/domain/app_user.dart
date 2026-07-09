@@ -18,6 +18,9 @@ class AppUser {
     this.requestLatitude,
     this.requestLongitude,
     this.profilePhoto,
+    this.faceReferencePhoto,
+    this.faceReferenceSignature,
+    this.faceReferenceUpdatedAt,
     this.lastServiceAddress,
     this.lastServiceLatitude,
     this.lastServiceLongitude,
@@ -30,6 +33,9 @@ class AppUser {
   final UserRole role;
   final AccountStatus accountStatus;
   final String? profilePhoto;
+  final String? faceReferencePhoto;
+  final String? faceReferenceSignature;
+  final DateTime? faceReferenceUpdatedAt;
   final DateTime createdAt;
   final bool isActive;
   final String? branchId;
@@ -50,6 +56,10 @@ class AppUser {
       role: UserRole.fromString(data['role'] as String? ?? 'customer'),
       accountStatus: AccountStatus.fromString(data['accountStatus'] as String?),
       profilePhoto: data['profilePhoto'] as String?,
+      faceReferencePhoto: data['faceReferencePhoto'] as String?,
+      faceReferenceSignature: data['faceReferenceSignature'] as String?,
+      faceReferenceUpdatedAt:
+          (data['faceReferenceUpdatedAt'] as Timestamp?)?.toDate(),
       createdAt: (data['createdAt'] as Timestamp?)?.toDate() ?? DateTime.now(),
       isActive: data['isActive'] as bool? ?? true,
       branchId: data['branchId'] as String?,
@@ -71,6 +81,11 @@ class AppUser {
       'role': role.name,
       'accountStatus': accountStatus.name,
       'profilePhoto': profilePhoto,
+      'faceReferencePhoto': faceReferencePhoto,
+      'faceReferenceSignature': faceReferenceSignature,
+      'faceReferenceUpdatedAt': faceReferenceUpdatedAt == null
+          ? null
+          : Timestamp.fromDate(faceReferenceUpdatedAt!),
       'createdAt': Timestamp.fromDate(createdAt),
       'isActive': isActive,
       'branchId': branchId,

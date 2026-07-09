@@ -77,6 +77,12 @@ class BillRepository {
         'amount': amount,
         'createdAt': FieldValue.serverTimestamp(),
         'isPaid': false,
+        'paymentMode': null,
+        'paymentSubmittedAt': null,
+        'paymentConfirmedAt': null,
+        'paymentConfirmedBy': null,
+        'paymentApprovedAt': null,
+        'paymentApprovedBy': null,
       });
       transaction.update(bookingRef, {
         'status': BookingStatus.billGenerated.name,
@@ -94,7 +100,15 @@ class BillRepository {
     });
   }
 
-  Future<void> markPaid(String bookingId) async {
+  Future<void> confirmCollectedPayment({
+    required String bookingId,
+    required String technicianId,
+    required String paymentMode,
+  }) async {
+    final normalizedMode = paymentMode.trim();
+    if (normalizedMode.isEmpty) {
+      throw ArgumentError('Select the payment mode.');
+    }
     final billRef = _firestore.collection('bills').doc(bookingId);
     final bookingRef = _firestore.collection('bookings').doc(bookingId);
     await _firestore.runTransaction((transaction) async {
@@ -103,14 +117,91 @@ class BillRepository {
       if (!bill.exists || !booking.exists) {
         throw StateError('Bill or booking not found.');
       }
+      final billData = bill.data();
+      if (billData == null) throw StateError('Bill not found.');
+      if (billData['technicianId'] != technicianId) {
+        throw StateError('This bill is assigned to another technician.');
+      }
+      if (billData['isPaid'] == true) {
+        throw StateError('This payment is already approved.');
+      }
+      final bookingData = booking.data();
+      if (bookingData?['status'] != BookingStatus.billGenerated.name) {
+        throw StateError('Payment can only be confirmed after final bill.');
+      }
+      transaction.update(billRef, {
+        'isPaid': true,
+        'paymentMode': normalizedMode,
+        'paymentSubmittedAt': FieldValue.serverTimestamp(),
+        'paymentConfirmedAt': FieldValue.serverTimestamp(),
+        'paymentConfirmedBy': technicianId,
+        'paidAt': FieldValue.serverTimestamp(),
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+      transaction.update(bookingRef, {
+        'status': BookingStatus.closed.name,
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+      transaction.set(_firestore.collection('notifications').doc(), {
+        'userId': billData['customerId'],
+        'bookingId': bookingId,
+        'type': 'paymentConfirmed',
+        'title': 'Payment confirmed',
+        'body': 'Your technician confirmed the payment. The job is now closed.',
+        'isRead': false,
+        'createdAt': FieldValue.serverTimestamp(),
+      });
+    });
+  }
+
+  Future<void> submitCollectedPayment({
+    required String bookingId,
+    required String technicianId,
+    required String paymentMode,
+  }) {
+    return confirmCollectedPayment(
+      bookingId: bookingId,
+      technicianId: technicianId,
+      paymentMode: paymentMode,
+    );
+  }
+
+  Future<void> approvePayment({
+    required String bookingId,
+    String? approvedBy,
+  }) async {
+    final billRef = _firestore.collection('bills').doc(bookingId);
+    final bookingRef = _firestore.collection('bookings').doc(bookingId);
+    await _firestore.runTransaction((transaction) async {
+      final bill = await transaction.get(billRef);
+      final booking = await transaction.get(bookingRef);
+      if (!bill.exists || !booking.exists) {
+        throw StateError('Bill or booking not found.');
+      }
+      final billData = bill.data();
+      if (billData == null) throw StateError('Bill not found.');
+      if (billData['isPaid'] == true) {
+        throw StateError('This payment is already approved.');
+      }
+      final paymentMode = billData['paymentMode'] as String?;
+      if (paymentMode == null || paymentMode.trim().isEmpty) {
+        throw StateError('Technician has not submitted payment mode yet.');
+      }
       transaction.update(billRef, {
         'isPaid': true,
         'paidAt': FieldValue.serverTimestamp(),
+        'paymentApprovedAt': FieldValue.serverTimestamp(),
+        'paymentApprovedBy': approvedBy,
+        'updatedAt': FieldValue.serverTimestamp(),
       });
       transaction.update(bookingRef, {
         'status': BookingStatus.closed.name,
         'updatedAt': FieldValue.serverTimestamp(),
       });
     });
+  }
+
+  Future<void> markPaid(String bookingId) {
+    return approvePayment(bookingId: bookingId);
   }
 }

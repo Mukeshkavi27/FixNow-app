@@ -1,12 +1,15 @@
 import 'dart:async';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_map/flutter_map.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:go_router/go_router.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:intl/intl.dart';
+import 'package:latlong2/latlong.dart';
 import 'package:uuid/uuid.dart';
 
 import '../../../app/theme/app_theme.dart';
@@ -15,6 +18,7 @@ import '../../../core/branches/branch_info.dart';
 import '../../../core/branches/branch_repository.dart';
 import '../../../core/branches/branch_resolver.dart';
 import '../../../core/enums/booking_status.dart';
+import '../../../core/maps/google_static_map.dart';
 import '../../../core/services/reverse_geocoding_service.dart';
 import '../../auth/domain/app_user.dart';
 import '../../auth/data/auth_repository.dart';
@@ -42,8 +46,11 @@ class _BookServiceScreenState extends ConsumerState<BookServiceScreen> {
   XFile? _image;
   bool _isSaving = false;
   bool _isLocating = false;
+  bool _isFindingAddressPin = false;
   bool _profileLoaded = false;
   Position? _detectedPosition;
+  bool _addressPinIsApproximate = false;
+  _ConfirmedServiceLocation? _confirmedLocation;
 
   @override
   void didChangeDependencies() {
@@ -61,6 +68,7 @@ class _BookServiceScreenState extends ConsumerState<BookServiceScreen> {
           latitude: user.lastServiceLatitude!,
           longitude: user.lastServiceLongitude!,
         );
+        _addressPinIsApproximate = false;
       }
     }
     _profileLoaded = true;
@@ -81,23 +89,53 @@ class _BookServiceScreenState extends ConsumerState<BookServiceScreen> {
     if (image != null) setState(() => _image = image);
   }
 
-  Future<Position?> _position() async {
+  Future<Position?> _position({bool reportFailure = false}) async {
     try {
-      final enabled = await Geolocator.isLocationServiceEnabled();
-      if (!enabled) return null;
+      if (!kIsWeb) {
+        final enabled = await Geolocator.isLocationServiceEnabled();
+        if (!enabled) {
+          if (reportFailure) {
+            throw StateError('Turn on device location services and try again.');
+          }
+          return null;
+        }
+      }
       var permission = await Geolocator.checkPermission();
       if (permission == LocationPermission.denied) {
         permission = await Geolocator.requestPermission();
       }
-      if (permission == LocationPermission.denied ||
-          permission == LocationPermission.deniedForever) {
+      if (permission == LocationPermission.denied) {
+        if (reportFailure) {
+          throw StateError('Allow location permission to use current location.');
+        }
+        return null;
+      }
+      if (permission == LocationPermission.deniedForever) {
+        if (reportFailure) {
+          throw StateError(
+            'Location is blocked. Enable it from browser or app settings.',
+          );
+        }
         return null;
       }
       return Geolocator.getCurrentPosition().timeout(
-        const Duration(seconds: 5),
+        const Duration(seconds: 15),
         onTimeout: () => throw TimeoutException('Location timed out'),
       );
+    } on TimeoutException {
+      Position? lastKnown;
+      try {
+        lastKnown = await Geolocator.getLastKnownPosition();
+      } catch (_) {
+        lastKnown = null;
+      }
+      if (lastKnown != null) return lastKnown;
+      if (reportFailure) {
+        throw StateError('Location request timed out. Please try again.');
+      }
+      return null;
     } catch (_) {
+      if (reportFailure) rethrow;
       return null;
     }
   }
@@ -105,7 +143,7 @@ class _BookServiceScreenState extends ConsumerState<BookServiceScreen> {
   Future<void> _useCurrentLocation() async {
     setState(() => _isLocating = true);
     try {
-      final position = await _position();
+      final position = await _position(reportFailure: true);
       if (!mounted) return;
       if (position == null) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -129,17 +167,22 @@ class _BookServiceScreenState extends ConsumerState<BookServiceScreen> {
       if (!mounted) return;
       setState(() {
         _detectedPosition = position;
+        _addressPinIsApproximate = false;
         _address.text = resolvedAddress?.trim().isNotEmpty == true
             ? resolvedAddress!.trim()
-            : 'Current location (${position.latitude.toStringAsFixed(5)}, ${position.longitude.toStringAsFixed(5)})';
+            : 'Current location pin selected';
       });
+      await _openLocationPicker(
+        initial: position,
+        initialQuery: resolvedAddress ?? _address.text.trim(),
+      );
+    } catch (error) {
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(
-            resolvedAddress == null
-                ? 'Live location added. Address lookup was unavailable.'
-                : 'Live location converted to address.',
-          ),
+          content: Text(error.toString().replaceFirst('Bad state: ', '')),
+          behavior: SnackBarBehavior.floating,
+          backgroundColor: Colors.red.shade700,
         ),
       );
     } finally {
@@ -158,8 +201,97 @@ class _BookServiceScreenState extends ConsumerState<BookServiceScreen> {
           latitude: user.lastServiceLatitude!,
           longitude: user.lastServiceLongitude!,
         );
+        _addressPinIsApproximate = false;
+        _confirmedLocation = null;
       }
     });
+  }
+
+  Future<Position?> _approximateAddressPosition(String address) async {
+    if (address.trim().isEmpty) return null;
+    try {
+      final result =
+          await ref.read(addressGeocodingServiceProvider).search(address);
+      if (result == null) return null;
+      return _storedPosition(
+        latitude: result.latitude,
+        longitude: result.longitude,
+      );
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<void> _findAddressPin() async {
+    final address = _address.text.trim();
+    if (address.isEmpty) {
+      _formKey.currentState?.validate();
+      return;
+    }
+    setState(() => _isFindingAddressPin = true);
+    try {
+      final position =
+          await _approximateAddressPosition(address) ?? _detectedPosition;
+      if (!mounted) return;
+      if (position == null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'No matching address found. Try area or landmark, or use current location.',
+            ),
+          ),
+        );
+        return;
+      }
+      await _openLocationPicker(initial: position, initialQuery: address);
+    } finally {
+      if (mounted) setState(() => _isFindingAddressPin = false);
+    }
+  }
+
+  Future<void> _adjustPin() async {
+    final initial = _detectedPosition ??
+        await _approximateAddressPosition(_address.text.trim());
+    if (!mounted) return;
+    if (initial == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Find the address first or use current location before adjusting the pin.',
+          ),
+        ),
+      );
+      return;
+    }
+    await _openLocationPicker(initial: initial, initialQuery: _address.text);
+  }
+
+  Future<void> _openLocationPicker({
+    required Position initial,
+    required String initialQuery,
+  }) async {
+    final selected = await showModalBottomSheet<_ConfirmedServiceLocation>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      builder: (sheetContext) => _PinPickerSheet(
+        initial: initial,
+        initialQuery: initialQuery,
+        branches: ref.read(branchesProvider).valueOrNull ??
+            BranchInfo.fallbackBranches,
+      ),
+    );
+    if (selected == null || !mounted) return;
+    setState(() {
+      _detectedPosition = _storedPosition(
+        latitude: selected.latitude,
+        longitude: selected.longitude,
+      );
+      _confirmedLocation = selected;
+      _address.text = selected.displayAddress;
+      _addressPinIsApproximate = false;
+    });
+    _formKey.currentState?.validate();
   }
 
   Future<void> _submit() async {
@@ -170,6 +302,15 @@ class _BookServiceScreenState extends ConsumerState<BookServiceScreen> {
     if (user == null) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Please sign in before booking.')),
+      );
+      return;
+    }
+    if (_confirmedLocation == null ||
+        _confirmedLocation!.serviceArea.trim().isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Please confirm the service location on the map.'),
+        ),
       );
       return;
     }
@@ -189,12 +330,12 @@ class _BookServiceScreenState extends ConsumerState<BookServiceScreen> {
           imageUrl = null;
         }
       }
-      final location = _detectedPosition ?? await _position();
+      final confirmed = _confirmedLocation!;
       final branchResolution = BranchResolver.resolve(
         branches: branches,
-        address: _address.text.trim(),
-        latitude: location?.latitude,
-        longitude: location?.longitude,
+        address: confirmed.displayAddress,
+        latitude: confirmed.latitude,
+        longitude: confirmed.longitude,
       );
       final id = await ref.read(bookingRepositoryProvider).createBooking(
             Booking(
@@ -202,7 +343,7 @@ class _BookServiceScreenState extends ConsumerState<BookServiceScreen> {
               customerId: user.uid,
               customerName: _name.text.trim(),
               phone: _phone.text.trim(),
-              address: _address.text.trim(),
+              address: confirmed.displayAddress,
               applianceType: widget.appliance,
               problemDescription: _problem.text.trim(),
               preferredDate: _date,
@@ -212,8 +353,14 @@ class _BookServiceScreenState extends ConsumerState<BookServiceScreen> {
               imageUrl: imageUrl,
               branchId: branchResolution.branch.id,
               branchName: branchResolution.branch.name,
-              latitude: location?.latitude,
-              longitude: location?.longitude,
+              latitude: confirmed.latitude,
+              longitude: confirmed.longitude,
+              placeId: confirmed.placeId,
+              pincode: confirmed.pincode,
+              city: confirmed.city,
+              stateName: confirmed.state,
+              serviceArea: confirmed.serviceArea,
+              landmark: confirmed.landmark,
             ),
           );
       try {
@@ -224,9 +371,9 @@ class _BookServiceScreenState extends ConsumerState<BookServiceScreen> {
             );
         await ref.read(authRepositoryProvider).updateLastServiceLocation(
               uid: user.uid,
-              address: _address.text.trim(),
-              latitude: location?.latitude,
-              longitude: location?.longitude,
+              address: confirmed.displayAddress,
+              latitude: confirmed.latitude,
+              longitude: confirmed.longitude,
             );
       } catch (_) {
         // Profile updates are conveniences; booking creation already succeeded.
@@ -383,7 +530,11 @@ class _BookServiceScreenState extends ConsumerState<BookServiceScreen> {
                 const SizedBox(height: 12),
                 TextFormField(
                   controller: _address,
-                  onChanged: (_) => setState(() {}),
+                  onChanged: (_) => setState(() {
+                    _detectedPosition = null;
+                    _addressPinIsApproximate = false;
+                    _confirmedLocation = null;
+                  }),
                   decoration: const InputDecoration(
                     labelText: 'Service address',
                     prefixIcon: Icon(Icons.location_on_outlined),
@@ -409,6 +560,27 @@ class _BookServiceScreenState extends ConsumerState<BookServiceScreen> {
                         _isLocating ? 'Detecting...' : 'Use current location',
                       ),
                     ),
+                    OutlinedButton.icon(
+                      onPressed:
+                          _isFindingAddressPin ? null : _findAddressPin,
+                      icon: _isFindingAddressPin
+                          ? const SizedBox.square(
+                              dimension: 16,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : const Icon(Icons.travel_explore_outlined),
+                      label: Text(
+                        _isFindingAddressPin
+                            ? 'Finding...'
+                            : 'Find address pin',
+                      ),
+                    ),
+                    if (_detectedPosition != null)
+                      FilledButton.tonalIcon(
+                        onPressed: _adjustPin,
+                        icon: const Icon(Icons.edit_location_alt_outlined),
+                        label: const Text('Adjust pin'),
+                      ),
                     if (user != null &&
                         savedAddress != null &&
                         savedAddress.isNotEmpty)
@@ -425,6 +597,13 @@ class _BookServiceScreenState extends ConsumerState<BookServiceScreen> {
                     branchName: branchResolution.branch.name,
                     reason: branchResolution.reason,
                     hasLiveLocation: _detectedPosition != null,
+                  ),
+                ],
+                if (_detectedPosition != null) ...[
+                  const SizedBox(height: 10),
+                  _AddressPinPreview(
+                    position: _detectedPosition!,
+                    approximate: _addressPinIsApproximate,
                   ),
                 ],
                 const SizedBox(height: 12),
@@ -794,6 +973,559 @@ class _BranchPreview extends StatelessWidget {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+class _AddressPinPreview extends StatelessWidget {
+  const _AddressPinPreview({
+    required this.position,
+    required this.approximate,
+  });
+
+  final Position position;
+  final bool approximate;
+
+  @override
+  Widget build(BuildContext context) {
+    final point = GoogleMapPoint(
+      latitude: position.latitude,
+      longitude: position.longitude,
+      label: 'H',
+      color: approximate ? const Color(0xFFF08C00) : AppTheme.accent,
+      icon: approximate ? Icons.location_searching : Icons.home_outlined,
+    );
+    return Container(
+      height: 190,
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(
+          color: approximate
+              ? const Color(0xFFFFD8A8)
+              : AppTheme.accent.withValues(alpha: 0.35),
+        ),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: Stack(
+        children: [
+          InAppLiveMap(
+            points: [point],
+            zoom: 15,
+            badge: approximate ? 'Approximate pin' : 'Exact pin',
+          ),
+          Positioned(
+            left: 10,
+            top: 10,
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                color: Colors.white.withValues(alpha: 0.96),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: AppTheme.divider),
+              ),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 7,
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(
+                      approximate
+                          ? Icons.info_outline
+                          : Icons.check_circle_outline,
+                      color: approximate
+                          ? const Color(0xFFF08C00)
+                          : AppTheme.accent,
+                      size: 16,
+                    ),
+                    const SizedBox(width: 6),
+                    Text(
+                      approximate
+                          ? 'Approximate address pin'
+                          : 'Exact current location pin',
+                      style: const TextStyle(
+                        color: AppTheme.textPrimary,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ConfirmedServiceLocation {
+  const _ConfirmedServiceLocation({
+    required this.latitude,
+    required this.longitude,
+    required this.displayAddress,
+    required this.serviceArea,
+    this.placeId,
+    this.pincode,
+    this.city,
+    this.state,
+    this.landmark,
+  });
+
+  final double latitude;
+  final double longitude;
+  final String displayAddress;
+  final String serviceArea;
+  final String? placeId;
+  final String? pincode;
+  final String? city;
+  final String? state;
+  final String? landmark;
+}
+
+class _PinPickerSheet extends ConsumerStatefulWidget {
+  const _PinPickerSheet({
+    required this.initial,
+    required this.initialQuery,
+    required this.branches,
+  });
+
+  final Position initial;
+  final String initialQuery;
+  final List<BranchInfo> branches;
+
+  @override
+  ConsumerState<_PinPickerSheet> createState() => _PinPickerSheetState();
+}
+
+class _PinPickerSheetState extends ConsumerState<_PinPickerSheet> {
+  final _search = TextEditingController();
+  final _mapController = MapController();
+  Timer? _debounce;
+  late LatLng _selected = LatLng(
+    widget.initial.latitude,
+    widget.initial.longitude,
+  );
+  AddressGeocodingResult? _address;
+  List<AddressSearchSuggestion> _suggestions = const [];
+  final _suggestionCache = <String, List<AddressSearchSuggestion>>{};
+  bool _searching = false;
+  bool _resolving = false;
+  String? _message;
+
+  @override
+  void initState() {
+    super.initState();
+    _search.text = widget.initialQuery;
+    _reverseSelected();
+    if (widget.initialQuery.trim().length >= 3) {
+      _loadSuggestions(widget.initialQuery);
+    }
+  }
+
+  @override
+  void dispose() {
+    _debounce?.cancel();
+    _search.dispose();
+    super.dispose();
+  }
+
+  void _onSearchChanged(String value) {
+    _debounce?.cancel();
+    _debounce = Timer(const Duration(milliseconds: 450), () {
+      _loadSuggestions(value);
+    });
+  }
+
+  Future<void> _loadSuggestions(String value) async {
+    final query = value.trim();
+    if (query.length < 3) {
+      if (mounted) setState(() => _suggestions = const []);
+      return;
+    }
+    final cacheKey = query.toLowerCase();
+    final cached = _suggestionCache[cacheKey];
+    if (cached != null) {
+      setState(() {
+        _suggestions = cached;
+        _message = cached.isEmpty
+            ? 'No matching address found. Try area, landmark, or move the map manually.'
+            : null;
+      });
+      return;
+    }
+    setState(() {
+      _searching = true;
+      _message = null;
+    });
+    try {
+      final suggestions =
+          await ref.read(addressSearchServiceProvider).suggestions(query);
+      if (!mounted) return;
+      _suggestionCache[cacheKey] = suggestions;
+      setState(() {
+        _suggestions = suggestions;
+        _message = suggestions.isEmpty
+            ? 'No matching address found. Try area, landmark, or move the map manually.'
+            : null;
+      });
+    } finally {
+      if (mounted) setState(() => _searching = false);
+    }
+  }
+
+  Future<void> _selectSuggestion(AddressSearchSuggestion suggestion) async {
+    setState(() {
+      _resolving = true;
+      _suggestions = const [];
+      _message = null;
+    });
+    try {
+      final result =
+          await ref.read(addressSearchServiceProvider).resolve(suggestion);
+      if (!mounted) return;
+      if (result == null) {
+        setState(() {
+          _message = 'Could not open that result. Move the map manually.';
+        });
+        return;
+      }
+      final point = LatLng(result.latitude, result.longitude);
+      _mapController.move(point, 16);
+      setState(() {
+        _selected = point;
+        _address = result;
+        _search.text = result.displayAddress;
+      });
+    } finally {
+      if (mounted) setState(() => _resolving = false);
+    }
+  }
+
+  Future<void> _reverseSelected() async {
+    setState(() => _resolving = true);
+    try {
+      final result = await ref.read(reverseGeocodingServiceProvider).reverse(
+            latitude: _selected.latitude,
+            longitude: _selected.longitude,
+          );
+      if (!mounted) return;
+      if (result == null) {
+        setState(() {
+          _message = 'Address lookup failed. Move the map or search nearby landmark.';
+        });
+        return;
+      }
+      final enriched =
+          await ref.read(addressGeocodingServiceProvider).search(result.address);
+      if (!mounted) return;
+      setState(() {
+        _address = enriched ??
+            AddressGeocodingResult(
+              latitude: _selected.latitude,
+              longitude: _selected.longitude,
+              formattedAddress: result.address,
+              provider: result.provider,
+            );
+        _search.text = _address!.displayAddress;
+      });
+    } finally {
+      if (mounted) setState(() => _resolving = false);
+    }
+  }
+
+  void _movePin(LatLng point) {
+    setState(() => _selected = point);
+    _reverseSelected();
+  }
+
+  _ConfirmedServiceLocation? _confirmedLocation() {
+    final address = _address;
+    if (address == null) return null;
+    final serviceArea = address.serviceArea ??
+        BranchResolver.resolve(
+          branches: widget.branches,
+          address: address.displayAddress,
+          latitude: _selected.latitude,
+          longitude: _selected.longitude,
+        ).branch.name;
+    if (serviceArea.trim().isEmpty) return null;
+    return _ConfirmedServiceLocation(
+      latitude: _selected.latitude,
+      longitude: _selected.longitude,
+      displayAddress: address.displayAddress,
+      placeId: address.placeId,
+      pincode: address.pincode,
+      city: address.city,
+      state: address.state,
+      serviceArea: serviceArea,
+      landmark: address.landmark,
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final confirmed = _confirmedLocation();
+    final address = _address;
+    return SizedBox(
+      height: MediaQuery.sizeOf(context).height * 0.94,
+      child: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 10, 8, 10),
+            child: Row(
+              children: [
+                const Expanded(
+                  child: Text(
+                    'Confirm service location',
+                    style: TextStyle(
+                      color: AppTheme.textPrimary,
+                      fontSize: 18,
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
+                ),
+                IconButton(
+                  onPressed: () => Navigator.pop(context),
+                  icon: const Icon(Icons.close),
+                  tooltip: 'Close',
+                ),
+              ],
+            ),
+          ),
+          Expanded(
+            child: Stack(
+              children: [
+                FlutterMap(
+                  mapController: _mapController,
+                  options: MapOptions(
+                    initialCenter: _selected,
+                    initialZoom: 16,
+                    interactionOptions: const InteractionOptions(
+                      flags: InteractiveFlag.drag |
+                          InteractiveFlag.pinchZoom |
+                          InteractiveFlag.doubleTapZoom,
+                    ),
+                    onTap: (_, point) => _movePin(point),
+                  ),
+                  children: [
+                    TileLayer(
+                      urlTemplate:
+                          'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+                      userAgentPackageName: 'com.fixnow.app',
+                    ),
+                    MarkerLayer(
+                      markers: [
+                        Marker(
+                          point: _selected,
+                          width: 58,
+                          height: 58,
+                          child: const Icon(
+                            Icons.location_pin,
+                            color: AppTheme.accent,
+                            size: 46,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+                Positioned(
+                  left: 14,
+                  right: 14,
+                  top: 14,
+                  child: Column(
+                    children: [
+                      Material(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(12),
+                        elevation: 4,
+                        child: TextField(
+                          controller: _search,
+                          onChanged: _onSearchChanged,
+                          decoration: InputDecoration(
+                            hintText: 'Search building, area, landmark',
+                            prefixIcon: const Icon(Icons.search),
+                            suffixIcon: _searching || _resolving
+                                ? const Padding(
+                                    padding: EdgeInsets.all(14),
+                                    child: SizedBox.square(
+                                      dimension: 16,
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 2,
+                                      ),
+                                    ),
+                                  )
+                                : null,
+                          ),
+                        ),
+                      ),
+                      if (_suggestions.isNotEmpty)
+                        Container(
+                          margin: const EdgeInsets.only(top: 8),
+                          constraints: const BoxConstraints(maxHeight: 220),
+                          decoration: BoxDecoration(
+                            color: Colors.white,
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(color: AppTheme.divider),
+                          ),
+                          child: ListView.separated(
+                            shrinkWrap: true,
+                            itemCount: _suggestions.length,
+                            separatorBuilder: (_, __) =>
+                                const Divider(height: 1),
+                            itemBuilder: (context, index) {
+                              final suggestion = _suggestions[index];
+                              return ListTile(
+                                leading: const Icon(Icons.place_outlined),
+                                title: Text(suggestion.title),
+                                subtitle: Text(
+                                  suggestion.subtitle,
+                                  maxLines: 2,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                                onTap: () => _selectSuggestion(suggestion),
+                              );
+                            },
+                          ),
+                        ),
+                      if (_message != null)
+                        Container(
+                          margin: const EdgeInsets.only(top: 8),
+                          padding: const EdgeInsets.all(10),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFFFF4E6),
+                            borderRadius: BorderRadius.circular(10),
+                            border: Border.all(
+                              color: const Color(0xFFFFD8A8),
+                            ),
+                          ),
+                          child: Text(
+                            _message!,
+                            style: const TextStyle(
+                              color: AppTheme.textPrimary,
+                              fontSize: 12,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+                Positioned(
+                  left: 14,
+                  right: 14,
+                  bottom: 14,
+                  child: _ConfirmAddressCard(
+                    address: address,
+                    serviceArea: confirmed?.serviceArea,
+                    resolving: _resolving,
+                    onConfirm: confirmed == null
+                        ? null
+                        : () => Navigator.pop(context, confirmed),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ConfirmAddressCard extends StatelessWidget {
+  const _ConfirmAddressCard({
+    required this.address,
+    required this.serviceArea,
+    required this.resolving,
+    required this.onConfirm,
+  });
+
+  final AddressGeocodingResult? address;
+  final String? serviceArea;
+  final bool resolving;
+  final VoidCallback? onConfirm;
+
+  @override
+  Widget build(BuildContext context) {
+    final display = address?.displayAddress ?? 'Move the pin to your address';
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.98),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: AppTheme.divider),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.08),
+            blurRadius: 18,
+            offset: const Offset(0, 8),
+          ),
+        ],
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text(
+              'Service Address',
+              style: TextStyle(
+                color: AppTheme.textPrimary,
+                fontSize: 15,
+                fontWeight: FontWeight.w900,
+              ),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              display,
+              maxLines: 4,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                color: AppTheme.textPrimary,
+                height: 1.35,
+              ),
+            ),
+            if ((address?.landmark ?? '').trim().isNotEmpty) ...[
+              const SizedBox(height: 6),
+              Text(
+                'Near: ${address!.landmark}',
+                style: const TextStyle(
+                  color: AppTheme.textSecondary,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ],
+            if ((serviceArea ?? '').trim().isNotEmpty) ...[
+              const SizedBox(height: 6),
+              Text(
+                'Service area: $serviceArea',
+                style: const TextStyle(
+                  color: AppTheme.textSecondary,
+                  fontSize: 12,
+                ),
+              ),
+            ],
+            const SizedBox(height: 12),
+            SizedBox(
+              width: double.infinity,
+              child: FilledButton.icon(
+                onPressed: resolving ? null : onConfirm,
+                icon: resolving
+                    ? const SizedBox.square(
+                        dimension: 16,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.check_circle_outline),
+                label: const Text('Confirm Location'),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

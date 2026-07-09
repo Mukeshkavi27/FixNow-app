@@ -28,6 +28,7 @@ class AppTheme {
 
   static ThemeData get light => ThemeData(
         useMaterial3: true,
+        fontFamily: 'Roboto',
         colorScheme: ColorScheme.fromSeed(
           seedColor: primary,
           brightness: Brightness.light,
@@ -130,6 +131,7 @@ class AppTheme {
 
   static ThemeData get dark => ThemeData(
         useMaterial3: true,
+        fontFamily: 'Roboto',
         brightness: Brightness.dark,
         colorScheme: ColorScheme.fromSeed(
           seedColor: primary,

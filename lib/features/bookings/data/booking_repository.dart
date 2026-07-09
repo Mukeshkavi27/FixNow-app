@@ -14,6 +14,7 @@ const technicianBusyStatuses = {
   BookingStatus.accepted,
   BookingStatus.onTheWay,
   BookingStatus.arrived,
+  BookingStatus.customerConfirmedArrival,
   BookingStatus.estimateSent,
   BookingStatus.estimateRejected,
   BookingStatus.estimateApproved,
@@ -172,6 +173,148 @@ class BookingRepository {
     });
   }
 
+  Future<void> markTechnicianReachedCustomer({
+    required String bookingId,
+    required String technicianId,
+    bool manualOverride = false,
+  }) {
+    final bookingRef = _firestore.collection('bookings').doc(bookingId);
+    final customerNotificationRef =
+        _firestore.collection('notifications').doc();
+    final adminNotificationRef = _firestore.collection('notifications').doc();
+    return _firestore.runTransaction((transaction) async {
+      final snapshot = await transaction.get(bookingRef);
+      final data = snapshot.data();
+      if (data == null) throw StateError('Booking not found.');
+      if (data['technicianId'] != technicianId) {
+        throw StateError('This booking is not assigned to this technician.');
+      }
+      final current =
+          BookingStatus.fromString(data['status'] as String? ?? 'booked');
+      if (current != BookingStatus.onTheWay) {
+        throw StateError('This booking is not currently on the way.');
+      }
+      transaction.update(bookingRef, {
+        'status': BookingStatus.arrived.name,
+        'technicianReachedAt': FieldValue.serverTimestamp(),
+        'technicianReachedByManualOverride': manualOverride,
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+      transaction.set(customerNotificationRef, {
+        'userId': data['customerId'],
+        'bookingId': bookingId,
+        'type': 'technicianReachedCustomer',
+        'title': 'Technician has arrived',
+        'body':
+            '${data['technicianName'] ?? 'Your technician'} has reached your service location.',
+        'isRead': false,
+        'createdAt': FieldValue.serverTimestamp(),
+      });
+      transaction.set(adminNotificationRef, {
+        'userId': 'admin',
+        'bookingId': bookingId,
+        'type': 'technicianReachedCustomer',
+        'title': manualOverride
+            ? 'Technician used manual arrival'
+            : 'Technician reached customer',
+        'body':
+            '${data['technicianName'] ?? 'Technician'} reached ${data['customerName'] ?? 'customer'} for ${data['applianceType'] ?? 'service'}.',
+        'isRead': false,
+        'createdAt': FieldValue.serverTimestamp(),
+      });
+    });
+  }
+
+  Future<void> confirmTechnicianArrival({
+    required String bookingId,
+    required String customerId,
+  }) {
+    final bookingRef = _firestore.collection('bookings').doc(bookingId);
+    final technicianNotificationRef =
+        _firestore.collection('notifications').doc();
+    final adminNotificationRef = _firestore.collection('notifications').doc();
+    return _firestore.runTransaction((transaction) async {
+      final snapshot = await transaction.get(bookingRef);
+      final data = snapshot.data();
+      if (data == null) throw StateError('Booking not found.');
+      if (data['customerId'] != customerId) {
+        throw StateError('You can only confirm your own booking.');
+      }
+      final current =
+          BookingStatus.fromString(data['status'] as String? ?? 'booked');
+      if (current == BookingStatus.customerConfirmedArrival) {
+        throw StateError('Arrival is already confirmed.');
+      }
+      if (current != BookingStatus.arrived) {
+        throw StateError('Technician arrival is not ready for confirmation.');
+      }
+      final technicianId = data['technicianId'] as String?;
+      if (technicianId == null || technicianId.isEmpty) {
+        throw StateError('No technician is assigned to this booking.');
+      }
+      transaction.update(bookingRef, {
+        'status': BookingStatus.customerConfirmedArrival.name,
+        'customerConfirmedArrivalAt': FieldValue.serverTimestamp(),
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+      transaction.set(technicianNotificationRef, {
+        'userId': technicianId,
+        'bookingId': bookingId,
+        'type': 'customerArrivalConfirmed',
+        'title': 'Customer confirmed arrival',
+        'body':
+            '${data['customerName'] ?? 'Customer'} confirmed that you reached the service location.',
+        'isRead': false,
+        'createdAt': FieldValue.serverTimestamp(),
+      });
+      transaction.set(adminNotificationRef, {
+        'userId': 'admin',
+        'bookingId': bookingId,
+        'type': 'customerArrivalConfirmed',
+        'title': 'Technician arrival confirmed',
+        'body':
+            '${data['customerName'] ?? 'Customer'} confirmed ${data['technicianName'] ?? 'the technician'} reached ${data['applianceType'] ?? 'the service'} booking.',
+        'isRead': false,
+        'createdAt': FieldValue.serverTimestamp(),
+      });
+    });
+  }
+
+  Future<void> reportTechnicianNotMet({
+    required String bookingId,
+    required String customerId,
+  }) {
+    final bookingRef = _firestore.collection('bookings').doc(bookingId);
+    final adminNotificationRef = _firestore.collection('notifications').doc();
+    return _firestore.runTransaction((transaction) async {
+      final snapshot = await transaction.get(bookingRef);
+      final data = snapshot.data();
+      if (data == null) throw StateError('Booking not found.');
+      if (data['customerId'] != customerId) {
+        throw StateError('You can only report your own booking.');
+      }
+      final current =
+          BookingStatus.fromString(data['status'] as String? ?? 'booked');
+      if (current != BookingStatus.arrived) {
+        throw StateError('Arrival report is not available now.');
+      }
+      transaction.update(bookingRef, {
+        'customerReportedNotMetAt': FieldValue.serverTimestamp(),
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+      transaction.set(adminNotificationRef, {
+        'userId': 'admin',
+        'bookingId': bookingId,
+        'type': 'customerReportedTechnicianNotMet',
+        'title': 'Customer says technician not met',
+        'body':
+            '${data['customerName'] ?? 'Customer'} says ${data['technicianName'] ?? 'the technician'} has not met them yet.',
+        'isRead': false,
+        'createdAt': FieldValue.serverTimestamp(),
+      });
+    });
+  }
+
   Future<void> addServicePhoto({
     required String bookingId,
     required String stage,
@@ -193,21 +336,6 @@ class BookingRepository {
     required String technicianId,
     required String technicianName,
   }) async {
-    final activeAssignments = await _firestore
-        .collection('bookings')
-        .where('technicianId', isEqualTo: technicianId)
-        .get();
-    final busyBooking = activeAssignments.docs
-        .map(Booking.fromFirestore)
-        .where((booking) => booking.id != bookingId)
-        .where((booking) => isTechnicianBusyStatus(booking.status))
-        .firstOrNull;
-    if (busyBooking != null) {
-      throw StateError(
-        '$technicianName already has an active job. Assign another booking after the current job is completed.',
-      );
-    }
-
     final bookingRef = _firestore.collection('bookings').doc(bookingId);
     final notificationRef = _firestore.collection('notifications').doc();
     await _firestore.runTransaction((transaction) async {
@@ -298,6 +426,56 @@ class BookingRepository {
         'holdReason': holdReason,
         'heldAt': FieldValue.serverTimestamp(),
         'updatedAt': FieldValue.serverTimestamp(),
+      });
+    });
+  }
+
+  Future<void> resumeFromHold({
+    required String bookingId,
+  }) {
+    final bookingRef = _firestore.collection('bookings').doc(bookingId);
+    final technicianNotificationRef =
+        _firestore.collection('notifications').doc();
+    final customerNotificationRef =
+        _firestore.collection('notifications').doc();
+    return _firestore.runTransaction((transaction) async {
+      final snapshot = await transaction.get(bookingRef);
+      final data = snapshot.data();
+      if (data == null) throw StateError('Booking not found.');
+      final current =
+          BookingStatus.fromString(data['status'] as String? ?? 'booked');
+      if (current != BookingStatus.onHold) {
+        throw StateError('Only on-hold bookings can be resumed.');
+      }
+      final technicianId = data['technicianId'] as String?;
+      if (technicianId == null || technicianId.isEmpty) {
+        throw StateError('Assign a technician before resuming this booking.');
+      }
+      transaction.update(bookingRef, {
+        'status': BookingStatus.serviceStarted.name,
+        'holdReason': FieldValue.delete(),
+        'heldAt': FieldValue.delete(),
+        'resumedAt': FieldValue.serverTimestamp(),
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+      transaction.set(technicianNotificationRef, {
+        'userId': technicianId,
+        'bookingId': bookingId,
+        'type': 'bookingResumed',
+        'title': 'Booking resumed',
+        'body':
+            '${data['applianceType'] ?? 'Service'} for ${data['customerName'] ?? 'customer'} has been resumed.',
+        'isRead': false,
+        'createdAt': FieldValue.serverTimestamp(),
+      });
+      transaction.set(customerNotificationRef, {
+        'userId': data['customerId'],
+        'bookingId': bookingId,
+        'type': 'bookingResumed',
+        'title': 'Service resumed',
+        'body': 'Your FixNow service has been resumed.',
+        'isRead': false,
+        'createdAt': FieldValue.serverTimestamp(),
       });
     });
   }

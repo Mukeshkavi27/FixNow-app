@@ -1,22 +1,42 @@
-import 'package:flutter/material.dart';
+import 'dart:async';
 
-class SplashScreen extends StatelessWidget {
+import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
+
+import '../theme/app_theme.dart';
+import 'fixnow_loader.dart';
+
+class SplashScreen extends StatefulWidget {
   const SplashScreen({super.key});
+
+  @override
+  State<SplashScreen> createState() => _SplashScreenState();
+}
+
+class _SplashScreenState extends State<SplashScreen> {
+  Timer? _timer;
+
+  @override
+  void initState() {
+    super.initState();
+    _timer = Timer(const Duration(seconds: 3), () {
+      if (!mounted) return;
+      GoRouter.of(context).refresh();
+    });
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
     return const Scaffold(
+      backgroundColor: AppTheme.background,
       body: Center(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(Icons.home_repair_service_outlined, size: 64),
-            SizedBox(height: 16),
-            Text('FixNow', style: TextStyle(fontSize: 32, fontWeight: FontWeight.w700)),
-            SizedBox(height: 24),
-            CircularProgressIndicator(),
-          ],
-        ),
+        child: FixNowLoader(),
       ),
     );
   }

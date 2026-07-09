@@ -3,7 +3,8 @@ enum BookingStatus {
   technicianAssigned('Technician Assigned'),
   accepted('Accepted'),
   onTheWay('On The Way'),
-  arrived('Technician Started Work'),
+  arrived('Technician Arrived'),
+  customerConfirmedArrival('Arrival Confirmed'),
   estimateSent('Waiting for Customer Approval'),
   estimateRejected('Estimate Rejected'),
   estimateApproved('Customer Approved'),
@@ -29,7 +30,9 @@ enum BookingStatus {
       BookingStatus.technicianAssigned => next == BookingStatus.accepted,
       BookingStatus.accepted => next == BookingStatus.onTheWay,
       BookingStatus.onTheWay => next == BookingStatus.arrived,
-      BookingStatus.arrived => next == BookingStatus.estimateSent,
+      BookingStatus.arrived => next == BookingStatus.customerConfirmedArrival,
+      BookingStatus.customerConfirmedArrival =>
+        next == BookingStatus.estimateSent,
       BookingStatus.estimateSent => next == BookingStatus.estimateApproved ||
           next == BookingStatus.estimateRejected,
       BookingStatus.estimateRejected => next == BookingStatus.estimateSent,

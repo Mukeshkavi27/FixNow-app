@@ -35,7 +35,7 @@ class EstimateRepository {
       final status =
           BookingStatus.fromString(data['status'] as String? ?? 'booked');
       if (data['technicianId'] != estimate.technicianId ||
-          (status != BookingStatus.arrived &&
+          (status != BookingStatus.customerConfirmedArrival &&
               status != BookingStatus.estimateRejected)) {
         throw StateError('Estimate cannot be created for this booking.');
       }
