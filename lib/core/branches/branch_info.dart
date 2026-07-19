@@ -7,6 +7,7 @@ class BranchInfo {
     required this.longitude,
     this.aliases = const [],
     this.radiusMeters = 35000,
+    this.isActive = true,
   });
 
   final String id;
@@ -16,6 +17,7 @@ class BranchInfo {
   final double longitude;
   final List<String> aliases;
   final double radiusMeters;
+  final bool isActive;
   bool get hasCoordinates => latitude != 0 && longitude != 0;
 
   static const fallbackBranches = [
@@ -86,6 +88,7 @@ class BranchInfo {
           .whereType<String>()
           .toList(),
       radiusMeters: (data['radiusMeters'] as num?)?.toDouble() ?? 35000,
+      isActive: data['isActive'] as bool? ?? true,
     );
   }
 
@@ -97,5 +100,6 @@ class BranchInfo {
         'longitude': longitude,
         'aliases': aliases,
         'radiusMeters': radiusMeters,
+        'isActive': isActive,
       };
 }

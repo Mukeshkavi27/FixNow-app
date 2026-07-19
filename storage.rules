@@ -12,8 +12,28 @@ service firebase.storage {
       ).data;
     }
 
-    function isAdmin() {
-      return signedIn() && user().role == 'admin' && user().isActive == true;
+    function isSuperAdmin() {
+      return signedIn()
+        && user().role == 'superAdmin'
+        && user().isActive == true;
+    }
+
+    function isBranchAdmin() {
+      return signedIn()
+        && user().role == 'branchAdmin'
+        && user().isActive == true
+        && user().branchId is string;
+    }
+
+    function userById(userId) {
+      return firestore.get(
+        /databases/(default)/documents/users/$(userId)
+      ).data;
+    }
+
+    function canAdministerBranch(branchId) {
+      return isSuperAdmin()
+        || (isBranchAdmin() && user().branchId == branchId);
     }
 
     function booking(bookingId) {
@@ -24,7 +44,7 @@ service firebase.storage {
 
     function canReadBooking(bookingId) {
       return signedIn()
-        && (isAdmin()
+        && (canAdministerBranch(booking(bookingId).branchId)
           || booking(bookingId).customerId == request.auth.uid
           || booking(bookingId).technicianId == request.auth.uid);
     }
@@ -36,7 +56,9 @@ service firebase.storage {
     }
 
     match /customer_uploads/{userId}/{fileName} {
-      allow read: if signedIn() && (request.auth.uid == userId || isAdmin());
+      allow read: if signedIn()
+        && (request.auth.uid == userId
+          || canAdministerBranch(userById(userId).branchId));
       allow write: if signedIn()
         && request.auth.uid == userId
         && isImageUpload();
@@ -44,7 +66,8 @@ service firebase.storage {
 
     match /attendance/{technicianId}/{fileName} {
       allow read: if signedIn()
-        && (request.auth.uid == technicianId || isAdmin());
+        && (request.auth.uid == technicianId
+          || canAdministerBranch(userById(technicianId).branchId));
       allow write: if signedIn()
         && request.auth.uid == technicianId
         && isImageUpload();
@@ -59,7 +82,9 @@ service firebase.storage {
     }
 
     match /profile_photos/{userId}/{fileName} {
-      allow read: if signedIn() && (request.auth.uid == userId || isAdmin());
+      allow read: if signedIn()
+        && (request.auth.uid == userId
+          || canAdministerBranch(userById(userId).branchId));
       allow write: if signedIn()
         && request.auth.uid == userId
         && isImageUpload();

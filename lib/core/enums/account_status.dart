@@ -7,9 +7,14 @@ enum AccountStatus {
   final String label;
 
   static AccountStatus fromString(String? value) {
-    return AccountStatus.values.firstWhere(
-      (status) => status.name == value,
-      orElse: () => AccountStatus.approved,
-    );
+    final normalized = (value ?? AccountStatus.approved.name)
+        .trim()
+        .toLowerCase()
+        .replaceAll(RegExp(r'[^a-z0-9]+'), '');
+    return switch (normalized) {
+      'pendingapproval' || 'pending' => AccountStatus.pendingApproval,
+      'rejected' => AccountStatus.rejected,
+      _ => AccountStatus.approved,
+    };
   }
 }

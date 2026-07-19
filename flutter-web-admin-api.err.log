@@ -1,0 +1,27 @@
+SocketException: The remote computer refused the network connection (OS Error: The remote computer refused the network connection, errno = 1225), address = localhost, port = 49928
+#0      _NativeSocket.startConnect (dart:io-patch/socket_patch.dart:817:35)
+#1      _RawSocket.startConnect (dart:io-patch/socket_patch.dart:2281:26)
+#2      RawSocket.startConnect (dart:io-patch/socket_patch.dart:41:23)
+#3      Socket._startConnect (dart:io-patch/socket_patch.dart:2542:22)
+#4      Socket.startConnect (dart:io/socket.dart:897:21)
+#5      _ConnectionTarget.connect (dart:_http/http_impl.dart:2699:20)
+#6      _HttpClient._getConnection.connect (dart:_http/http_impl.dart:3193:12)
+#7      _HttpClient._getConnection (dart:_http/http_impl.dart:3198:12)
+#8      _HttpClient._openUrl (dart:_http/http_impl.dart:3021:12)
+#9      _HttpClient.getUrl (dart:_http/http_impl.dart:2868:48)
+#10     ChromeConnection.getUrl (package:webkit_inspection_protocol/webkit_inspection_protocol.dart:108:33)
+#11     ChromeConnection.getTabs (package:webkit_inspection_protocol/webkit_inspection_protocol.dart:53:26)
+#12     DevHandler._startLocalDebugService (package:dwds/src/handlers/dev_handler.dart:177:46)
+#13     DevHandler._createChromeAppServices (package:dwds/src/handlers/dev_handler.dart:303:32)
+<asynchronous suspension>
+#14     DevHandler.loadAppServices (package:dwds/src/handlers/dev_handler.dart:273:23)
+<asynchronous suspension>
+#15     DevHandler.createDebugConnectionForChrome (package:dwds/src/handlers/dev_handler.dart:600:30)
+<asynchronous suspension>
+#16     Dwds.debugConnection (package:dwds/dart_web_debug_service.dart:68:14)
+<asynchronous suspension>
+#17     WebDevFS.connect.<anonymous closure> (package:flutter_tools/src/isolated/devfs_web.dart:160:17)
+<asynchronous suspension>
+
+Failed to establish connection with the application instance in Chrome.
+This can happen if the websocket connection used by the web tooling is unable to correctly establish a connection, for example due to a firewall.

@@ -1,5 +1,3 @@
-import 'dart:async';
-
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:geolocator/geolocator.dart';
@@ -88,26 +86,15 @@ class CustomerDashboardScreen extends ConsumerWidget {
                               const _WelcomeHero(),
                               const SizedBox(height: 18),
                               _SearchBar(
-                                onTap: () => showSearch<String>(
-                                  context: context,
-                                  delegate: _ServiceSearchDelegate(
-                                    services.valueOrNull ??
-                                        AppConstants.applianceCategories,
-                                  ),
-                                ),
+                                onTap: () => context.push('/customer/search'),
                               ),
                               const SizedBox(height: 28),
                               _SectionHeader(
                                 title: 'Appliance services',
                                 subtitle: 'Choose what needs attention today',
                                 action: TextButton(
-                                  onPressed: () => showSearch<String>(
-                                    context: context,
-                                    delegate: _ServiceSearchDelegate(
-                                      services.valueOrNull ??
-                                          AppConstants.applianceCategories,
-                                    ),
-                                  ),
+                                  onPressed: () =>
+                                      context.push('/customer/search'),
                                   child: const Text('Search'),
                                 ),
                               ),
@@ -282,7 +269,7 @@ class _CustomerHeader extends StatelessWidget {
                     ],
                   ),
                   const SizedBox(height: 3),
-                  const _ServiceCityRotator(),
+                  const _ServiceCityLabel(),
                 ],
               ),
             ),
@@ -330,42 +317,21 @@ class _CustomerHeader extends StatelessWidget {
   }
 }
 
-class _ServiceCityRotator extends ConsumerStatefulWidget {
-  const _ServiceCityRotator();
+class _ServiceCityLabel extends ConsumerWidget {
+  const _ServiceCityLabel();
 
   @override
-  ConsumerState<_ServiceCityRotator> createState() =>
-      _ServiceCityRotatorState();
-}
-
-class _ServiceCityRotatorState extends ConsumerState<_ServiceCityRotator> {
-  Timer? _timer;
-  int _index = 0;
-
-  @override
-  void initState() {
-    super.initState();
-    _timer = Timer.periodic(const Duration(seconds: 3), (_) {
-      if (!mounted) return;
-      setState(() => _index += 1);
-    });
-  }
-
-  @override
-  void dispose() {
-    _timer?.cancel();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final cities = (ref.watch(branchesProvider).valueOrNull ?? const [])
-        .where((branch) => !branch.id.startsWith('fallback-'))
-        .map((branch) => branch.city.trim())
-        .where((city) => city.isNotEmpty)
-        .toSet()
-        .toList();
-    final city = cities.isEmpty ? 'your area' : cities[_index % cities.length];
+  Widget build(BuildContext context, WidgetRef ref) {
+    final user = ref.watch(currentUserProvider).valueOrNull;
+    final branches = ref.watch(branchesProvider).valueOrNull ?? const [];
+    final matchingBranches = branches.where(
+      (branch) => branch.id == user?.branchId,
+    );
+    final city = matchingBranches.isNotEmpty
+        ? matchingBranches.first.city
+        : (user?.branchName?.trim().isNotEmpty ?? false)
+            ? user!.branchName!
+            : 'your selected area';
     return Row(
       children: [
         const Icon(
@@ -375,30 +341,14 @@ class _ServiceCityRotatorState extends ConsumerState<_ServiceCityRotator> {
         ),
         const SizedBox(width: 4),
         Flexible(
-          child: AnimatedSwitcher(
-            duration: const Duration(milliseconds: 350),
-            transitionBuilder: (child, animation) {
-              return FadeTransition(
-                opacity: animation,
-                child: SlideTransition(
-                  position: Tween<Offset>(
-                    begin: const Offset(0, .35),
-                    end: Offset.zero,
-                  ).animate(animation),
-                  child: child,
-                ),
-              );
-            },
-            child: Text(
-              'Available in $city',
-              key: ValueKey(city),
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
-                fontSize: 11,
-                fontWeight: FontWeight.w700,
-                color: AppTheme.primary,
-              ),
+          child: Text(
+            'Service branch: $city',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(
+              fontSize: 11,
+              fontWeight: FontWeight.w700,
+              color: AppTheme.primary,
             ),
           ),
         ),
@@ -1424,69 +1374,6 @@ class _LocationSheetState extends ConsumerState<_LocationSheet> {
           ),
         ],
       ),
-    );
-  }
-}
-
-class _ServiceSearchDelegate extends SearchDelegate<String> {
-  _ServiceSearchDelegate(this.services);
-
-  final List<ApplianceCategory> services;
-
-  @override
-  String get searchFieldLabel => 'Search services';
-
-  @override
-  List<Widget> buildActions(BuildContext context) => [
-        if (query.isNotEmpty)
-          IconButton(
-            tooltip: 'Clear',
-            onPressed: () => query = '',
-            icon: const Icon(Icons.close),
-          ),
-      ];
-
-  @override
-  Widget buildLeading(BuildContext context) => IconButton(
-        tooltip: 'Back',
-        onPressed: () => close(context, ''),
-        icon: const Icon(Icons.arrow_back),
-      );
-
-  @override
-  Widget buildResults(BuildContext context) => _results(context);
-
-  @override
-  Widget buildSuggestions(BuildContext context) => _results(context);
-
-  Widget _results(BuildContext context) {
-    final filtered = services
-        .where(
-          (service) =>
-              query.isEmpty ||
-              service.name.toLowerCase().contains(query.toLowerCase()),
-        )
-        .toList();
-    if (filtered.isEmpty) {
-      return const Center(child: Text('No matching service found.'));
-    }
-    return ListView.separated(
-      padding: const EdgeInsets.all(12),
-      itemCount: filtered.length,
-      separatorBuilder: (_, __) => const Divider(),
-      itemBuilder: (context, index) {
-        final service = filtered[index];
-        return ListTile(
-          leading: Icon(_serviceIcon(service.name)),
-          title: Text(service.name),
-          subtitle: Text(service.startingPrice),
-          trailing: const Icon(Icons.chevron_right),
-          onTap: () {
-            close(context, service.name);
-            context.push('/book/${Uri.encodeComponent(service.name)}');
-          },
-        );
-      },
     );
   }
 }

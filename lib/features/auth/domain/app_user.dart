@@ -24,6 +24,18 @@ class AppUser {
     this.lastServiceAddress,
     this.lastServiceLatitude,
     this.lastServiceLongitude,
+    this.approvedAt,
+    this.approvedBy,
+    this.rejectionReason,
+    this.rejectedAt,
+    this.rejectedBy,
+    this.inactivatedAt,
+    this.inactivatedBy,
+    this.inactivationReason,
+    this.reactivatedAt,
+    this.reactivatedBy,
+    this.transferredAt,
+    this.transferredBy,
   });
 
   final String uid;
@@ -45,6 +57,40 @@ class AppUser {
   final String? lastServiceAddress;
   final double? lastServiceLatitude;
   final double? lastServiceLongitude;
+  final DateTime? approvedAt;
+  final String? approvedBy;
+  final String? rejectionReason;
+  final DateTime? rejectedAt;
+  final String? rejectedBy;
+  final DateTime? inactivatedAt;
+  final String? inactivatedBy;
+  final String? inactivationReason;
+  final DateTime? reactivatedAt;
+  final String? reactivatedBy;
+  final DateTime? transferredAt;
+  final String? transferredBy;
+
+  bool get hasValidBranchAssignment =>
+      role != UserRole.branchAdmin || (branchId?.trim().isNotEmpty ?? false);
+
+  String? get accessDenialReason {
+    if (accountStatus == AccountStatus.pendingApproval) {
+      return 'Your account is waiting for approval.';
+    }
+    if (accountStatus == AccountStatus.rejected) {
+      final reason = rejectionReason?.trim();
+      return reason == null || reason.isEmpty
+          ? 'Your account request was rejected. Contact your branch administrator.'
+          : 'Your account request was rejected: $reason';
+    }
+    if (!isActive) {
+      return 'Your account is inactive. Contact your FixNow administrator.';
+    }
+    if (!hasValidBranchAssignment) {
+      return 'This Branch Admin account is not assigned to a branch.';
+    }
+    return null;
+  }
 
   factory AppUser.fromFirestore(DocumentSnapshot<Map<String, dynamic>> doc) {
     final data = doc.data() ?? {};
@@ -69,6 +115,18 @@ class AppUser {
       lastServiceAddress: data['lastServiceAddress'] as String?,
       lastServiceLatitude: (data['lastServiceLatitude'] as num?)?.toDouble(),
       lastServiceLongitude: (data['lastServiceLongitude'] as num?)?.toDouble(),
+      approvedAt: (data['approvedAt'] as Timestamp?)?.toDate(),
+      approvedBy: data['approvedBy'] as String?,
+      rejectionReason: data['rejectionReason'] as String?,
+      rejectedAt: (data['rejectedAt'] as Timestamp?)?.toDate(),
+      rejectedBy: data['rejectedBy'] as String?,
+      inactivatedAt: (data['inactivatedAt'] as Timestamp?)?.toDate(),
+      inactivatedBy: data['inactivatedBy'] as String?,
+      inactivationReason: data['inactivationReason'] as String?,
+      reactivatedAt: (data['reactivatedAt'] as Timestamp?)?.toDate(),
+      reactivatedBy: data['reactivatedBy'] as String?,
+      transferredAt: (data['transferredAt'] as Timestamp?)?.toDate(),
+      transferredBy: data['transferredBy'] as String?,
     );
   }
 
@@ -95,6 +153,21 @@ class AppUser {
       'lastServiceAddress': lastServiceAddress,
       'lastServiceLatitude': lastServiceLatitude,
       'lastServiceLongitude': lastServiceLongitude,
+      'approvedAt': approvedAt == null ? null : Timestamp.fromDate(approvedAt!),
+      'approvedBy': approvedBy,
+      'rejectionReason': rejectionReason,
+      'rejectedAt': rejectedAt == null ? null : Timestamp.fromDate(rejectedAt!),
+      'rejectedBy': rejectedBy,
+      'inactivatedAt':
+          inactivatedAt == null ? null : Timestamp.fromDate(inactivatedAt!),
+      'inactivatedBy': inactivatedBy,
+      'inactivationReason': inactivationReason,
+      'reactivatedAt':
+          reactivatedAt == null ? null : Timestamp.fromDate(reactivatedAt!),
+      'reactivatedBy': reactivatedBy,
+      'transferredAt':
+          transferredAt == null ? null : Timestamp.fromDate(transferredAt!),
+      'transferredBy': transferredBy,
     };
   }
 }

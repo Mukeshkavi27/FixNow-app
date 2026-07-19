@@ -5,6 +5,16 @@ import '../../../core/enums/booking_status.dart';
 import '../../../core/providers/firebase_providers.dart';
 import '../domain/booking.dart';
 
+void validateBookingBranch(Booking booking) {
+  final branchId = booking.branchId?.trim() ?? '';
+  final branchName = booking.branchName?.trim() ?? '';
+  if (branchId.isEmpty || branchName.isEmpty) {
+    throw ArgumentError(
+      'A valid branch must be assigned before creating a booking.',
+    );
+  }
+}
+
 final bookingRepositoryProvider = Provider<BookingRepository>((ref) {
   return BookingRepository(ref.watch(firebaseRefsProvider).firestore);
 });
@@ -84,6 +94,7 @@ class BookingRepository {
   }
 
   Future<String> createBooking(Booking booking) async {
+    validateBookingBranch(booking);
     final doc = _firestore.collection('bookings').doc();
     final data = {
       ...booking.toJson(),
@@ -342,6 +353,18 @@ class BookingRepository {
       final snapshot = await transaction.get(bookingRef);
       final data = snapshot.data();
       if (data == null) throw StateError('Booking not found.');
+      final technicianRef = _firestore.collection('users').doc(technicianId);
+      final technicianSnapshot = await transaction.get(technicianRef);
+      final technician = technicianSnapshot.data();
+      if (technician == null ||
+          technician['role'] != 'technician' ||
+          technician['isActive'] != true ||
+          technician['accountStatus'] != 'approved' ||
+          technician['branchId'] != data['branchId']) {
+        throw StateError(
+          'Technician must be active, approved, and assigned to the booking branch.',
+        );
+      }
       final current =
           BookingStatus.fromString(data['status'] as String? ?? 'booked');
       if (current == BookingStatus.closed ||
@@ -365,6 +388,7 @@ class BookingRepository {
       transaction.set(notificationRef, {
         'userId': technicianId,
         'bookingId': bookingId,
+        'branchId': data['branchId'],
         'type': 'technicianAssignment',
         'title': 'New service assigned',
         'body':
@@ -461,6 +485,7 @@ class BookingRepository {
       transaction.set(technicianNotificationRef, {
         'userId': technicianId,
         'bookingId': bookingId,
+        'branchId': data['branchId'],
         'type': 'bookingResumed',
         'title': 'Booking resumed',
         'body':
@@ -471,6 +496,7 @@ class BookingRepository {
       transaction.set(customerNotificationRef, {
         'userId': data['customerId'],
         'bookingId': bookingId,
+        'branchId': data['branchId'],
         'type': 'bookingResumed',
         'title': 'Service resumed',
         'body': 'Your FixNow service has been resumed.',

@@ -3,6 +3,10 @@
 .flutter-plugins-dependencies
 .packages
 build/
+tracking-server/node_modules/
+tracking-server/.env
+tracking-server/*service*account*.json
+tracking-server/service-account*.json
 android/.gradle/
 android/.kotlin/
 android/local.properties

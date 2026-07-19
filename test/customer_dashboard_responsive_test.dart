@@ -1,8 +1,13 @@
 import 'package:fixnow/core/enums/user_role.dart';
+import 'package:fixnow/core/branches/branch_info.dart';
+import 'package:fixnow/core/branches/branch_repository.dart';
+import 'package:fixnow/core/constants/app_constants.dart';
 import 'package:fixnow/features/auth/data/auth_repository.dart';
 import 'package:fixnow/features/auth/domain/app_user.dart';
 import 'package:fixnow/features/bookings/domain/booking.dart';
 import 'package:fixnow/features/customer/presentation/customer_dashboard_screen.dart';
+import 'package:fixnow/features/customer/presentation/customer_service_search_screen.dart';
+import 'package:fixnow/features/services/data/service_catalog_repository.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -29,6 +34,9 @@ void main() {
       ProviderScope(
         overrides: [
           currentUserProvider.overrideWith((ref) => Stream.value(customer)),
+          branchesProvider.overrideWith(
+            (ref) => Stream.value(const <BranchInfo>[]),
+          ),
           customerBookingsProvider.overrideWith(
             (ref) => Stream.value(<Booking>[]),
           ),
@@ -61,5 +69,31 @@ void main() {
       find.byType(CustomScrollView),
     );
     expect(dashboardSize.width, lessThanOrEqualTo(1180));
+  });
+
+  testWidgets('service search filters as the customer types', (tester) async {
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          serviceCatalogProvider.overrideWith(
+            (ref) => Stream.value(const [
+              ApplianceCategory('Air Conditioner', 'Starting at Rs. 499', ''),
+              ApplianceCategory('Washing Machine', 'Starting at Rs. 399', ''),
+            ]),
+          ),
+        ],
+        child: const MaterialApp(home: CustomerServiceSearchScreen()),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.enterText(
+      find.byKey(const Key('service-search-field')),
+      'washing',
+    );
+    await tester.pump();
+
+    expect(find.text('Washing Machine'), findsOneWidget);
+    expect(find.text('Air Conditioner'), findsNothing);
   });
 }

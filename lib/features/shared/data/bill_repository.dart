@@ -40,8 +40,12 @@ class BillRepository {
             ));
   }
 
-  Stream<List<Bill>> watchAllBills() {
-    return _firestore.collection('bills').snapshots().map(
+  Stream<List<Bill>> watchAllBills({String? branchId}) {
+    Query<Map<String, dynamic>> query = _firestore.collection('bills');
+    if (branchId != null && branchId.isNotEmpty) {
+      query = query.where('branchId', isEqualTo: branchId);
+    }
+    return query.snapshots().map(
           (snapshot) =>
               _sortNewestFirst(snapshot.docs.map(Bill.fromFirestore).toList()),
         );
@@ -74,6 +78,7 @@ class BillRepository {
         'bookingId': bookingId,
         'customerId': customerId,
         'technicianId': technicianId,
+        'branchId': data['branchId'],
         'amount': amount,
         'createdAt': FieldValue.serverTimestamp(),
         'isPaid': false,

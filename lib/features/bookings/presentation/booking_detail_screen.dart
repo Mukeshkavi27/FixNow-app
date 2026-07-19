@@ -1312,14 +1312,22 @@ class _TrackingCard extends ConsumerWidget {
     final isTrackingThisBooking =
         technicianLocation?.activeBookingId == booking.id;
     final isAssigned = booking.technicianName != null;
-    final distanceText = hasMapLocation && hasTechnicianLocation
+    final selectedServiceLatitude = serviceLatitude;
+    final selectedServiceLongitude = serviceLongitude;
+    final selectedTechnicianLocation = technicianLocation;
+    final distanceText = selectedServiceLatitude != null &&
+            selectedServiceLongitude != null &&
+            selectedTechnicianLocation != null
         ? '${(Geolocator.distanceBetween(
-              serviceLatitude!,
-              serviceLongitude!,
-              technicianLocation!.latitude,
-              technicianLocation!.longitude,
+              selectedServiceLatitude,
+              selectedServiceLongitude,
+              selectedTechnicianLocation.latitude,
+              selectedTechnicianLocation.longitude,
             ) / 1000).toStringAsFixed(1)} km direct'
         : null;
+    final trackingUpdatedLabel = selectedTechnicianLocation == null
+        ? null
+        : _trackingUpdatedLabel(selectedTechnicianLocation.updatedAt);
     final title = hasTechnicianLocation && isTrackingThisBooking
         ? '${booking.technicianName ?? 'Technician'} is on the way'
         : hasTechnicianLocation
@@ -1422,8 +1430,7 @@ class _TrackingCard extends ConsumerWidget {
                 ),
                 _TrackingChip(
                   icon: Icons.update,
-                  label:
-                      'Updated ${_trackingUpdatedLabel(technicianLocation!.updatedAt)}',
+                  label: 'Updated $trackingUpdatedLabel',
                   color: AppTheme.accent,
                 ),
               ],
@@ -1434,10 +1441,11 @@ class _TrackingCard extends ConsumerWidget {
             borderRadius: BorderRadius.circular(12),
             child: SizedBox(
               height: 220,
-              child: hasMapLocation
+              child: selectedServiceLatitude != null &&
+                      selectedServiceLongitude != null
                   ? _TrackingMap(
-                      serviceLatitude: serviceLatitude!,
-                      serviceLongitude: serviceLongitude!,
+                      serviceLatitude: selectedServiceLatitude,
+                      serviceLongitude: selectedServiceLongitude,
                       technicianLocation: technicianLocation,
                       activeBookingId: booking.id,
                       approximateServicePin: usingApproximatePin,
@@ -1479,6 +1487,10 @@ class _TrackingMap extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final activeTechnicianLocation =
+        technicianLocation?.activeBookingId == activeBookingId
+            ? technicianLocation
+            : null;
     final servicePoint = GoogleMapPoint(
       latitude: serviceLatitude,
       longitude: serviceLongitude,
@@ -1488,16 +1500,15 @@ class _TrackingMap extends StatelessWidget {
           ? Icons.location_searching
           : Icons.home_repair_service_outlined,
     );
-    final techPoint = technicianLocation == null ||
-            technicianLocation!.activeBookingId != activeBookingId
+    final techPoint = activeTechnicianLocation == null
         ? null
         : GoogleMapPoint(
-            latitude: technicianLocation!.latitude,
-            longitude: technicianLocation!.longitude,
+            latitude: activeTechnicianLocation.latitude,
+            longitude: activeTechnicianLocation.longitude,
             label: 'T',
             color: AppTheme.primary,
             icon: Icons.engineering_outlined,
-            bearing: technicianLocation!.bearing,
+            bearing: activeTechnicianLocation.bearing,
           );
     final points = [
       if (techPoint != null) techPoint,

@@ -9,6 +9,10 @@ import 'package:latlong2/latlong.dart';
 
 import '../../app/theme/app_theme.dart';
 import 'google_maps_config.dart';
+import 'route_recalculation.dart';
+
+bool get _isFlutterTest =>
+    WidgetsBinding.instance.runtimeType.toString().contains('TestWidgets');
 
 class GoogleMapPoint {
   const GoogleMapPoint({
@@ -101,7 +105,8 @@ class GoogleStaticMap extends StatelessWidget {
       params['path'] = [
         'color:0x0B5EEAff',
         'weight:5',
-        ...polylinePoints.map((point) => '${point.latitude},${point.longitude}'),
+        ...polylinePoints
+            .map((point) => '${point.latitude},${point.longitude}'),
       ].join('|');
     }
 
@@ -155,10 +160,11 @@ class OpenStreetMapFallback extends StatelessWidget {
         ),
       ),
       children: [
-        TileLayer(
-          urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-          userAgentPackageName: 'com.fixnow.app',
-        ),
+        if (!_isFlutterTest)
+          TileLayer(
+            urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+            userAgentPackageName: 'com.fixnow.app',
+          ),
         if (polylinePoints.length >= 2)
           PolylineLayer(
             polylines: [
@@ -227,10 +233,12 @@ class InAppLiveMap extends StatelessWidget {
                 ),
               ),
               children: [
-                TileLayer(
-                  urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-                  userAgentPackageName: 'com.fixnow.app',
-                ),
+                if (!_isFlutterTest)
+                  TileLayer(
+                    urlTemplate:
+                        'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+                    userAgentPackageName: 'com.fixnow.app',
+                  ),
                 if (routePolyline.length >= 2)
                   PolylineLayer(
                     polylines: [
@@ -298,12 +306,10 @@ class InAppLiveMap extends StatelessWidget {
     if (cameraPoints.length == 1) {
       return _MapCamera(center: center, zoom: zoom);
     }
-    final mapWidth = constraints.maxWidth.isFinite
-        ? constraints.maxWidth
-        : 360.0;
-    final mapHeight = constraints.maxHeight.isFinite
-        ? constraints.maxHeight
-        : 220.0;
+    final mapWidth =
+        constraints.maxWidth.isFinite ? constraints.maxWidth : 360.0;
+    final mapHeight =
+        constraints.maxHeight.isFinite ? constraints.maxHeight : 220.0;
     final boundsZoom = _zoomForBounds(
       points: cameraPoints,
       width: math.max(120, mapWidth - 64),
@@ -313,8 +319,9 @@ class InAppLiveMap extends StatelessWidget {
   }
 
   LatLng _centerOfLatLng(List<LatLng> points) {
-    final latitude = points.fold<double>(0, (sum, point) => sum + point.latitude) /
-        points.length;
+    final latitude =
+        points.fold<double>(0, (sum, point) => sum + point.latitude) /
+            points.length;
     final longitude =
         points.fold<double>(0, (sum, point) => sum + point.longitude) /
             points.length;
@@ -401,10 +408,16 @@ class RoadRouteSummary {
   const RoadRouteSummary({
     required this.distanceMeters,
     required this.durationSeconds,
+    required this.provider,
+    required this.calculatedAt,
+    this.steps = const [],
   });
 
   final double distanceMeters;
   final double durationSeconds;
+  final String provider;
+  final DateTime calculatedAt;
+  final List<RoadRouteStep> steps;
 
   String get distanceLabel {
     if (distanceMeters < 1000) return '${distanceMeters.round()} m';
@@ -412,6 +425,48 @@ class RoadRouteSummary {
   }
 
   String get durationLabel {
+    final minutes = (durationSeconds / 60).round().clamp(1, 999);
+    if (minutes < 60) return '$minutes min';
+    final hours = minutes ~/ 60;
+    final remaining = minutes % 60;
+    return remaining == 0 ? '${hours}h' : '${hours}h ${remaining}m';
+  }
+
+  DateTime estimatedArrival([DateTime? departure]) =>
+      (departure ?? DateTime.now()).add(
+        Duration(seconds: durationSeconds.round()),
+      );
+
+  String get providerLabel => switch (provider) {
+        'google' => 'Google Maps',
+        'openRouteService' => 'OpenRouteService',
+        _ => 'OSRM fallback',
+      };
+}
+
+class RoadRouteStep {
+  const RoadRouteStep({
+    required this.instruction,
+    required this.distanceMeters,
+    required this.durationSeconds,
+    this.roadName,
+    this.maneuver,
+  });
+
+  final String instruction;
+  final double distanceMeters;
+  final double durationSeconds;
+  final String? roadName;
+  final String? maneuver;
+
+  String get distanceLabel {
+    if (distanceMeters <= 0) return '';
+    if (distanceMeters < 1000) return '${distanceMeters.round()} m';
+    return '${(distanceMeters / 1000).toStringAsFixed(1)} km';
+  }
+
+  String get durationLabel {
+    if (durationSeconds <= 0) return '';
     final minutes = (durationSeconds / 60).round().clamp(1, 999);
     if (minutes < 60) return '$minutes min';
     final hours = minutes ~/ 60;
@@ -432,7 +487,9 @@ class _RoadRouteData {
 
 class _RoadRouteMapState extends State<RoadRouteMap> {
   Future<_RoadRouteData?>? _routeFuture;
-  String? _routeKey;
+  GoogleMapPoint? _routedOrigin;
+  GoogleMapPoint? _routedDestination;
+  DateTime? _routeCalculatedAt;
 
   @override
   void initState() {
@@ -448,17 +505,39 @@ class _RoadRouteMapState extends State<RoadRouteMap> {
 
   void _refreshRoute() {
     final origin = widget.origin;
-    final key = origin == null || !widget.showRouteLine
-        ? null
-        : '${origin.latitude.toStringAsFixed(5)},'
-            '${origin.longitude.toStringAsFixed(5)}-'
-            '${widget.destination.latitude.toStringAsFixed(5)},'
-            '${widget.destination.longitude.toStringAsFixed(5)}';
-    if (key == _routeKey) return;
-    _routeKey = key;
-    _routeFuture = origin == null || !widget.showRouteLine
-        ? Future.value(null)
-        : _fetchRoute(origin);
+    if (origin == null || !widget.showRouteLine) {
+      _routedOrigin = null;
+      _routeCalculatedAt = null;
+      _routeFuture = Future.value(null);
+      return;
+    }
+    final now = DateTime.now();
+    final previousOrigin = _routedOrigin;
+    final previousDestination = _routedDestination;
+    final destinationChanged = previousDestination == null ||
+        navigationDistanceMeters(
+              previousDestination.latitude,
+              previousDestination.longitude,
+              widget.destination.latitude,
+              widget.destination.longitude,
+            ) >=
+            20;
+    final recalculate = previousOrigin == null ||
+        _routeCalculatedAt == null ||
+        destinationChanged ||
+        shouldRecalculateRoadRoute(
+          previousLatitude: previousOrigin.latitude,
+          previousLongitude: previousOrigin.longitude,
+          latitude: origin.latitude,
+          longitude: origin.longitude,
+          calculatedAt: _routeCalculatedAt!,
+          now: now,
+        );
+    if (!recalculate) return;
+    _routedOrigin = origin;
+    _routedDestination = widget.destination;
+    _routeCalculatedAt = now;
+    _routeFuture = _fetchRoute(origin);
   }
 
   Future<_RoadRouteData?> _fetchRoute(GoogleMapPoint origin) async {
@@ -490,9 +569,8 @@ class _RoadRouteMapState extends State<RoadRouteMap> {
       final legs = route['legs'] as List<dynamic>? ?? const [];
       if (legs.isEmpty) return _fetchSecondaryRoute(origin);
       final leg = legs.first as Map<String, dynamic>;
-      final encoded =
-          ((route['overview_polyline'] as Map<String, dynamic>?)?['points'])
-              as String?;
+      final encoded = ((route['overview_polyline']
+          as Map<String, dynamic>?)?['points']) as String?;
       if (encoded == null || encoded.isEmpty) {
         return _fetchSecondaryRoute(origin);
       }
@@ -507,6 +585,9 @@ class _RoadRouteMapState extends State<RoadRouteMap> {
               ((leg['duration'] as Map<String, dynamic>?)?['value'] as num?)
                       ?.toDouble() ??
                   0,
+          provider: 'google',
+          calculatedAt: DateTime.now(),
+          steps: _googleSteps(leg),
         ),
       );
     } catch (_) {
@@ -562,6 +643,9 @@ class _RoadRouteMapState extends State<RoadRouteMap> {
         summary: RoadRouteSummary(
           distanceMeters: (segment['distance'] as num?)?.toDouble() ?? 0,
           durationSeconds: (segment['duration'] as num?)?.toDouble() ?? 0,
+          provider: 'openRouteService',
+          calculatedAt: DateTime.now(),
+          steps: _openRouteServiceSteps(segment),
         ),
       );
     } catch (_) {
@@ -574,7 +658,7 @@ class _RoadRouteMapState extends State<RoadRouteMap> {
       'https://router.project-osrm.org/route/v1/driving/'
       '${origin.longitude},${origin.latitude};'
       '${widget.destination.longitude},${widget.destination.latitude}'
-      '?overview=full&geometries=geojson',
+      '?overview=full&geometries=geojson&steps=true',
     );
     try {
       final response = await http.get(uri).timeout(const Duration(seconds: 8));
@@ -600,6 +684,9 @@ class _RoadRouteMapState extends State<RoadRouteMap> {
         summary: RoadRouteSummary(
           distanceMeters: (route['distance'] as num?)?.toDouble() ?? 0,
           durationSeconds: (route['duration'] as num?)?.toDouble() ?? 0,
+          provider: 'osrm',
+          calculatedAt: DateTime.now(),
+          steps: _osrmSteps(route),
         ),
       );
     } catch (_) {
@@ -633,7 +720,9 @@ class _RoadRouteMapState extends State<RoadRouteMap> {
               zoom: widget.zoom,
               badge: widget.badge,
             ),
-            if (route != null && widget.showRouteLine && widget.showRouteSummary)
+            if (route != null &&
+                widget.showRouteLine &&
+                widget.showRouteSummary)
               Positioned(
                 left: 10,
                 bottom: 10,
@@ -650,6 +739,125 @@ class _RoadRouteMapState extends State<RoadRouteMap> {
       },
     );
   }
+}
+
+List<RoadRouteStep> _googleSteps(Map<String, dynamic> leg) {
+  final steps = leg['steps'] as List<dynamic>? ?? const [];
+  return steps
+      .whereType<Map<String, dynamic>>()
+      .map((step) {
+        final instruction = _plainMapInstruction(
+          step['html_instructions'] as String? ?? 'Continue',
+        );
+        final maneuver = step['maneuver'] as String?;
+        return RoadRouteStep(
+          instruction: instruction,
+          distanceMeters:
+              ((step['distance'] as Map<String, dynamic>?)?['value'] as num?)
+                      ?.toDouble() ??
+                  0,
+          durationSeconds:
+              ((step['duration'] as Map<String, dynamic>?)?['value'] as num?)
+                      ?.toDouble() ??
+                  0,
+          roadName: _roadNameFromInstruction(instruction),
+          maneuver: maneuver,
+        );
+      })
+      .where((step) => step.instruction.trim().isNotEmpty)
+      .toList(growable: false);
+}
+
+List<RoadRouteStep> _openRouteServiceSteps(Map<String, dynamic> segment) {
+  final steps = segment['steps'] as List<dynamic>? ?? const [];
+  return steps
+      .whereType<Map<String, dynamic>>()
+      .map((step) {
+        final instruction =
+            (step['instruction'] ?? 'Continue').toString().trim();
+        final roadName = (step['name'] ?? '').toString().trim();
+        return RoadRouteStep(
+          instruction: instruction,
+          distanceMeters: (step['distance'] as num?)?.toDouble() ?? 0,
+          durationSeconds: (step['duration'] as num?)?.toDouble() ?? 0,
+          roadName: roadName.isEmpty
+              ? _roadNameFromInstruction(instruction)
+              : roadName,
+          maneuver: step['type']?.toString(),
+        );
+      })
+      .where((step) => step.instruction.isNotEmpty)
+      .toList(growable: false);
+}
+
+List<RoadRouteStep> _osrmSteps(Map<String, dynamic> route) {
+  final legs = route['legs'] as List<dynamic>? ?? const [];
+  final firstLeg = legs.isEmpty ? null : legs.first as Map<String, dynamic>?;
+  final steps = firstLeg?['steps'] as List<dynamic>? ?? const [];
+  return steps
+      .whereType<Map<String, dynamic>>()
+      .map((step) {
+        final maneuver = step['maneuver'] as Map<String, dynamic>? ?? const {};
+        final type = (maneuver['type'] ?? 'continue').toString();
+        final modifier = (maneuver['modifier'] ?? '').toString().trim();
+        final roadName = (step['name'] ?? '').toString().trim();
+        return RoadRouteStep(
+          instruction: _osrmInstruction(
+            type: type,
+            modifier: modifier,
+            roadName: roadName,
+          ),
+          distanceMeters: (step['distance'] as num?)?.toDouble() ?? 0,
+          durationSeconds: (step['duration'] as num?)?.toDouble() ?? 0,
+          roadName: roadName.isEmpty ? null : roadName,
+          maneuver: [type, if (modifier.isNotEmpty) modifier].join(':'),
+        );
+      })
+      .where((step) => step.instruction.isNotEmpty)
+      .toList(growable: false);
+}
+
+String _plainMapInstruction(String value) {
+  return value
+      .replaceAll(RegExp(r'<[^>]+>'), ' ')
+      .replaceAll('&nbsp;', ' ')
+      .replaceAll('&amp;', '&')
+      .replaceAll('&quot;', '"')
+      .replaceAll('&#39;', "'")
+      .replaceAll(RegExp(r'\s+'), ' ')
+      .trim();
+}
+
+String? _roadNameFromInstruction(String instruction) {
+  final match = RegExp(r'\b(?:onto|on|toward)\s+(.+)$', caseSensitive: false)
+      .firstMatch(instruction);
+  final value = match?.group(1)?.trim();
+  return value == null || value.isEmpty ? null : value;
+}
+
+String _osrmInstruction({
+  required String type,
+  required String modifier,
+  required String roadName,
+}) {
+  final road = roadName.isEmpty ? '' : ' onto $roadName';
+  return switch (type) {
+    'depart' => roadName.isEmpty ? 'Start driving' : 'Start on $roadName',
+    'arrive' => 'Arrive at the customer location',
+    'turn' => 'Turn ${modifier.isEmpty ? 'ahead' : modifier}$road',
+    'new name' => roadName.isEmpty ? 'Continue ahead' : 'Continue on $roadName',
+    'continue' =>
+      roadName.isEmpty ? 'Continue straight' : 'Continue on $roadName',
+    'merge' => 'Merge ${modifier.isEmpty ? 'ahead' : modifier}$road',
+    'on ramp' => 'Take the ramp${modifier.isEmpty ? '' : ' $modifier'}$road',
+    'off ramp' => 'Take the exit${modifier.isEmpty ? '' : ' $modifier'}$road',
+    'roundabout' ||
+    'rotary' =>
+      'At the roundabout, continue${modifier.isEmpty ? '' : ' $modifier'}$road',
+    _ => roadName.isEmpty
+        ? 'Continue toward destination'
+        : 'Continue on $roadName',
+  };
 }
 
 class _RouteStatusBadge extends StatelessWidget {
@@ -694,14 +902,15 @@ class _RouteStatusBadge extends StatelessWidget {
 class _RouteSummaryBadge extends StatelessWidget {
   const _RouteSummaryBadge({
     required this.summary,
-    this.approximate = false,
   });
 
   final RoadRouteSummary summary;
-  final bool approximate;
 
   @override
   Widget build(BuildContext context) {
+    final arrival = MaterialLocalizations.of(context).formatTimeOfDay(
+      TimeOfDay.fromDateTime(summary.estimatedArrival()),
+    );
     return DecoratedBox(
       decoration: BoxDecoration(
         color: Colors.white.withValues(alpha: 0.94),
@@ -716,8 +925,7 @@ class _RouteSummaryBadge extends StatelessWidget {
             const Icon(Icons.route_outlined, color: AppTheme.primary, size: 16),
             const SizedBox(width: 6),
             Text(
-              '${approximate ? 'Approx ETA' : 'ETA'} '
-              '${summary.durationLabel} - ${summary.distanceLabel}',
+              'ETA ${summary.durationLabel} - arrive $arrival - ${summary.distanceLabel}',
               style: const TextStyle(
                 color: AppTheme.textPrimary,
                 fontSize: 12,

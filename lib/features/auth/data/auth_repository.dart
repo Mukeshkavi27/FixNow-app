@@ -65,6 +65,12 @@ class AuthRepository {
         'Account profile not found for this login. Please contact FixNow admin.',
       );
     }
+    final appUser = AppUser.fromFirestore(profile);
+    final denial = appUser.accessDenialReason;
+    if (denial != null) {
+      await signOut();
+      throw StateError(denial);
+    }
   }
 
   Future<void> createUser({
@@ -128,7 +134,24 @@ class AuthRepository {
       requestLongitude: requestLongitude,
     );
     try {
-      await _firestore.collection('users').doc(uid).set(user.toJson());
+      final batch = _firestore.batch();
+      batch.set(_firestore.collection('users').doc(uid), user.toJson());
+      batch.set(
+          _firestore
+              .collection('notifications')
+              .doc('technician_registration_$uid'),
+          {
+            'userId': 'branch:$branchId',
+            'recipientRole': UserRole.branchAdmin.name,
+            'technicianId': uid,
+            'branchId': branchId,
+            'type': 'technicianRegistration',
+            'title': 'Technician approval requested',
+            'body': '$name requested technician access for $branchName.',
+            'isRead': false,
+            'createdAt': FieldValue.serverTimestamp(),
+          });
+      await batch.commit();
     } catch (_) {
       await credential.user?.delete();
       rethrow;

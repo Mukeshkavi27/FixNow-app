@@ -4,15 +4,44 @@ import express from 'express';
 import http from 'http';
 import { Server } from 'socket.io';
 import { Client as GoogleMapsClient } from '@googlemaps/google-maps-services-js';
+import { FieldValue } from 'firebase-admin/firestore';
+import {
+  authenticateRequest,
+  authenticateSocket,
+  firebaseAuth,
+  firestore,
+} from './firebase-auth.js';
+import { registerSuperAdminRoutes } from './admin-api.js';
+import {
+  normalizeGpsPayload,
+  persistGpsUpdate,
+} from './tracking-persistence.js';
+import {
+  closeOvertimeUpdate,
+  persistOvertimeUpdate,
+} from './overtime.js';
+import {
+  canReuseNavigationRoute,
+  safeNavigationRoute,
+} from './navigation-routing.js';
+import { allowedOriginsFor, httpCorsOptions } from './server-config.js';
+import {
+  canPublishTracking,
+  canViewBookingTracking,
+  hasPermission,
+  permissions,
+  roles,
+} from './rbac.js';
 
 const app = express();
-app.use(cors());
+const allowedCorsOrigins = allowedOriginsFor();
+app.use(cors(httpCorsOptions(allowedCorsOrigins)));
 app.use(express.json());
 
 const httpServer = http.createServer(app);
 const io = new Server(httpServer, {
   cors: {
-    origin: process.env.CORS_ORIGIN?.split(',') ?? '*',
+    origin: allowedCorsOrigins,
     methods: ['GET', 'POST'],
   },
 });
@@ -32,15 +61,57 @@ app.get('/health', (_, res) => {
   res.json({ ok: true, service: 'fixnow-tracking-server' });
 });
 
+app.use('/api', authenticateRequest);
+app.get('/api/session', (req, res) => {
+  res.json({
+    ok: true,
+    user: {
+      uid: req.principal.uid,
+      role: req.principal.role,
+      branchId: req.principal.branchId,
+    },
+  });
+});
+registerSuperAdminRoutes(app, { auth: firebaseAuth, firestore });
+
+io.use(authenticateSocket);
+
 io.on('connection', (socket) => {
-  socket.on('tracking:join-job', ({ jobId }) => {
-    if (!jobId) return;
-    socket.join(jobRoom(jobId));
+  const principal = socket.data.principal;
+
+  socket.on('tracking:join-job', async ({ jobId }, ack) => {
+    try {
+      const booking = await bookingById(jobId);
+      if (!canViewBookingTracking(principal, booking)) {
+        throw new Error('You do not have access to this booking');
+      }
+      socket.join(jobRoom(jobId));
+      ack?.({ ok: true });
+    } catch (error) {
+      ack?.({ ok: false, error: error.message });
+    }
   });
 
-  socket.on('tracking:join-admin', () => {
-    socket.join('admins');
-    socket.emit('tracking:admin-snapshot', [...latestByTechnician.values()]);
+  socket.on('tracking:join-admin', (_, ack) => {
+    const canMonitorAll = hasPermission(
+      principal,
+      permissions.monitorAllTracking,
+    );
+    const canMonitorBranch = hasPermission(
+      principal,
+      permissions.monitorBranchTracking,
+    );
+    if (!canMonitorAll && !canMonitorBranch) {
+      ack?.({ ok: false, error: 'Admin tracking permission is required' });
+      return;
+    }
+    const room = adminRoom(principal);
+    socket.join(room);
+    const snapshot = [...latestByTechnician.values()].filter(
+      (item) => canMonitorAll || item.adminBranchId === principal.branchId,
+    );
+    socket.emit('tracking:admin-snapshot', snapshot);
+    ack?.({ ok: true });
   });
 
   socket.on('tracking:leave-job', ({ jobId }) => {
@@ -50,8 +121,19 @@ io.on('connection', (socket) => {
 
   socket.on('tracking:gps', async (payload, ack) => {
     try {
-      const update = normalizeGpsPayload(payload);
+      const booking = await bookingById(payload?.jobId);
+      if (!canPublishTracking(principal, booking, payload?.technicianId)) {
+        throw new Error('Technician is not assigned to this booking');
+      }
+      const update = normalizeGpsPayload({
+        ...payload,
+        technicianId: principal.uid,
+        customerId: booking.customerId,
+        adminBranchId: booking.branchId,
+      });
       latestByTechnician.set(update.technicianId, update);
+      await persistGpsUpdate(update, firestore);
+      const overtime = await persistOvertimeUpdate(update, firestore);
 
       const route = await routeForUpdate(update);
       const eventNames = geofenceEvents(update, route);
@@ -63,57 +145,63 @@ io.on('connection', (socket) => {
         ...update,
         route,
         notifications: eventNotifications,
+        overtime,
       };
 
       io.to(jobRoom(update.jobId)).emit('tracking:update', broadcast);
-      io.to('admins').emit('tracking:admin-update', broadcast);
+      io.to('admin:global').emit('tracking:admin-update', broadcast);
+      io.to(`admin:branch:${update.adminBranchId}`)
+        .emit('tracking:admin-update', broadcast);
       ack?.({ ok: true, routeVersion: route?.version ?? null });
     } catch (error) {
       ack?.({ ok: false, error: error.message });
     }
   });
 
-  socket.on('tracking:stop', ({ technicianId, jobId }) => {
+  socket.on('tracking:stop', async ({ technicianId, jobId }, ack) => {
+    const booking = await bookingById(jobId).catch(() => null);
+    if (!canPublishTracking(principal, booking, technicianId)) {
+      ack?.({ ok: false, error: 'Technician is not assigned to this booking' });
+      return;
+    }
     if (technicianId) {
       const current = latestByTechnician.get(technicianId);
       if (current) {
+        await closeOvertimeUpdate(current, firestore);
         latestByTechnician.set(technicianId, {
           ...current,
           isOnline: false,
           updatedAt: new Date().toISOString(),
         });
       }
+      await firestore.collection('technician_locations')
+        .doc(String(technicianId)).set({
+          isOnline: false,
+          speed: 0,
+          updatedAt: FieldValue.serverTimestamp(),
+        }, { merge: true });
     }
     if (jobId) {
       io.to(jobRoom(jobId)).emit('tracking:stopped', { technicianId, jobId });
-      io.to('admins').emit('tracking:stopped', { technicianId, jobId });
+      io.to('admin:global').emit('tracking:stopped', { technicianId, jobId });
+      io.to(`admin:branch:${principal.branchId}`)
+        .emit('tracking:stopped', { technicianId, jobId });
     }
+    ack?.({ ok: true });
   });
 });
 
-function normalizeGpsPayload(payload) {
-  const required = ['technicianId', 'jobId', 'latitude', 'longitude'];
-  for (const key of required) {
-    if (payload?.[key] === undefined || payload?.[key] === null) {
-      throw new Error(`Missing ${key}`);
-    }
-  }
-  return {
-    technicianId: String(payload.technicianId),
-    jobId: String(payload.jobId),
-    customerId: payload.customerId ? String(payload.customerId) : null,
-    adminBranchId: payload.adminBranchId ? String(payload.adminBranchId) : null,
-    latitude: Number(payload.latitude),
-    longitude: Number(payload.longitude),
-    destinationLatitude: Number(payload.destinationLatitude),
-    destinationLongitude: Number(payload.destinationLongitude),
-    heading: numberOrNull(payload.heading),
-    bearing: numberOrNull(payload.bearing ?? payload.heading),
-    speed: numberOrNull(payload.speed),
-    accuracy: numberOrNull(payload.accuracy),
-    isOnline: true,
-    updatedAt: payload.timestamp ?? new Date().toISOString(),
-  };
+async function bookingById(jobId) {
+  if (!jobId) throw new Error('Booking ID is required');
+  const snapshot = await firestore.collection('bookings').doc(String(jobId)).get();
+  if (!snapshot.exists) throw new Error('Booking was not found');
+  return { id: snapshot.id, ...snapshot.data() };
+}
+
+function adminRoom(principal) {
+  return principal.role === roles.superAdmin
+    ? 'admin:global'
+    : `admin:branch:${principal.branchId}`;
 }
 
 async function routeForUpdate(update) {
@@ -122,9 +210,15 @@ async function routeForUpdate(update) {
     return null;
   }
   const existing = routeByJob.get(update.jobId);
-  if (existing && canReuseRoute(existing, update)) return existing.route;
+  if (existing && canReuseNavigationRoute(existing, update, {
+    cacheMeters: routeCacheMeters,
+    deviationMeters: routeDeviationMeters,
+  })) return existing.route;
 
-  const route = await fetchGoogleRoute(update);
+  const route = await safeNavigationRoute(
+    () => fetchGoogleRoute(update),
+    (error) => console.warn('Navigation provider failed:', error.message),
+  );
   if (!route) return null;
   const cached = {
     origin: { lat: update.latitude, lng: update.longitude },
@@ -136,25 +230,6 @@ async function routeForUpdate(update) {
   };
   routeByJob.set(update.jobId, cached);
   return route;
-}
-
-function canReuseRoute(existing, update) {
-  const originMove = metersBetween(existing.origin, {
-    lat: update.latitude,
-    lng: update.longitude,
-  });
-  const destinationMove = metersBetween(existing.destination, {
-    lat: update.destinationLatitude,
-    lng: update.destinationLongitude,
-  });
-  if (originMove > routeCacheMeters || destinationMove > routeCacheMeters) {
-    return false;
-  }
-  const distanceToPolyline = minDistanceToPolyline(
-    { lat: update.latitude, lng: update.longitude },
-    existing.route.points,
-  );
-  return distanceToPolyline <= routeDeviationMeters;
 }
 
 async function fetchGoogleRoute(update) {
@@ -216,22 +291,6 @@ function toNotification(eventName, update) {
   };
 }
 
-function minDistanceToPolyline(point, polyline) {
-  if (!polyline?.length) return Infinity;
-  return Math.min(...polyline.map((item) => metersBetween(point, item)));
-}
-
-function metersBetween(a, b) {
-  const earthRadius = 6371000;
-  const lat1 = toRadians(a.lat);
-  const lat2 = toRadians(b.lat);
-  const deltaLat = toRadians(b.lat - a.lat);
-  const deltaLng = toRadians(b.lng - a.lng);
-  const value = Math.sin(deltaLat / 2) ** 2 +
-    Math.cos(lat1) * Math.cos(lat2) * Math.sin(deltaLng / 2) ** 2;
-  return earthRadius * 2 * Math.atan2(Math.sqrt(value), Math.sqrt(1 - value));
-}
-
 function decodePolyline(encoded) {
   const points = [];
   let index = 0;
@@ -262,18 +321,17 @@ function decodePolyline(encoded) {
   return points;
 }
 
-function numberOrNull(value) {
-  const number = Number(value);
-  return Number.isFinite(number) ? number : null;
-}
-
-function toRadians(value) {
-  return value * Math.PI / 180;
-}
-
 function jobRoom(jobId) {
   return `job:${jobId}`;
 }
+
+app.use((error, _req, res, next) => {
+  if (error?.code === 'CORS_ORIGIN_DENIED') {
+    res.status(403).json({ ok: false, error: error.message });
+    return;
+  }
+  next(error);
+});
 
 const port = Number(process.env.PORT ?? 8088);
 httpServer.listen(port, () => {

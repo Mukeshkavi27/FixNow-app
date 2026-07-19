@@ -12,6 +12,7 @@ class TechnicianLocation {
     this.accuracy,
     this.bearing,
     this.isOnline = true,
+    this.branchId,
   });
 
   final String technicianId;
@@ -24,6 +25,7 @@ class TechnicianLocation {
   final double? accuracy;
   final double? bearing;
   final bool isOnline;
+  final String? branchId;
 
   factory TechnicianLocation.fromFirestore(
     DocumentSnapshot<Map<String, dynamic>> doc,
@@ -40,6 +42,7 @@ class TechnicianLocation {
       accuracy: (data['accuracy'] as num?)?.toDouble(),
       bearing: (data['bearing'] as num?)?.toDouble(),
       isOnline: data['isOnline'] as bool? ?? true,
+      branchId: data['branchId'] as String?,
     );
   }
 
@@ -54,5 +57,6 @@ class TechnicianLocation {
         if (accuracy != null) 'accuracy': accuracy,
         if (bearing != null) 'bearing': bearing,
         'isOnline': isOnline,
+        if (branchId != null) 'branchId': branchId,
       };
 }

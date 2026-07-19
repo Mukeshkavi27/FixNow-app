@@ -9,6 +9,7 @@ class Review {
     required this.rating,
     required this.text,
     required this.createdAt,
+    this.branchId,
   });
 
   final String id;
@@ -18,6 +19,7 @@ class Review {
   final int rating;
   final String text;
   final DateTime createdAt;
+  final String? branchId;
 
   factory Review.fromFirestore(
     DocumentSnapshot<Map<String, dynamic>> doc,
@@ -31,6 +33,7 @@ class Review {
       rating: (data['rating'] as num?)?.toInt() ?? 0,
       text: data['text'] as String? ?? '',
       createdAt: (data['createdAt'] as Timestamp?)?.toDate() ?? DateTime.now(),
+      branchId: data['branchId'] as String?,
     );
   }
 
@@ -41,5 +44,6 @@ class Review {
         'rating': rating,
         'text': text,
         'createdAt': Timestamp.fromDate(createdAt),
+        'branchId': branchId,
       };
 }

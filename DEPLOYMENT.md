@@ -2,7 +2,7 @@
 
 ## Android Play Store
 
-1. Run `flutterfire configure` and commit generated Firebase options plus `google-services.json`. The checked-in `firebase_options.dart` only contains working web options; Android and iOS intentionally show a configuration error until their Firebase apps are generated.
+1. Confirm the checked-in Firebase Android options still match project `fixnow-a6515`. Run `flutterfire configure` again whenever the Android application ID changes.
 2. The default Android package is `com.fixnow.app`. To override it, set `FIXNOW_APPLICATION_ID` in `android/local.properties`, as a Gradle property, or as an environment variable.
 3. Add release signing in `android/key.properties`:
 
@@ -15,13 +15,19 @@
 
 4. Add a real Google Maps API key with Android app restrictions by setting `GOOGLE_MAPS_API_KEY` in `android/local.properties`, as a Gradle property, or as an environment variable.
 5. Configure launcher icons and adaptive icon assets.
-6. Build:
+6. Deploy the authenticated tracking/administration service and pass its HTTPS URL at build time. Device-localhost is intentionally not used as a production fallback:
+
+   ```sh
+   flutter build apk --release --dart-define=FIXNOW_ADMIN_API_URL=https://your-service
+   ```
+
+7. Build the Play Store bundle with the same API URL and map keys:
 
    ```sh
    flutter build appbundle --release
    ```
 
-7. Upload the `.aab` to Play Console with privacy policy, data safety, screenshots, and production track settings.
+8. Upload the `.aab` to Play Console with privacy policy, data safety, screenshots, and production track settings.
 
 ## iOS App Store
 
@@ -48,3 +54,4 @@
 - Restrict role assignment. Do not expose admin or technician self-registration in a public production build.
 - Use Firebase App Check, Crashlytics, Performance Monitoring, and Remote Config before public launch.
 - Store payment status and invoices in `bills`; compute revenue from paid bills, not booking state alone.
+- Deploy Firestore rules and the indexes declared in `firestore.indexes.json` together.

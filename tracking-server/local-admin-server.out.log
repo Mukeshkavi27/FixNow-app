@@ -1,0 +1,5 @@
+
+> fixnow-tracking-server@1.0.0 start
+> node src/index.js
+
+FixNow tracking server listening on 8088

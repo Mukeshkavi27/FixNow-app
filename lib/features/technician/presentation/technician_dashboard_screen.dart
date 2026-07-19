@@ -15,6 +15,7 @@ import '../../../app/theme/app_theme.dart';
 import '../../../core/data/app_config_repository.dart';
 import '../../../core/enums/booking_status.dart';
 import '../../../core/maps/google_static_map.dart';
+import '../../../core/maps/route_recalculation.dart';
 import '../../../core/services/face_match_service.dart';
 import '../../../core/services/location_tracking_service.dart';
 import '../../../core/services/reverse_geocoding_service.dart';
@@ -28,7 +29,9 @@ import '../../shared/data/storage_repository.dart';
 import '../../shared/domain/bill.dart';
 import '../data/technician_repository.dart';
 import '../domain/attendance.dart';
+import '../domain/overtime_record.dart';
 import '../domain/technician_location.dart';
+import 'overtime_summary_panel.dart';
 
 final technicianBookingsProvider =
     StreamProvider.autoDispose<List<Booking>>((ref) {
@@ -50,6 +53,15 @@ final technicianAttendanceProvider =
   return ref
       .watch(technicianRepositoryProvider)
       .watchTechnicianAttendance(user.uid);
+});
+
+final technicianOvertimeProvider =
+    StreamProvider.autoDispose<List<OvertimeRecord>>((ref) {
+  final user = ref.watch(currentUserProvider).valueOrNull;
+  if (user == null) return Stream.value(<OvertimeRecord>[]);
+  return ref
+      .watch(technicianRepositoryProvider)
+      .watchTechnicianOvertime(user.uid);
 });
 
 final technicianEstimateProvider =
@@ -165,6 +177,7 @@ class TechnicianDashboardScreen extends ConsumerWidget {
             longitude: position.longitude,
             updatedAt: DateTime.now(),
             activeBookingId: bookingId,
+            branchId: user.branchId,
           ),
         );
     if (context.mounted) {
@@ -181,6 +194,9 @@ class _JobsView extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final bookings = ref.watch(technicianBookingsProvider);
+    final bills = ref.watch(technicianBillsProvider).valueOrNull ?? const [];
+    final overtime =
+        ref.watch(technicianOvertimeProvider).valueOrNull ?? const [];
     return bookings.when(
       data: (items) {
         final active =
@@ -221,6 +237,16 @@ class _JobsView extends ConsumerWidget {
                 padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
                 child: _HeroPanel(active: active.length, done: done),
               ),
+              if (overtime.isNotEmpty)
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
+                  child: OvertimeSummaryPanel(
+                    records: overtime,
+                    bookings: items,
+                    bills: bills,
+                    title: 'Your overtime',
+                  ),
+                ),
               Expanded(
                 child: TabBarView(
                   children: [
@@ -239,8 +265,7 @@ class _JobsView extends ConsumerWidget {
                     _JobTabList(
                       bookings: held,
                       emptyTitle: 'No jobs on hold',
-                      emptyMessage:
-                          'Jobs paused by admin will appear here.',
+                      emptyMessage: 'Jobs paused by admin will appear here.',
                     ),
                   ],
                 ),
@@ -338,7 +363,8 @@ class _TechnicianJobCard extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final repo = ref.read(bookingRepositoryProvider);
+    BookingRepository bookingRepository() =>
+        ref.read(bookingRepositoryProvider);
     final user = ref.watch(currentUserProvider).valueOrNull;
     final estimate =
         ref.watch(technicianEstimateProvider(booking.id)).valueOrNull;
@@ -431,7 +457,7 @@ class _TechnicianJobCard extends ConsumerWidget {
                     onPressed: user == null
                         ? null
                         : () async {
-                            await repo.transitionStatus(
+                            await bookingRepository().transitionStatus(
                               bookingId: booking.id,
                               technicianId: user.uid,
                               expected: BookingStatus.technicianAssigned,
@@ -442,6 +468,7 @@ class _TechnicianJobCard extends ConsumerWidget {
                                 .start(
                                   technicianId: user.uid,
                                   bookingId: booking.id,
+                                  branchId: user.branchId,
                                 );
                           },
                     icon: const Icon(Icons.check_circle_outline),
@@ -450,7 +477,7 @@ class _TechnicianJobCard extends ConsumerWidget {
                   OutlinedButton.icon(
                     onPressed: user == null
                         ? null
-                        : () => repo.rejectAssignment(
+                        : () => bookingRepository().rejectAssignment(
                               bookingId: booking.id,
                               technicianId: user.uid,
                             ),
@@ -462,7 +489,7 @@ class _TechnicianJobCard extends ConsumerWidget {
                   FilledButton.icon(
                     onPressed: () async {
                       if (user == null) return;
-                      await repo.transitionStatus(
+                      await bookingRepository().transitionStatus(
                         bookingId: booking.id,
                         technicianId: user.uid,
                         expected: BookingStatus.accepted,
@@ -471,6 +498,7 @@ class _TechnicianJobCard extends ConsumerWidget {
                       await ref.read(locationTrackingServiceProvider).start(
                             technicianId: user.uid,
                             bookingId: booking.id,
+                            branchId: user.branchId,
                           );
                     },
                     icon: const Icon(Icons.navigation),
@@ -484,6 +512,7 @@ class _TechnicianJobCard extends ConsumerWidget {
                         : () => ref.read(locationTrackingServiceProvider).start(
                               technicianId: user.uid,
                               bookingId: booking.id,
+                              branchId: user.branchId,
                             ),
                     icon: const Icon(Icons.my_location_outlined),
                     label: const Text('Resume tracking'),
@@ -498,13 +527,14 @@ class _TechnicianJobCard extends ConsumerWidget {
                               onPressed: user == null
                                   ? null
                                   : () async {
-                                      await repo.markTechnicianReachedCustomer(
+                                      await bookingRepository()
+                                          .markTechnicianReachedCustomer(
                                         bookingId: booking.id,
                                         technicianId: user.uid,
                                       );
                                       await ref
                                           .read(locationTrackingServiceProvider)
-                                          .stop();
+                                          .finishBooking();
                                     },
                               icon: const Icon(Icons.location_on_outlined),
                               label: const Text('Mark arrived'),
@@ -518,7 +548,8 @@ class _TechnicianJobCard extends ConsumerWidget {
                         onPressed: user == null || !trackingThisBooking
                             ? null
                             : () async {
-                                await repo.markTechnicianReachedCustomer(
+                                await bookingRepository()
+                                    .markTechnicianReachedCustomer(
                                   bookingId: booking.id,
                                   technicianId: user.uid,
                                   manualOverride: true,
@@ -560,7 +591,7 @@ class _TechnicianJobCard extends ConsumerWidget {
                   FilledButton.icon(
                     onPressed: user == null
                         ? null
-                        : () => repo.transitionStatus(
+                        : () => bookingRepository().transitionStatus(
                               bookingId: booking.id,
                               technicianId: user.uid,
                               expected: BookingStatus.estimateApproved,
@@ -573,7 +604,7 @@ class _TechnicianJobCard extends ConsumerWidget {
                   FilledButton.icon(
                     onPressed: () async {
                       if (user == null) return;
-                      await repo.transitionStatus(
+                      await bookingRepository().transitionStatus(
                         bookingId: booking.id,
                         technicianId: user.uid,
                         expected: BookingStatus.serviceStarted,
@@ -1016,103 +1047,85 @@ class _TechnicianJobMap extends ConsumerWidget {
             bearing: technicianLocation!.bearing,
           );
     final trackingActive = technicianLocation?.activeBookingId == booking.id;
+    final gpsIsStale = technicianLocation != null &&
+        isGpsUpdateStale(technicianLocation!.updatedAt);
     final trackingLabel = _technicianMapStatusLabel(
       status: booking.status,
       hasTechnicianLocation: techPoint != null,
       trackingActive: trackingActive,
+      gpsIsStale: gpsIsStale,
     );
     final points = [
       if (techPoint != null) techPoint,
       customerPoint,
     ];
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(10),
-      child: SizedBox(
-        height: 190,
-        child: Stack(
-          fit: StackFit.expand,
-          children: [
-            RoadRouteMap(
-              points: points,
-              origin: techPoint,
-              destination: customerPoint,
-              zoom: techPoint == null ? 15 : 13,
-              badge: usingApproximatePin ? 'Approx route' : 'Live route',
-              noOriginLabel:
-                  usingApproximatePin ? 'Approximate pin shown' : 'Customer pin shown',
-              showRouteSummary: booking.status != BookingStatus.arrived,
-              showRouteLine: booking.status != BookingStatus.arrived,
-            ),
-            Positioned(
-              left: 10,
-              top: 10,
-              child: DecoratedBox(
-                decoration: BoxDecoration(
-                  color: Colors.white.withValues(alpha: 0.94),
-                  borderRadius: BorderRadius.circular(8),
-                  border: Border.all(color: AppTheme.divider),
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        ClipRRect(
+          borderRadius: BorderRadius.circular(10),
+          child: SizedBox(
+            height: 220,
+            child: Stack(
+              fit: StackFit.expand,
+              children: [
+                RoadRouteMap(
+                  points: points,
+                  origin: gpsIsStale ? null : techPoint,
+                  destination: customerPoint,
+                  zoom: techPoint == null ? 15 : 13,
+                  badge: gpsIsStale
+                      ? 'GPS stale'
+                      : usingApproximatePin
+                          ? 'Approx route'
+                          : 'Live route',
+                  noOriginLabel: usingApproximatePin
+                      ? 'Approximate pin shown'
+                      : 'Customer pin shown',
+                  showRouteSummary: booking.status != BookingStatus.arrived,
+                  showRouteLine: booking.status != BookingStatus.arrived,
                 ),
-                child: Padding(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(
-                        Icons.home_repair_service_outlined,
-                        color: usingApproximatePin
-                            ? const Color(0xFFF08C00)
-                            : AppTheme.accent,
-                        size: 16,
-                      ),
-                      const SizedBox(width: 6),
-                      Text(
-                        trackingLabel,
-                        style: const TextStyle(
-                          color: AppTheme.textPrimary,
-                          fontSize: 12,
-                          fontWeight: FontWeight.w800,
-                        ),
-                      ),
-                    ],
+                Positioned(
+                  left: 10,
+                  top: 10,
+                  right: 10,
+                  child: _MapStatusPill(
+                    label: trackingLabel,
+                    color: usingApproximatePin
+                        ? const Color(0xFFF08C00)
+                        : AppTheme.accent,
                   ),
                 ),
-              ),
+              ],
             ),
-            Positioned(
-              right: 10,
-              top: 10,
-              child: IconButton.filledTonal(
+          ),
+        ),
+        const SizedBox(height: 10),
+        Row(
+          children: [
+            Expanded(
+              child: FilledButton.icon(
                 onPressed: () => _showInAppNavigation(
                   context: context,
                   booking: booking,
                   technicianLocation: technicianLocation,
+                  destinationLatitude: serviceLatitude,
+                  destinationLongitude: serviceLongitude,
                   onExternalDirections: onDirections,
                 ),
-                icon: const Icon(Icons.explore_outlined),
-                tooltip: 'Navigate in app',
+                icon: const Icon(Icons.navigation_outlined),
+                label: const Text('Route guidance'),
               ),
             ),
-            if (booking.status == BookingStatus.onTheWay ||
-                booking.status == BookingStatus.accepted)
-              Positioned(
-                left: 10,
-                right: 10,
-                bottom: 10,
-                child: FilledButton.icon(
-                  onPressed: () => _showInAppNavigation(
-                    context: context,
-                    booking: booking,
-                    technicianLocation: technicianLocation,
-                    onExternalDirections: onDirections,
-                  ),
-                  icon: const Icon(Icons.navigation_outlined),
-                  label: const Text('Navigate in app'),
-                ),
-              ),
+            const SizedBox(width: 10),
+            OutlinedButton.icon(
+              onPressed: onDirections,
+              icon: const Icon(Icons.open_in_new, size: 18),
+              label: const Text('Maps'),
+            ),
           ],
         ),
-      ),
+      ],
     );
   }
 
@@ -1120,6 +1133,8 @@ class _TechnicianJobMap extends ConsumerWidget {
     required BuildContext context,
     required Booking booking,
     required TechnicianLocation? technicianLocation,
+    required double destinationLatitude,
+    required double destinationLongitude,
     required VoidCallback onExternalDirections,
   }) {
     showModalBottomSheet<void>(
@@ -1129,6 +1144,8 @@ class _TechnicianJobMap extends ConsumerWidget {
       builder: (sheetContext) => _InAppNavigationSheet(
         booking: booking,
         technicianLocation: technicianLocation,
+        destinationLatitude: destinationLatitude,
+        destinationLongitude: destinationLongitude,
         onExternalDirections: onExternalDirections,
       ),
     );
@@ -1139,11 +1156,15 @@ class _InAppNavigationSheet extends ConsumerStatefulWidget {
   const _InAppNavigationSheet({
     required this.booking,
     required this.technicianLocation,
+    required this.destinationLatitude,
+    required this.destinationLongitude,
     required this.onExternalDirections,
   });
 
   final Booking booking;
   final TechnicianLocation? technicianLocation;
+  final double destinationLatitude;
+  final double destinationLongitude;
   final VoidCallback onExternalDirections;
 
   @override
@@ -1153,6 +1174,47 @@ class _InAppNavigationSheet extends ConsumerStatefulWidget {
 
 class _InAppNavigationSheetState extends ConsumerState<_InAppNavigationSheet> {
   RoadRouteSummary? _routeSummary;
+  bool _recoveringGps = false;
+  String? _gpsRecoveryMessage;
+
+  Future<void> _recoverGps() async {
+    if (_recoveringGps) return;
+    setState(() {
+      _recoveringGps = true;
+      _gpsRecoveryMessage = null;
+    });
+    try {
+      final service = ref.read(locationTrackingServiceProvider);
+      var recovered = await service.recoverNow();
+      if (!recovered) {
+        final user = ref.read(currentUserProvider).valueOrNull;
+        if (user != null) {
+          await service.start(
+            technicianId: user.uid,
+            bookingId: widget.booking.id,
+            branchId: user.branchId,
+          );
+          recovered = true;
+        }
+      }
+      if (mounted) {
+        setState(() {
+          _gpsRecoveryMessage = recovered
+              ? 'Fresh GPS fix received. Route is recalculating.'
+              : 'GPS is still unavailable. Check location services.';
+        });
+      }
+    } catch (_) {
+      if (mounted) {
+        setState(() {
+          _gpsRecoveryMessage =
+              'GPS recovery failed. Check location permission and signal.';
+        });
+      }
+    } finally {
+      if (mounted) setState(() => _recoveringGps = false);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -1168,9 +1230,9 @@ class _InAppNavigationSheetState extends ConsumerState<_InAppNavigationSheet> {
                 .valueOrNull ??
             widget.technicianLocation;
     final customerPoint = GoogleMapPoint(
-      latitude: booking.latitude!,
-      longitude: booking.longitude!,
-      label: 'C',
+      latitude: widget.destinationLatitude,
+      longitude: widget.destinationLongitude,
+      label: 'D',
       color: AppTheme.accent,
       icon: Icons.home_repair_service_outlined,
     );
@@ -1185,12 +1247,14 @@ class _InAppNavigationSheetState extends ConsumerState<_InAppNavigationSheet> {
             bearing: location.bearing,
           );
     final isArrived = booking.status == BookingStatus.arrived;
+    final gpsIsStale = location == null || isGpsUpdateStale(location.updatedAt);
     final speed = location?.speed == null
         ? '0 km/h'
         : '${(location!.speed! * 3.6).round()} km/h';
 
+    final sheetHeight = MediaQuery.sizeOf(context).height * 0.92;
     return SizedBox(
-      height: MediaQuery.sizeOf(context).height * 0.92,
+      height: sheetHeight,
       child: Column(
         children: [
           Padding(
@@ -1215,46 +1279,74 @@ class _InAppNavigationSheetState extends ConsumerState<_InAppNavigationSheet> {
               ],
             ),
           ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+            child: _NavigationHeader(
+              status: isArrived
+                  ? 'Technician has arrived'
+                  : gpsIsStale
+                      ? 'GPS update is stale'
+                      : _routeSummary == null
+                          ? 'Finding best road route'
+                          : 'Technician is arriving',
+              eta: isArrived ? 'Arrived' : _routeSummary?.durationLabel,
+              arrivalTime: isArrived || _routeSummary == null
+                  ? null
+                  : DateFormat.jm().format(
+                      _routeSummary!.estimatedArrival(),
+                    ),
+              distance: _routeSummary?.distanceLabel,
+              speed: speed,
+              updatedAt: location?.updatedAt,
+              routeProvider: _routeSummary?.providerLabel,
+              gpsIsStale: gpsIsStale,
+              isRecoveringGps: _recoveringGps,
+              gpsRecoveryMessage: _gpsRecoveryMessage,
+              onRecoverGps: _recoverGps,
+            ),
+          ),
           Expanded(
-            child: Stack(
+            child: Column(
               children: [
-                RoadRouteMap(
-                  points: [
-                    if (techPoint != null) techPoint,
-                    customerPoint,
-                  ],
-                  origin: techPoint,
-                  destination: customerPoint,
-                  zoom: 17,
-                  badge: 'Navigation',
-                  noOriginLabel: 'Waiting for technician GPS',
-                  showRouteLine: !isArrived,
-                  showRouteSummary: false,
-                  onRouteUpdated: (summary) {
-                    if (!mounted || summary == _routeSummary) return;
-                    setState(() => _routeSummary = summary);
-                  },
-                ),
-                Positioned(
-                  left: 14,
-                  right: 14,
-                  top: 14,
-                  child: _NavigationHeader(
-                    status: isArrived
-                        ? 'Technician has arrived'
-                        : _routeSummary == null
-                            ? 'Finding best road route'
-                            : 'Technician is arriving',
-                    eta: isArrived ? 'Arrived' : _routeSummary?.durationLabel,
-                    distance: _routeSummary?.distanceLabel,
-                    speed: speed,
-                    updatedAt: location?.updatedAt,
+                Expanded(
+                  flex: 5,
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 16),
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(14),
+                      child: RoadRouteMap(
+                        points: [
+                          if (techPoint != null) techPoint,
+                          customerPoint,
+                        ],
+                        origin: gpsIsStale ? null : techPoint,
+                        destination: customerPoint,
+                        zoom: 17,
+                        badge: 'Navigation',
+                        noOriginLabel: gpsIsStale
+                            ? 'GPS stale - route paused'
+                            : 'Waiting for technician GPS',
+                        showRouteLine: !isArrived,
+                        showRouteSummary: false,
+                        onRouteUpdated: (summary) {
+                          if (!mounted || summary == _routeSummary) return;
+                          setState(() => _routeSummary = summary);
+                        },
+                      ),
+                    ),
                   ),
                 ),
-                Positioned(
-                  left: 14,
-                  right: 14,
-                  bottom: 14,
+                Expanded(
+                  flex: 4,
+                  child: _DirectionsPanel(
+                    steps: _routeSummary?.steps ?? const [],
+                    destinationAddress: widget.booking.address,
+                    gpsIsStale: gpsIsStale,
+                    routeLoaded: _routeSummary != null,
+                  ),
+                ),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 8, 16, 14),
                   child: Row(
                     children: [
                       Expanded(
@@ -1265,10 +1357,10 @@ class _InAppNavigationSheetState extends ConsumerState<_InAppNavigationSheet> {
                         ),
                       ),
                       const SizedBox(width: 10),
-                      IconButton.filledTonal(
+                      OutlinedButton.icon(
                         onPressed: widget.onExternalDirections,
                         icon: const Icon(Icons.open_in_new),
-                        tooltip: 'Open Google Maps',
+                        label: const Text('Google Maps'),
                       ),
                     ],
                   ),
@@ -1282,20 +1374,279 @@ class _InAppNavigationSheetState extends ConsumerState<_InAppNavigationSheet> {
   }
 }
 
+class _MapStatusPill extends StatelessWidget {
+  const _MapStatusPill({
+    required this.label,
+    required this.color,
+  });
+
+  final String label;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    return Align(
+      alignment: Alignment.topLeft,
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          color: Colors.white.withValues(alpha: 0.94),
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: AppTheme.divider),
+        ),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.home_repair_service_outlined, color: color, size: 16),
+              const SizedBox(width: 6),
+              ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 260),
+                child: Text(
+                  label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: AppTheme.textPrimary,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _DirectionsPanel extends StatelessWidget {
+  const _DirectionsPanel({
+    required this.steps,
+    required this.destinationAddress,
+    required this.gpsIsStale,
+    required this.routeLoaded,
+  });
+
+  final List<RoadRouteStep> steps;
+  final String destinationAddress;
+  final bool gpsIsStale;
+  final bool routeLoaded;
+
+  @override
+  Widget build(BuildContext context) {
+    final visibleSteps = steps.take(8).toList(growable: false);
+    return Container(
+      margin: const EdgeInsets.fromLTRB(16, 10, 16, 0),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: AppTheme.divider),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.alt_route, color: AppTheme.primary),
+              const SizedBox(width: 8),
+              const Expanded(
+                child: Text(
+                  'Turn-by-turn guidance',
+                  style: TextStyle(
+                    color: AppTheme.textPrimary,
+                    fontWeight: FontWeight.w900,
+                    fontSize: 15,
+                  ),
+                ),
+              ),
+              if (steps.length > visibleSteps.length)
+                Text(
+                  '+${steps.length - visibleSteps.length}',
+                  style: const TextStyle(
+                    color: AppTheme.textSecondary,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          if (gpsIsStale)
+            const _GuidanceMessage(
+              icon: Icons.gps_off_outlined,
+              text: 'Refresh GPS to resume live directions.',
+            )
+          else if (!routeLoaded)
+            const _GuidanceMessage(
+              icon: Icons.route_outlined,
+              text: 'Finding the best road route...',
+            )
+          else if (visibleSteps.isEmpty)
+            _GuidanceMessage(
+              icon: Icons.flag_outlined,
+              text:
+                  'Route is ready. Continue to the customer address: $destinationAddress',
+            )
+          else
+            Expanded(
+              child: ListView.separated(
+                padding: EdgeInsets.zero,
+                itemCount: visibleSteps.length,
+                separatorBuilder: (_, __) => const Divider(height: 14),
+                itemBuilder: (context, index) => _DirectionStepTile(
+                  step: visibleSteps[index],
+                  index: index,
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+class _GuidanceMessage extends StatelessWidget {
+  const _GuidanceMessage({
+    required this.icon,
+    required this.text,
+  });
+
+  final IconData icon;
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    return Expanded(
+      child: Center(
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, color: AppTheme.textSecondary),
+            const SizedBox(width: 8),
+            Flexible(
+              child: Text(
+                text,
+                textAlign: TextAlign.center,
+                style: const TextStyle(
+                  color: AppTheme.textSecondary,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _DirectionStepTile extends StatelessWidget {
+  const _DirectionStepTile({
+    required this.step,
+    required this.index,
+  });
+
+  final RoadRouteStep step;
+  final int index;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        CircleAvatar(
+          radius: 15,
+          backgroundColor: index == 0
+              ? AppTheme.primary
+              : AppTheme.primary.withValues(alpha: 0.10),
+          child: Icon(
+            _directionIcon(step),
+            size: 17,
+            color: index == 0 ? Colors.white : AppTheme.primary,
+          ),
+        ),
+        const SizedBox(width: 10),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                step.instruction,
+                style: const TextStyle(
+                  color: AppTheme.textPrimary,
+                  fontWeight: FontWeight.w900,
+                ),
+              ),
+              const SizedBox(height: 3),
+              Wrap(
+                spacing: 8,
+                runSpacing: 4,
+                children: [
+                  if (step.distanceLabel.isNotEmpty)
+                    Text(
+                      step.distanceLabel,
+                      style: const TextStyle(color: AppTheme.textSecondary),
+                    ),
+                  if (step.durationLabel.isNotEmpty)
+                    Text(
+                      step.durationLabel,
+                      style: const TextStyle(color: AppTheme.textSecondary),
+                    ),
+                  if (step.roadName != null && step.roadName!.isNotEmpty)
+                    Text(
+                      'via ${step.roadName}',
+                      style: const TextStyle(color: AppTheme.textSecondary),
+                    ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  IconData _directionIcon(RoadRouteStep step) {
+    final text = '${step.maneuver ?? ''} ${step.instruction}'.toLowerCase();
+    if (text.contains('arrive')) return Icons.flag_outlined;
+    if (text.contains('left')) return Icons.turn_left;
+    if (text.contains('right')) return Icons.turn_right;
+    if (text.contains('roundabout')) return Icons.roundabout_right;
+    if (text.contains('merge') || text.contains('ramp')) {
+      return Icons.ramp_right;
+    }
+    return Icons.straight;
+  }
+}
+
 class _NavigationHeader extends StatelessWidget {
   const _NavigationHeader({
     required this.status,
     required this.eta,
+    required this.arrivalTime,
     required this.distance,
     required this.speed,
     required this.updatedAt,
+    required this.routeProvider,
+    required this.gpsIsStale,
+    required this.isRecoveringGps,
+    required this.gpsRecoveryMessage,
+    required this.onRecoverGps,
   });
 
   final String status;
   final String? eta;
+  final String? arrivalTime;
   final String? distance;
   final String speed;
   final DateTime? updatedAt;
+  final String? routeProvider;
+  final bool gpsIsStale;
+  final bool isRecoveringGps;
+  final String? gpsRecoveryMessage;
+  final VoidCallback onRecoverGps;
 
   @override
   Widget build(BuildContext context) {
@@ -1326,6 +1677,58 @@ class _NavigationHeader extends StatelessWidget {
                 fontSize: 15,
               ),
             ),
+            if (gpsIsStale) ...[
+              const SizedBox(height: 8),
+              Container(
+                padding: const EdgeInsets.all(9),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFFFF1F0),
+                  borderRadius: BorderRadius.circular(9),
+                  border: Border.all(color: const Color(0xFFFFB4AB)),
+                ),
+                child: Row(
+                  children: [
+                    const Icon(
+                      Icons.gps_off_outlined,
+                      color: Color(0xFFB3261E),
+                      size: 18,
+                    ),
+                    const SizedBox(width: 8),
+                    const Expanded(
+                      child: Text(
+                        'The last GPS point is over 90 seconds old. Navigation will resume after a fresh fix.',
+                        style: TextStyle(
+                          color: Color(0xFF8C1D18),
+                          fontSize: 12,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ),
+                    TextButton.icon(
+                      onPressed: isRecoveringGps ? null : onRecoverGps,
+                      icon: isRecoveringGps
+                          ? const SizedBox.square(
+                              dimension: 14,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : const Icon(Icons.refresh, size: 17),
+                      label: const Text('Refresh GPS'),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+            if (gpsRecoveryMessage != null) ...[
+              const SizedBox(height: 6),
+              Text(
+                gpsRecoveryMessage!,
+                style: const TextStyle(
+                  color: AppTheme.textSecondary,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ],
             const SizedBox(height: 10),
             Wrap(
               spacing: 8,
@@ -1339,6 +1742,11 @@ class _NavigationHeader extends StatelessWidget {
                           ? 'Arrived'
                           : '$eta away',
                 ),
+                if (arrivalTime != null)
+                  _NavigationChip(
+                    icon: Icons.schedule_outlined,
+                    label: 'Arrive by $arrivalTime',
+                  ),
                 _NavigationChip(
                   icon: Icons.route_outlined,
                   label: distance ?? 'Route loading',
@@ -1352,6 +1760,19 @@ class _NavigationHeader extends StatelessWidget {
                     icon: Icons.update,
                     label: _trackingUpdatedLabel(updatedAt!),
                   ),
+                if (routeProvider != null)
+                  _NavigationChip(
+                    icon: Icons.map_outlined,
+                    label: '$routeProvider route',
+                  ),
+                const _NavigationChip(
+                  icon: Icons.my_location,
+                  label: 'Current location',
+                ),
+                const _NavigationChip(
+                  icon: Icons.location_on_outlined,
+                  label: 'Destination',
+                ),
               ],
             ),
           ],
@@ -1412,7 +1833,9 @@ String _technicianMapStatusLabel({
   required BookingStatus status,
   required bool hasTechnicianLocation,
   required bool trackingActive,
+  bool gpsIsStale = false,
 }) {
+  if (gpsIsStale) return 'GPS stale - refresh navigation';
   if (status == BookingStatus.arrived) return 'Arrived at customer location';
   if (status == BookingStatus.customerConfirmedArrival) {
     return 'Arrival confirmed';
@@ -1424,7 +1847,9 @@ String _technicianMapStatusLabel({
   }
   if (trackingActive) return 'Live route active';
   if (hasTechnicianLocation) return 'Last known route';
-  if (status == BookingStatus.accepted) return 'Tap Start journey for live route';
+  if (status == BookingStatus.accepted) {
+    return 'Tap Start journey for live route';
+  }
   return 'Customer location';
 }
 
@@ -1612,11 +2037,11 @@ class _AttendanceViewState extends ConsumerState<_AttendanceView> {
                 faceMatchPassed: false,
                 geofencePassed: geofencePassed,
                 faceMatchScore: match.score,
+                branchId: user.branchId,
               ),
             );
         _setViewState(() {
-          _result =
-              'Face ID did not match. Admin can see this failed attempt.';
+          _result = 'Face ID did not match. Admin can see this failed attempt.';
         });
         return;
       }
@@ -1634,13 +2059,24 @@ class _AttendanceViewState extends ConsumerState<_AttendanceView> {
               faceMatchPassed: true,
               geofencePassed: geofencePassed,
               faceMatchScore: match.score,
+              branchId: user.branchId,
             ),
           );
+
+      var trackingMessage = ' GPS tracking is active from 9:20 AM to 10:00 PM.';
+      try {
+        await ref.read(locationTrackingServiceProvider).startWorkingDay(
+              technicianId: user.uid,
+              branchId: user.branchId,
+            );
+      } catch (error) {
+        trackingMessage = ' GPS tracking could not start: $error';
+      }
 
       _setViewState(() {
         _marked = true;
         _result =
-            '$attendanceStatusLabel marked for today. Face ID score ${(match.score * 100).round()}%.';
+            '$attendanceStatusLabel marked for today. Face ID score ${(match.score * 100).round()}%.$trackingMessage';
       });
     } catch (e) {
       _setViewState(() {

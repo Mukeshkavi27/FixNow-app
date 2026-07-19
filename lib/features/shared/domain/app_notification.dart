@@ -10,6 +10,9 @@ class AppNotification {
     required this.createdAt,
     required this.isRead,
     this.bookingId,
+    this.branchId,
+    this.recipientRole,
+    this.technicianId,
   });
 
   final String id;
@@ -20,6 +23,9 @@ class AppNotification {
   final DateTime createdAt;
   final bool isRead;
   final String? bookingId;
+  final String? branchId;
+  final String? recipientRole;
+  final String? technicianId;
 
   factory AppNotification.fromFirestore(
     DocumentSnapshot<Map<String, dynamic>> doc,
@@ -34,6 +40,9 @@ class AppNotification {
       createdAt: (data['createdAt'] as Timestamp?)?.toDate() ?? DateTime.now(),
       isRead: data['isRead'] as bool? ?? false,
       bookingId: data['bookingId'] as String?,
+      branchId: data['branchId'] as String?,
+      recipientRole: data['recipientRole'] as String?,
+      technicianId: data['technicianId'] as String?,
     );
   }
 }

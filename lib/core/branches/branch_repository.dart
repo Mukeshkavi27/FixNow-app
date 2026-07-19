@@ -2,6 +2,8 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../providers/firebase_providers.dart';
+import '../../features/auth/data/auth_repository.dart';
+import '../enums/user_role.dart';
 import 'branch_info.dart';
 
 final branchRepositoryProvider = Provider<BranchRepository>((ref) {
@@ -9,7 +11,12 @@ final branchRepositoryProvider = Provider<BranchRepository>((ref) {
 });
 
 final branchesProvider = StreamProvider.autoDispose<List<BranchInfo>>((ref) {
-  return ref.watch(branchRepositoryProvider).watchBranches();
+  final user = ref.watch(currentUserProvider).valueOrNull;
+  final branchId = user?.role == UserRole.branchAdmin ? user?.branchId : null;
+  return ref.watch(branchRepositoryProvider).watchBranches(
+        branchId: branchId,
+        fallbackWhenEmpty: user?.role != UserRole.branchAdmin,
+      );
 });
 
 class BranchRepository {
@@ -20,14 +27,25 @@ class BranchRepository {
   CollectionReference<Map<String, dynamic>> get _branches =>
       _firestore.collection('branches');
 
-  Stream<List<BranchInfo>> watchBranches() {
-    return _branches.orderBy('name').snapshots().map(
+  Stream<List<BranchInfo>> watchBranches({
+    String? branchId,
+    bool fallbackWhenEmpty = true,
+  }) {
+    Query<Map<String, dynamic>> query = _branches;
+    if (branchId != null && branchId.isNotEmpty) {
+      query = query.where(FieldPath.documentId, isEqualTo: branchId);
+    } else {
+      query = query.orderBy('name');
+    }
+    return query.snapshots().map(
       (snapshot) {
         final branches = snapshot.docs
             .map((doc) => BranchInfo.fromJson(doc.id, doc.data()))
             .where((branch) => branch.name.isNotEmpty && branch.city.isNotEmpty)
             .toList();
-        return branches.isEmpty ? BranchInfo.fallbackBranches : branches;
+        return branches.isEmpty && fallbackWhenEmpty
+            ? BranchInfo.fallbackBranches
+            : branches;
       },
     );
   }
@@ -42,6 +60,7 @@ class BranchRepository {
       longitude: branch.longitude,
       aliases: branch.aliases,
       radiusMeters: branch.radiusMeters,
+      isActive: branch.isActive,
     );
     await doc.set(savedBranch.toJson());
   }

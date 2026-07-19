@@ -1,12 +1,17 @@
+// ignore_for_file: unused_element, unused_element_parameter
+
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
+import 'package:latlong2/latlong.dart';
 import 'package:uuid/uuid.dart';
 
 import '../../../app/theme/app_theme.dart';
-import '../../../app/widgets/app_scaffold.dart';
+import '../../../app/widgets/fixnow_admin_shell.dart';
 import '../../../core/branches/branch_info.dart';
 import '../../../core/branches/branch_repository.dart';
 import '../../../core/branches/branch_resolver.dart';
@@ -19,42 +24,108 @@ import '../../auth/domain/app_user.dart';
 import '../../bookings/data/booking_repository.dart';
 import '../../bookings/domain/booking.dart';
 import '../../shared/data/bill_repository.dart';
+import '../../shared/data/notification_repository.dart';
+import '../../shared/data/review_repository.dart';
 import '../../shared/domain/bill.dart';
+import '../../shared/domain/app_notification.dart';
+import '../../shared/domain/review.dart';
+import '../../shared/presentation/revenue_dashboard.dart';
+import '../../shared/presentation/technician_performance_dashboard.dart';
 import '../../technician/data/technician_repository.dart';
 import '../../technician/domain/attendance.dart';
+import '../../technician/domain/overtime_record.dart';
 import '../../technician/domain/technician_location.dart';
+import '../../technician/domain/technician_travel.dart';
+import '../../technician/presentation/overtime_summary_panel.dart';
 import '../data/admin_repository.dart';
 import '../../bookings/presentation/booking_detail_screen.dart';
 import 'admin_dashboard_support.dart';
 
 final allBookingsProvider = StreamProvider.autoDispose<List<Booking>>((ref) {
-  return ref.watch(bookingRepositoryProvider).watchAllBookings();
+  final admin = ref.watch(currentUserProvider).valueOrNull;
+  final branchId = admin?.role == UserRole.branchAdmin ? admin?.branchId : null;
+  return ref
+      .watch(bookingRepositoryProvider)
+      .watchAllBookings(branchId: branchId);
 });
 
 final techniciansProvider = StreamProvider.autoDispose<List<AppUser>>((ref) {
-  return ref.watch(adminRepositoryProvider).watchTechnicians();
+  final admin = ref.watch(currentUserProvider).valueOrNull;
+  final branchId = admin?.role == UserRole.branchAdmin ? admin?.branchId : null;
+  return ref
+      .watch(adminRepositoryProvider)
+      .watchTechnicians(branchId: branchId);
 });
 
 final customersProvider = StreamProvider.autoDispose<List<AppUser>>((ref) {
-  return ref.watch(adminRepositoryProvider).watchCustomers();
+  final admin = ref.watch(currentUserProvider).valueOrNull;
+  final branchId = admin?.role == UserRole.branchAdmin ? admin?.branchId : null;
+  return ref.watch(adminRepositoryProvider).watchCustomers(branchId: branchId);
 });
 
 final allBillsProvider = StreamProvider.autoDispose<List<Bill>>((ref) {
-  return ref.watch(billRepositoryProvider).watchAllBills();
+  final admin = ref.watch(currentUserProvider).valueOrNull;
+  final branchId = admin?.role == UserRole.branchAdmin ? admin?.branchId : null;
+  return ref.watch(billRepositoryProvider).watchAllBills(branchId: branchId);
+});
+
+final allReviewsProvider = StreamProvider.autoDispose<List<Review>>((ref) {
+  final admin = ref.watch(currentUserProvider).valueOrNull;
+  final branchId = admin?.role == UserRole.branchAdmin ? admin?.branchId : null;
+  return ref
+      .watch(reviewRepositoryProvider)
+      .watchAllReviews(branchId: branchId);
 });
 
 final activeTechnicianLocationsProvider =
     StreamProvider.autoDispose<List<TechnicianLocation>>((ref) {
-  return ref.watch(technicianRepositoryProvider).watchActiveLocations();
+  final admin = ref.watch(currentUserProvider).valueOrNull;
+  final branchId = admin?.role == UserRole.branchAdmin ? admin?.branchId : null;
+  return ref
+      .watch(technicianRepositoryProvider)
+      .watchActiveLocations(branchId: branchId);
+});
+
+final technicianTravelHistoryProvider = StreamProvider.autoDispose
+    .family<List<TechnicianLocation>, String>((ref, technicianId) {
+  return ref
+      .watch(technicianRepositoryProvider)
+      .watchTravelHistory(technicianId);
+});
+
+final adminOvertimeProvider =
+    StreamProvider.autoDispose<List<OvertimeRecord>>((ref) {
+  final admin = ref.watch(currentUserProvider).valueOrNull;
+  final branchId = admin?.role == UserRole.branchAdmin ? admin?.branchId : null;
+  return ref
+      .watch(technicianRepositoryProvider)
+      .watchOvertime(branchId: branchId);
 });
 
 final attendanceProvider = StreamProvider.autoDispose<List<Attendance>>((ref) {
-  return ref.watch(technicianRepositoryProvider).watchAttendance();
+  final admin = ref.watch(currentUserProvider).valueOrNull;
+  final branchId = admin?.role == UserRole.branchAdmin ? admin?.branchId : null;
+  return ref
+      .watch(technicianRepositoryProvider)
+      .watchAttendance(branchId: branchId);
 });
 
 final pendingTechnicianRequestsProvider =
     StreamProvider.autoDispose<List<AppUser>>((ref) {
-  return ref.watch(adminRepositoryProvider).watchPendingTechnicianRequests();
+  final admin = ref.watch(currentUserProvider).valueOrNull;
+  final branchId = admin?.role == UserRole.branchAdmin ? admin?.branchId : null;
+  return ref
+      .watch(adminRepositoryProvider)
+      .watchPendingTechnicianRequests(branchId: branchId);
+});
+
+final branchApprovalNotificationsProvider =
+    StreamProvider.autoDispose<List<AppNotification>>((ref) {
+  final branchId = ref.watch(currentUserProvider).valueOrNull?.branchId;
+  if (branchId == null || branchId.isEmpty) return Stream.value(const []);
+  return ref
+      .watch(notificationRepositoryProvider)
+      .watchBranchApprovalNotifications(branchId);
 });
 
 const _idleTechnicianThreshold = Duration(minutes: 15);
@@ -71,8 +142,9 @@ String _registeredTechnicianName(AppUser technician) {
 enum _AdminTab {
   overview('Overview', Icons.dashboard_outlined),
   bookings('Bookings', Icons.assignment_outlined),
-  attendance('Attendance', Icons.fact_check_outlined),
-  revenue('Revenue', Icons.currency_rupee),
+  attendance('Technicians', Icons.engineering_outlined),
+  performance('Performance', Icons.leaderboard_outlined),
+  revenue('Revenue & reports', Icons.assessment_outlined),
   monitoring('Monitoring', Icons.location_searching_outlined);
 
   const _AdminTab(this.label, this.icon);
@@ -91,7 +163,12 @@ enum _BookingSegment {
 }
 
 class AdminDashboardScreen extends ConsumerStatefulWidget {
-  const AdminDashboardScreen({super.key});
+  const AdminDashboardScreen({
+    super.key,
+    this.initialMonitoringTechnicianId,
+  });
+
+  final String? initialMonitoringTechnicianId;
 
   @override
   ConsumerState<AdminDashboardScreen> createState() =>
@@ -108,6 +185,16 @@ class _AdminDashboardScreenState extends ConsumerState<AdminDashboardScreen> {
   _BookingSegment _selectedBookingSegment = _BookingSegment.ongoing;
 
   @override
+  void initState() {
+    super.initState();
+    final technicianId = widget.initialMonitoringTechnicianId;
+    if (technicianId != null) {
+      _selectedTechnicianId = technicianId;
+      _selectedAdminTab = _AdminTab.monitoring;
+    }
+  }
+
+  @override
   void dispose() {
     _searchController.dispose();
     super.dispose();
@@ -120,329 +207,359 @@ class _AdminDashboardScreenState extends ConsumerState<AdminDashboardScreen> {
     final techniciansAsync = ref.watch(techniciansProvider);
     final customersAsync = ref.watch(customersProvider);
     final billsAsync = ref.watch(allBillsProvider);
+    final reviewsAsync = ref.watch(allReviewsProvider);
     final locationsAsync = ref.watch(activeTechnicianLocationsProvider);
     final attendanceAsync = ref.watch(attendanceProvider);
+    final overtimeAsync = ref.watch(adminOvertimeProvider);
     final pendingRequestsAsync = ref.watch(pendingTechnicianRequestsProvider);
+    final travelHistoryAsync = _selectedTechnicianId == null
+        ? const AsyncData<List<TechnicianLocation>>([])
+        : ref.watch(
+            technicianTravelHistoryProvider(_selectedTechnicianId!),
+          );
     final currentAdmin = ref.watch(currentUserProvider).valueOrNull;
 
-    return AppScaffold(
-      title: 'FixNow Admin',
-      body: branchesAsync.when(
-        loading: () => const _AdminStatePanel(
-          title: 'Loading branches',
-          message: 'Fetching branch configuration for the admin console.',
-          icon: Icons.sync,
-          busy: true,
-        ),
-        error: (error, _) => _AdminError(
-          message: error.toString(),
-          onRetry: () => ref.invalidate(branchesProvider),
-        ),
-        data: (branches) {
-          if (branches.isEmpty) {
-            return _AdminEmptyBranches(
-              onAddBranch: () => _openBranchDialog(context, ref),
-            );
-          }
-          final effectiveBranchId =
-              _selectedBranchId ?? currentAdmin?.branchId ?? branches.first.id;
-          final effectiveBranch =
-              _branchById(branches, effectiveBranchId) ?? branches.first;
+    return branchesAsync.when(
+      loading: () => const _AdminStatePanel(
+        title: 'Loading branches',
+        message: 'Fetching branch configuration for the admin console.',
+        icon: Icons.sync,
+        busy: true,
+      ),
+      error: (error, _) => _AdminError(
+        message: error.toString(),
+        onRetry: () => ref.invalidate(branchesProvider),
+      ),
+      data: (branches) {
+        if (branches.isEmpty) {
+          return _AdminEmptyBranches(
+            onAddBranch: currentAdmin?.role == UserRole.superAdmin
+                ? () => _openBranchDialog(context, ref)
+                : null,
+          );
+        }
+        final effectiveBranchId =
+            _selectedBranchId ?? currentAdmin?.branchId ?? branches.first.id;
+        final effectiveBranch =
+            _branchById(branches, effectiveBranchId) ?? branches.first;
 
-          return bookingsAsync.when(
+        return bookingsAsync.when(
+          loading: () => const _AdminStatePanel(
+            title: 'Loading bookings',
+            message: 'Preparing today\'s jobs and service queue.',
+            icon: Icons.receipt_long_outlined,
+            busy: true,
+          ),
+          error: (error, _) => _AdminError(
+            message: error.toString(),
+            onRetry: () => ref.invalidate(allBookingsProvider),
+          ),
+          data: (bookings) => techniciansAsync.when(
             loading: () => const _AdminStatePanel(
-              title: 'Loading bookings',
-              message: 'Preparing today\'s jobs and service queue.',
-              icon: Icons.receipt_long_outlined,
+              title: 'Loading technicians',
+              message: 'Getting technician roster and assignment controls.',
+              icon: Icons.engineering_outlined,
               busy: true,
             ),
             error: (error, _) => _AdminError(
               message: error.toString(),
-              onRetry: () => ref.invalidate(allBookingsProvider),
+              onRetry: () => ref.invalidate(techniciansProvider),
             ),
-            data: (bookings) => techniciansAsync.when(
+            data: (technicians) => billsAsync.when(
               loading: () => const _AdminStatePanel(
-                title: 'Loading technicians',
-                message: 'Getting technician roster and assignment controls.',
-                icon: Icons.engineering_outlined,
+                title: 'Loading billing',
+                message: 'Calculating collections and revenue metrics.',
+                icon: Icons.payments_outlined,
                 busy: true,
               ),
               error: (error, _) => _AdminError(
                 message: error.toString(),
-                onRetry: () => ref.invalidate(techniciansProvider),
+                onRetry: () => ref.invalidate(allBillsProvider),
               ),
-              data: (technicians) => billsAsync.when(
-                loading: () => const _AdminStatePanel(
-                  title: 'Loading billing',
-                  message: 'Calculating collections and revenue metrics.',
-                  icon: Icons.payments_outlined,
-                  busy: true,
-                ),
-                error: (error, _) => _AdminError(
-                  message: error.toString(),
-                  onRetry: () => ref.invalidate(allBillsProvider),
-                ),
-                data: (bills) {
-                  final now = DateTime.now();
-                  final branchBookings = bookings.where((booking) {
-                    return _bookingMatchesBranch(
-                      booking: booking,
-                      branch: effectiveBranch,
-                      branchId: effectiveBranchId,
-                    );
-                  }).toList();
-                  final branchTechnicians = technicians
-                      .where(
-                        (technician) => _userMatchesBranch(
-                          user: technician,
-                          branch: effectiveBranch,
-                          branchId: effectiveBranchId,
-                        ),
-                      )
-                      .toList();
-                  if (customersAsync.hasError) {
-                    return _AdminError(
-                      message: customersAsync.error.toString(),
-                      onRetry: () => ref.invalidate(customersProvider),
-                    );
-                  }
-                  if (customersAsync.isLoading) {
-                    return const _AdminStatePanel(
-                      title: 'Loading customers',
-                      message: 'Fetching branch customers and profile counts.',
-                      icon: Icons.people_outline,
-                      busy: true,
-                    );
-                  }
-                  final branchCustomers = (customersAsync.valueOrNull ??
-                          const <AppUser>[])
-                      .where(
-                        (customer) => _userMatchesBranch(
-                          user: customer,
-                          branch: effectiveBranch,
-                          branchId: effectiveBranchId,
-                        ),
-                      )
-                      .toList();
-                  final filteredBookings = filterAdminBookings(
-                    bookings: branchBookings,
-                    now: now,
-                    query: _searchController.text,
-                    status: _selectedStatus,
-                    technicianId: _selectedTechnicianId,
-                    range: _selectedRange,
+              data: (bills) {
+                if (reviewsAsync.hasError) {
+                  return _AdminError(
+                    message: reviewsAsync.error.toString(),
+                    onRetry: () => ref.invalidate(allReviewsProvider),
                   );
-                  final overdueBookings = branchBookings
-                      .where((booking) => isBookingOverdue(booking, now))
-                      .toList();
-                  final dueSoonBookings = branchBookings.where((booking) {
-                    final deadline = bookingDeadline(booking);
-                    if (deadline == null || isBookingOverdue(booking, now)) {
-                      return false;
-                    }
-                    return deadline.difference(now) <= const Duration(hours: 1);
-                  }).length;
-                  return locationsAsync.when(
-                    loading: () => const _AdminStatePanel(
-                      title: 'Loading live tracking',
-                      message:
-                          'Connecting technician locations and map markers.',
-                      icon: Icons.location_searching_outlined,
-                      busy: true,
-                    ),
-                    error: (error, _) => _AdminError(
-                      message: error.toString(),
-                      onRetry: () =>
-                          ref.invalidate(activeTechnicianLocationsProvider),
-                    ),
-                    data: (locations) {
-                      final performance = buildTechnicianPerformance(
-                        technicians: branchTechnicians,
-                        bills: bills,
-                        bookings: branchBookings,
-                        locations: locations,
-                        now: now,
-                      );
-                      final pendingRequests = (pendingRequestsAsync
-                                  .valueOrNull ??
-                              const <AppUser>[])
-                          .where(
-                            (item) => _userMatchesBranch(
-                              user: item,
-                              branch: effectiveBranch,
-                              branchId: effectiveBranchId,
-                            ),
-                          )
-                          .toList();
-                      final attendanceProviderValue =
-                          attendanceAsync.valueOrNull ?? const <Attendance>[];
-                      final visibleLocations = locations
-                          .where(
-                            (location) => branchTechnicians.any(
-                              (technician) =>
-                                  technician.uid == location.technicianId,
-                            ),
-                          )
-                          .toList();
-                      final unassignedBookings = branchBookings
-                          .where((booking) =>
-                              booking.status == BookingStatus.booked &&
-                              (booking.technicianId == null ||
-                                  booking.technicianId!.isEmpty))
-                          .toList();
-                      final activeByTechnician = {
-                        for (final booking in branchBookings)
-                          if (booking.technicianId != null &&
-                              isTechnicianBusyStatus(booking.status))
-                            booking.technicianId!: booking,
-                      };
-                      final locationByTechnician = {
-                        for (final location in locations)
-                          location.technicianId: location,
-                      };
-                      final idleTechnicians = branchTechnicians.where((tech) {
-                        final booking = activeByTechnician[tech.uid];
-                        if (booking == null ||
-                            booking.status != BookingStatus.onTheWay) {
-                          return false;
-                        }
-                        final location = locationByTechnician[tech.uid];
-                        return location == null ||
-                            !location.isOnline ||
-                            now.difference(location.updatedAt) >
-                                _idleTechnicianThreshold;
-                      }).toList();
-                      final selectedTabContent = switch (_selectedAdminTab) {
-                        _AdminTab.overview => _OverviewAdminTab(
-                            activeTechnicians: branchTechnicians
-                                .where((tech) => tech.isActive)
-                                .length,
-                            unassignedBookings: unassignedBookings.length,
-                            overdueBookings: overdueBookings.length,
-                            jobsAtRisk:
-                                overdueBookings.length + idleTechnicians.length,
-                            idleTechnicians: idleTechnicians.length,
-                            onReview: () {
-                              setState(() {
-                                _selectedAdminTab = _AdminTab.bookings;
-                                _selectedBookingSegment =
-                                    _BookingSegment.unassigned;
-                                _selectedRange = AdminRangeFilter.all;
-                              });
-                            },
+                }
+                if (reviewsAsync.isLoading) {
+                  return const _AdminStatePanel(
+                    title: 'Loading performance',
+                    message: 'Calculating ratings and customer satisfaction.',
+                    icon: Icons.leaderboard_outlined,
+                    busy: true,
+                  );
+                }
+                final reviews = reviewsAsync.valueOrNull ?? const <Review>[];
+                final now = DateTime.now();
+                final branchBookings = bookings.where((booking) {
+                  return _bookingMatchesBranch(
+                    booking: booking,
+                    branch: effectiveBranch,
+                    branchId: effectiveBranchId,
+                  );
+                }).toList();
+                final branchTechnicians = technicians
+                    .where(
+                      (technician) => _userMatchesBranch(
+                        user: technician,
+                        branch: effectiveBranch,
+                        branchId: effectiveBranchId,
+                      ),
+                    )
+                    .toList();
+                if (customersAsync.hasError) {
+                  return _AdminError(
+                    message: customersAsync.error.toString(),
+                    onRetry: () => ref.invalidate(customersProvider),
+                  );
+                }
+                if (customersAsync.isLoading) {
+                  return const _AdminStatePanel(
+                    title: 'Loading customers',
+                    message: 'Fetching branch customers and profile counts.',
+                    icon: Icons.people_outline,
+                    busy: true,
+                  );
+                }
+                final filteredBookings = filterAdminBookings(
+                  bookings: branchBookings,
+                  now: now,
+                  query: _searchController.text,
+                  status: _selectedStatus,
+                  technicianId: _selectedTechnicianId,
+                  range: _selectedRange,
+                );
+                final overdueBookings = branchBookings
+                    .where((booking) => isBookingOverdue(booking, now))
+                    .toList();
+                final dueSoonBookings = branchBookings.where((booking) {
+                  final deadline = bookingDeadline(booking);
+                  if (deadline == null || isBookingOverdue(booking, now)) {
+                    return false;
+                  }
+                  return deadline.difference(now) <= const Duration(hours: 1);
+                }).length;
+                return locationsAsync.when(
+                  loading: () => const _AdminStatePanel(
+                    title: 'Loading live tracking',
+                    message: 'Connecting technician locations and map markers.',
+                    icon: Icons.location_searching_outlined,
+                    busy: true,
+                  ),
+                  error: (error, _) => _AdminError(
+                    message: error.toString(),
+                    onRetry: () =>
+                        ref.invalidate(activeTechnicianLocationsProvider),
+                  ),
+                  data: (locations) {
+                    final performance = buildTechnicianPerformance(
+                      technicians: branchTechnicians,
+                      bills: bills,
+                      bookings: branchBookings,
+                      locations: locations,
+                      now: now,
+                    );
+                    final pendingRequests =
+                        (pendingRequestsAsync.valueOrNull ?? const <AppUser>[])
+                            .where(
+                              (item) => _userMatchesBranch(
+                                user: item,
+                                branch: effectiveBranch,
+                                branchId: effectiveBranchId,
+                              ),
+                            )
+                            .toList();
+                    final attendanceProviderValue =
+                        attendanceAsync.valueOrNull ?? const <Attendance>[];
+                    final visibleLocations = locations
+                        .where(
+                          (location) => branchTechnicians.any(
+                            (technician) =>
+                                technician.uid == location.technicianId,
                           ),
-                        _AdminTab.bookings => _BookingsAdminTab(
-                            filteredBookings: filteredBookings,
-                            branchBookings: branchBookings,
-                            pendingRequests: pendingRequests,
-                            branches: branches,
-                            branchTechnicians: branchTechnicians,
-                            allTechnicians: technicians,
-                            allBookings: bookings,
-                            now: now,
-                            overdueBookings: overdueBookings,
-                            dueSoonBookings: dueSoonBookings,
-                            selectedSegment: _selectedBookingSegment,
-                            controller: _searchController,
-                            selectedStatus: _selectedStatus,
-                            selectedTechnicianId: _selectedTechnicianId,
-                            selectedRange: _selectedRange,
-                            onSegmentChanged: (segment) => setState(
-                              () => _selectedBookingSegment = segment,
-                            ),
-                            onSearchChanged: (_) => setState(() {}),
-                            onStatusChanged: (value) =>
-                                setState(() => _selectedStatus = value),
-                            onTechnicianChanged: (value) => setState(
-                              () => _selectedTechnicianId =
-                                  value == 'all' ? null : value,
-                            ),
-                            onRangeChanged: (value) =>
-                                setState(() => _selectedRange = value),
-                            onClear: () {
-                              setState(() {
-                                _searchController.clear();
-                                _selectedStatus = null;
-                                _selectedTechnicianId = null;
-                                _selectedRange = AdminRangeFilter.all;
-                              });
-                            },
-                          ),
-                        _AdminTab.attendance => _TechnicianWorkspaceSection(
-                            performance: performance,
-                            bookings: branchBookings,
-                            locations: locations,
-                            attendance: attendanceProviderValue,
-                            attendanceLoading: attendanceAsync.isLoading,
-                            now: now,
-                          ),
-                        _AdminTab.revenue => _RevenueAdminTab(
-                            bills: bills,
-                            bookings: branchBookings,
-                            technicians: branchTechnicians,
-                            branchName: effectiveBranch.name,
-                            now: now,
-                          ),
-                        _AdminTab.monitoring => _LiveMonitoringSection(
-                            locations: visibleLocations,
-                            bookings: branchBookings,
-                            technicians: branchTechnicians,
-                            selectedTechnicianId: _selectedTechnicianId,
-                            onTechnicianSelected: (technicianId) {
-                              setState(() {
-                                _selectedTechnicianId = technicianId;
-                                _selectedAdminTab = _AdminTab.monitoring;
-                              });
-                            },
-                            branchName: effectiveBranch.name,
-                            branchCity: effectiveBranch.city,
-                          ),
-                      };
-                      return RefreshIndicator(
-                        onRefresh: () async {
-                          ref.invalidate(allBookingsProvider);
-                          ref.invalidate(techniciansProvider);
-                          ref.invalidate(allBillsProvider);
-                          ref.invalidate(activeTechnicianLocationsProvider);
-                        },
-                        child: _AdminDashboardShell(
-                          selected: _selectedAdminTab,
+                        )
+                        .toList();
+                    final unassignedBookings = branchBookings
+                        .where((booking) =>
+                            booking.status == BookingStatus.booked &&
+                            (booking.technicianId == null ||
+                                booking.technicianId!.isEmpty))
+                        .toList();
+                    final activeByTechnician = {
+                      for (final booking in branchBookings)
+                        if (booking.technicianId != null &&
+                            isTechnicianBusyStatus(booking.status))
+                          booking.technicianId!: booking,
+                    };
+                    final locationByTechnician = {
+                      for (final location in locations)
+                        location.technicianId: location,
+                    };
+                    final idleTechnicians = branchTechnicians.where((tech) {
+                      final booking = activeByTechnician[tech.uid];
+                      if (booking == null ||
+                          booking.status != BookingStatus.onTheWay) {
+                        return false;
+                      }
+                      final location = locationByTechnician[tech.uid];
+                      return location == null ||
+                          !location.isOnline ||
+                          now.difference(location.updatedAt) >
+                              _idleTechnicianThreshold;
+                    }).toList();
+                    final selectedTabContent = switch (_selectedAdminTab) {
+                      _AdminTab.overview => _OverviewAdminTab(
+                          activeTechnicians: branchTechnicians
+                              .where((tech) => tech.isActive)
+                              .length,
+                          unassignedBookings: unassignedBookings.length,
+                          overdueBookings: overdueBookings.length,
+                          jobsAtRisk:
+                              overdueBookings.length + idleTechnicians.length,
+                          idleTechnicians: idleTechnicians.length,
+                          onReview: () {
+                            setState(() {
+                              _selectedAdminTab = _AdminTab.bookings;
+                              _selectedBookingSegment =
+                                  _BookingSegment.unassigned;
+                              _selectedRange = AdminRangeFilter.all;
+                            });
+                          },
+                        ),
+                      _AdminTab.bookings => _BookingsAdminTab(
+                          filteredBookings: filteredBookings,
+                          branchBookings: branchBookings,
+                          pendingRequests: pendingRequests,
                           branches: branches,
-                          activeBranch: effectiveBranch,
-                          onTabSelected: (tab) =>
-                              setState(() => _selectedAdminTab = tab),
-                          onBranchSelected: (branch) =>
-                              setState(() => _selectedBranchId = branch.id),
-                          onAddBranch: () => _openBranchDialog(context, ref),
-                          onEditBranch: (branch) =>
-                              _openBranchDialog(context, ref, branch: branch),
-                          child: SingleChildScrollView(
-                            physics: const AlwaysScrollableScrollPhysics(),
-                            padding: const EdgeInsets.all(20),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.stretch,
-                              children: [
-                                _AdminContentHeader(
-                                  title: _selectedAdminTab.label,
-                                  branchName: effectiveBranch.name,
-                                  onManualBooking: () =>
-                                      _manualBooking(context, ref),
-                                ),
-                                const SizedBox(height: 20),
-                                selectedTabContent,
-                              ],
-                            ),
+                          branchTechnicians: branchTechnicians,
+                          allTechnicians: technicians,
+                          allBookings: bookings,
+                          now: now,
+                          overdueBookings: overdueBookings,
+                          dueSoonBookings: dueSoonBookings,
+                          selectedSegment: _selectedBookingSegment,
+                          controller: _searchController,
+                          selectedStatus: _selectedStatus,
+                          selectedTechnicianId: _selectedTechnicianId,
+                          selectedRange: _selectedRange,
+                          onSegmentChanged: (segment) => setState(
+                            () => _selectedBookingSegment = segment,
+                          ),
+                          onSearchChanged: (_) => setState(() {}),
+                          onStatusChanged: (value) =>
+                              setState(() => _selectedStatus = value),
+                          onTechnicianChanged: (value) => setState(
+                            () => _selectedTechnicianId =
+                                value == 'all' ? null : value,
+                          ),
+                          onRangeChanged: (value) =>
+                              setState(() => _selectedRange = value),
+                          onClear: () {
+                            setState(() {
+                              _searchController.clear();
+                              _selectedStatus = null;
+                              _selectedTechnicianId = null;
+                              _selectedRange = AdminRangeFilter.all;
+                            });
+                          },
+                        ),
+                      _AdminTab.attendance => _TechnicianWorkspaceSection(
+                          performance: performance,
+                          bookings: branchBookings,
+                          locations: locations,
+                          attendance: attendanceProviderValue,
+                          attendanceLoading: attendanceAsync.isLoading,
+                          now: now,
+                        ),
+                      _AdminTab.performance => TechnicianPerformanceDashboard(
+                          technicians: branchTechnicians,
+                          bookings: branchBookings,
+                          bills: bills,
+                          reviews: reviews,
+                          branches: [effectiveBranch],
+                          lockedBranchId: effectiveBranch.id,
+                          title: 'Branch technician performance',
+                          subtitle:
+                              '${effectiveBranch.name} leaderboard and service quality',
+                        ),
+                      _AdminTab.revenue => _RevenueAdminTab(
+                          bills: bills,
+                          bookings: branchBookings,
+                          technicians: branchTechnicians,
+                          branch: effectiveBranch,
+                          now: now,
+                        ),
+                      _AdminTab.monitoring => _LiveMonitoringSection(
+                          locations: visibleLocations,
+                          bookings: branchBookings,
+                          technicians: branchTechnicians,
+                          selectedTechnicianId: _selectedTechnicianId,
+                          onTechnicianSelected: (technicianId) {
+                            setState(() {
+                              _selectedTechnicianId = technicianId;
+                              _selectedAdminTab = _AdminTab.monitoring;
+                            });
+                          },
+                          branchName: effectiveBranch.name,
+                          branchCity: effectiveBranch.city,
+                          travelHistory: travelHistoryAsync,
+                          overtimeRecords:
+                              overtimeAsync.valueOrNull ?? const [],
+                          bills: bills,
+                        ),
+                    };
+                    return RefreshIndicator(
+                      onRefresh: () async {
+                        ref.invalidate(allBookingsProvider);
+                        ref.invalidate(techniciansProvider);
+                        ref.invalidate(allBillsProvider);
+                        ref.invalidate(activeTechnicianLocationsProvider);
+                        ref.invalidate(adminOvertimeProvider);
+                      },
+                      child: _AdminDashboardShell(
+                        selected: _selectedAdminTab,
+                        branches: branches,
+                        activeBranch: effectiveBranch,
+                        currentUser: currentAdmin,
+                        canManageBranches:
+                            currentAdmin?.role == UserRole.superAdmin,
+                        onSignOut: () =>
+                            ref.read(authRepositoryProvider).signOut(),
+                        onTabSelected: (tab) =>
+                            setState(() => _selectedAdminTab = tab),
+                        onBranchSelected: (branch) =>
+                            setState(() => _selectedBranchId = branch.id),
+                        onAddBranch: () => _openBranchDialog(context, ref),
+                        onEditBranch: (branch) =>
+                            _openBranchDialog(context, ref, branch: branch),
+                        child: SingleChildScrollView(
+                          physics: const AlwaysScrollableScrollPhysics(),
+                          padding: const EdgeInsets.all(20),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              _AdminContentHeader(
+                                title: _selectedAdminTab.label,
+                                branchName: effectiveBranch.name,
+                                onManualBooking: () =>
+                                    _manualBooking(context, ref),
+                              ),
+                              const SizedBox(height: 20),
+                              selectedTabContent,
+                            ],
                           ),
                         ),
-                      );
-                    },
-                  );
-                },
-              ),
+                      ),
+                    );
+                  },
+                );
+              },
             ),
-          );
-        },
-      ),
+          ),
+        );
+      },
     );
   }
 
@@ -625,6 +742,15 @@ class _AdminDashboardScreenState extends ConsumerState<AdminDashboardScreen> {
     WidgetRef ref, {
     BranchInfo? branch,
   }) async {
+    final currentAdmin = ref.read(currentUserProvider).valueOrNull;
+    if (currentAdmin?.role != UserRole.superAdmin) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Only a Super Admin can manage branches.'),
+        ),
+      );
+      return;
+    }
     final formKey = GlobalKey<FormState>();
     final name = TextEditingController(text: branch?.name ?? '');
     final city = TextEditingController(text: branch?.city ?? '');
@@ -762,6 +888,9 @@ class _AdminDashboardShell extends StatelessWidget {
     required this.selected,
     required this.branches,
     required this.activeBranch,
+    required this.currentUser,
+    required this.canManageBranches,
+    required this.onSignOut,
     required this.onTabSelected,
     required this.onBranchSelected,
     required this.onAddBranch,
@@ -772,6 +901,9 @@ class _AdminDashboardShell extends StatelessWidget {
   final _AdminTab selected;
   final List<BranchInfo> branches;
   final BranchInfo activeBranch;
+  final AppUser? currentUser;
+  final bool canManageBranches;
+  final VoidCallback onSignOut;
   final ValueChanged<_AdminTab> onTabSelected;
   final ValueChanged<BranchInfo> onBranchSelected;
   final VoidCallback onAddBranch;
@@ -780,41 +912,35 @@ class _AdminDashboardShell extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final compact = constraints.maxWidth < 860;
-        if (compact) {
-          return Column(
-            children: [
-              _AdminMobileNav(
-                selected: selected,
-                branches: branches,
-                activeBranch: activeBranch,
-                onTabSelected: onTabSelected,
-                onBranchSelected: onBranchSelected,
-                onAddBranch: onAddBranch,
-                onEditBranch: onEditBranch,
-              ),
-              Expanded(child: child),
-            ],
-          );
-        }
-        return Row(
-          children: [
-            _AdminSidebar(
-              selected: selected,
-              branches: branches,
-              activeBranch: activeBranch,
-              onTabSelected: onTabSelected,
-              onBranchSelected: onBranchSelected,
-              onAddBranch: onAddBranch,
-              onEditBranch: onEditBranch,
-            ),
-            const VerticalDivider(width: 1),
-            Expanded(child: child),
-          ],
+    return FixNowAdminShell(
+      destinations: [
+        for (final tab in _AdminTab.values)
+          FixNowAdminDestination(
+            id: tab.name,
+            label: tab.label,
+            icon: tab.icon,
+          ),
+      ],
+      selectedId: selected.name,
+      onDestinationSelected: (id) {
+        onTabSelected(
+          _AdminTab.values.firstWhere((tab) => tab.name == id),
         );
       },
+      userName: currentUser?.name ?? 'Branch Manager',
+      roleLabel: 'Branch operations',
+      consoleLabel: 'FixNow Branch Admin',
+      contextLabel: activeBranch.name,
+      onSignOut: onSignOut,
+      navigationFooter: _AdminBranchSwitcher(
+        branches: branches,
+        activeBranch: activeBranch,
+        canManageBranches: canManageBranches,
+        onBranchSelected: onBranchSelected,
+        onAddBranch: onAddBranch,
+        onEditBranch: onEditBranch,
+      ),
+      body: child,
     );
   }
 }
@@ -824,6 +950,7 @@ class _AdminSidebar extends StatelessWidget {
     required this.selected,
     required this.branches,
     required this.activeBranch,
+    required this.canManageBranches,
     required this.onTabSelected,
     required this.onBranchSelected,
     required this.onAddBranch,
@@ -833,6 +960,7 @@ class _AdminSidebar extends StatelessWidget {
   final _AdminTab selected;
   final List<BranchInfo> branches;
   final BranchInfo activeBranch;
+  final bool canManageBranches;
   final ValueChanged<_AdminTab> onTabSelected;
   final ValueChanged<BranchInfo> onBranchSelected;
   final VoidCallback onAddBranch;
@@ -857,7 +985,7 @@ class _AdminSidebar extends StatelessWidget {
           ),
           const SizedBox(height: 4),
           const Text(
-            'Admin operations',
+            'Branch operations',
             style: TextStyle(
               color: AppTheme.textSecondary,
               fontSize: 12,
@@ -877,6 +1005,7 @@ class _AdminSidebar extends StatelessWidget {
           _AdminBranchSwitcher(
             branches: branches,
             activeBranch: activeBranch,
+            canManageBranches: canManageBranches,
             onBranchSelected: onBranchSelected,
             onAddBranch: onAddBranch,
             onEditBranch: onEditBranch,
@@ -892,6 +1021,7 @@ class _AdminMobileNav extends StatelessWidget {
     required this.selected,
     required this.branches,
     required this.activeBranch,
+    required this.canManageBranches,
     required this.onTabSelected,
     required this.onBranchSelected,
     required this.onAddBranch,
@@ -901,6 +1031,7 @@ class _AdminMobileNav extends StatelessWidget {
   final _AdminTab selected;
   final List<BranchInfo> branches;
   final BranchInfo activeBranch;
+  final bool canManageBranches;
   final ValueChanged<_AdminTab> onTabSelected;
   final ValueChanged<BranchInfo> onBranchSelected;
   final VoidCallback onAddBranch;
@@ -917,7 +1048,7 @@ class _AdminMobileNav extends StatelessWidget {
             children: [
               const Expanded(
                 child: Text(
-                  'FixNow Admin',
+                  'FixNow Branch Admin',
                   style: TextStyle(
                     color: AppTheme.primary,
                     fontSize: 20,
@@ -928,6 +1059,7 @@ class _AdminMobileNav extends StatelessWidget {
               _AdminBranchMenuButton(
                 branches: branches,
                 activeBranch: activeBranch,
+                canManageBranches: canManageBranches,
                 onBranchSelected: onBranchSelected,
                 onAddBranch: onAddBranch,
                 onEditBranch: onEditBranch,
@@ -987,12 +1119,16 @@ class _AdminNavItem extends StatelessWidget {
               color: selected ? AppTheme.primary : AppTheme.textSecondary,
             ),
             const SizedBox(width: 9),
-            Text(
-              tab.label,
-              style: TextStyle(
-                color: selected ? AppTheme.primary : AppTheme.textPrimary,
-                fontWeight: selected ? FontWeight.w800 : FontWeight.w600,
-                fontSize: 13,
+            Expanded(
+              child: Text(
+                tab.label,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: selected ? AppTheme.primary : AppTheme.textPrimary,
+                  fontWeight: selected ? FontWeight.w800 : FontWeight.w600,
+                  fontSize: 13,
+                ),
               ),
             ),
           ],
@@ -1051,6 +1187,7 @@ class _AdminBranchSwitcher extends StatelessWidget {
   const _AdminBranchSwitcher({
     required this.branches,
     required this.activeBranch,
+    required this.canManageBranches,
     required this.onBranchSelected,
     required this.onAddBranch,
     required this.onEditBranch,
@@ -1058,6 +1195,7 @@ class _AdminBranchSwitcher extends StatelessWidget {
 
   final List<BranchInfo> branches;
   final BranchInfo activeBranch;
+  final bool canManageBranches;
   final ValueChanged<BranchInfo> onBranchSelected;
   final VoidCallback onAddBranch;
   final ValueChanged<BranchInfo> onEditBranch;
@@ -1106,6 +1244,7 @@ class _AdminBranchSwitcher extends StatelessWidget {
           _AdminBranchMenuButton(
             branches: branches,
             activeBranch: activeBranch,
+            canManageBranches: canManageBranches,
             onBranchSelected: onBranchSelected,
             onAddBranch: onAddBranch,
             onEditBranch: onEditBranch,
@@ -1120,6 +1259,7 @@ class _AdminBranchMenuButton extends StatelessWidget {
   const _AdminBranchMenuButton({
     required this.branches,
     required this.activeBranch,
+    required this.canManageBranches,
     required this.onBranchSelected,
     required this.onAddBranch,
     required this.onEditBranch,
@@ -1127,12 +1267,16 @@ class _AdminBranchMenuButton extends StatelessWidget {
 
   final List<BranchInfo> branches;
   final BranchInfo activeBranch;
+  final bool canManageBranches;
   final ValueChanged<BranchInfo> onBranchSelected;
   final VoidCallback onAddBranch;
   final ValueChanged<BranchInfo> onEditBranch;
 
   @override
   Widget build(BuildContext context) {
+    if (!canManageBranches && branches.length <= 1) {
+      return const _BranchScopeBadge();
+    }
     return PopupMenuButton<Object>(
       tooltip: 'Switch branch',
       onSelected: (value) {
@@ -1164,15 +1308,17 @@ class _AdminBranchMenuButton extends StatelessWidget {
               ],
             ),
           ),
-        const PopupMenuDivider(),
-        const PopupMenuItem<Object>(
-          value: 'edit',
-          child: Text('Edit current branch'),
-        ),
-        const PopupMenuItem<Object>(
-          value: 'add',
-          child: Text('Add branch'),
-        ),
+        if (canManageBranches) ...[
+          const PopupMenuDivider(),
+          const PopupMenuItem<Object>(
+            value: 'edit',
+            child: Text('Edit current branch'),
+          ),
+          const PopupMenuItem<Object>(
+            value: 'add',
+            child: Text('Add branch'),
+          ),
+        ],
       ],
       child: const Text(
         'Switch branch',
@@ -1180,6 +1326,44 @@ class _AdminBranchMenuButton extends StatelessWidget {
           color: AppTheme.primary,
           fontWeight: FontWeight.w900,
         ),
+      ),
+    );
+  }
+}
+
+class _BranchScopeBadge extends StatelessWidget {
+  const _BranchScopeBadge();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+      decoration: BoxDecoration(
+        color: AppTheme.primary.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: AppTheme.primary.withValues(alpha: 0.22)),
+      ),
+      child: const Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(Icons.lock_outline, size: 15, color: AppTheme.primary),
+          SizedBox(width: 6),
+          SizedBox(
+            width: 90,
+            child: FittedBox(
+              fit: BoxFit.scaleDown,
+              alignment: Alignment.centerLeft,
+              child: Text(
+                'Branch locked',
+                style: TextStyle(
+                  color: AppTheme.primary,
+                  fontSize: 11,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -1228,6 +1412,10 @@ class _AdminContentHeader extends StatelessWidget {
         ),
         FilledButton.icon(
           onPressed: onManualBooking,
+          style: FilledButton.styleFrom(
+            minimumSize: const Size(0, 46),
+            padding: const EdgeInsets.symmetric(horizontal: 18),
+          ),
           icon: const Icon(Icons.add),
           label: const Text('Manual booking'),
         ),
@@ -1317,8 +1505,7 @@ class _OverviewAlertBanner extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final critical = overdueBookings > 0;
-    final color =
-        critical ? const Color(0xFFD95C2A) : const Color(0xFFF08C00);
+    final color = critical ? const Color(0xFFD95C2A) : const Color(0xFFF08C00);
     final message = critical
         ? '$overdueBookings overdue job${overdueBookings == 1 ? '' : 's'} need review.'
         : '$idleTechnicians technician${idleTechnicians == 1 ? '' : 's'} may be idle or stale.';
@@ -1527,7 +1714,7 @@ class _BranchCard extends StatelessWidget {
 class _AdminEmptyBranches extends StatelessWidget {
   const _AdminEmptyBranches({required this.onAddBranch});
 
-  final VoidCallback onAddBranch;
+  final VoidCallback? onAddBranch;
 
   @override
   Widget build(BuildContext context) {
@@ -1560,8 +1747,10 @@ class _AdminEmptyBranches extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(height: 18),
-                const Text(
-                  'Add your first branch',
+                Text(
+                  onAddBranch == null
+                      ? 'Assigned branch unavailable'
+                      : 'Add your first branch',
                   style: TextStyle(
                     fontSize: 24,
                     fontWeight: FontWeight.w900,
@@ -1569,8 +1758,10 @@ class _AdminEmptyBranches extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(height: 10),
-                const Text(
-                  'Bookings, technician approvals, and customer routing need at least one branch. Add a city branch to start operations.',
+                Text(
+                  onAddBranch == null
+                      ? 'Your Branch Admin account cannot access a branch record. Ask a Super Admin to verify your branch assignment and branch status.'
+                      : 'Bookings, technician approvals, and customer routing need at least one branch. Add a city branch to start operations.',
                   textAlign: TextAlign.center,
                   style: TextStyle(
                     fontSize: 14,
@@ -1578,12 +1769,14 @@ class _AdminEmptyBranches extends StatelessWidget {
                     color: AppTheme.textSecondary,
                   ),
                 ),
-                const SizedBox(height: 18),
-                FilledButton.icon(
-                  onPressed: onAddBranch,
-                  icon: const Icon(Icons.add_business_outlined),
-                  label: const Text('Create branch'),
-                ),
+                if (onAddBranch != null) ...[
+                  const SizedBox(height: 18),
+                  FilledButton.icon(
+                    onPressed: onAddBranch,
+                    icon: const Icon(Icons.add_business_outlined),
+                    label: const Text('Create branch'),
+                  ),
+                ],
               ],
             ),
           ),
@@ -1604,10 +1797,15 @@ class _PendingTechnicianSection extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final unreadNotifications =
+        (ref.watch(branchApprovalNotificationsProvider).valueOrNull ?? const [])
+            .where((notification) => !notification.isRead)
+            .length;
     return _SectionCard(
       title: 'Technician approvals',
-      subtitle:
-          'Review branch requests before technicians get access to live jobs and attendance.',
+      subtitle: unreadNotifications == 0
+          ? 'Review branch requests before technicians get access to live jobs and attendance.'
+          : '$unreadNotifications new technician approval notification${unreadNotifications == 1 ? '' : 's'} for this branch.',
       child: Column(
         children: [
           for (var i = 0; i < requests.length; i++) ...[
@@ -1634,6 +1832,7 @@ class _PendingTechnicianTile extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final branchAdmin = ref.watch(currentUserProvider).valueOrNull;
     final suggested = request.requestLatitude != null &&
             request.requestLongitude != null &&
             branches.isNotEmpty
@@ -1675,6 +1874,10 @@ class _PendingTechnicianTile extends ConsumerWidget {
             spacing: 8,
             runSpacing: 8,
             children: [
+              const _StatusPill(
+                label: 'Pending',
+                color: Color(0xFFF38A1F),
+              ),
               _StatusPill(
                 label: request.branchName ?? 'Requested branch pending',
                 color: AppTheme.primary,
@@ -1691,9 +1894,13 @@ class _PendingTechnicianTile extends ConsumerWidget {
             children: [
               Expanded(
                 child: OutlinedButton.icon(
-                  onPressed: () => ref
-                      .read(adminRepositoryProvider)
-                      .rejectTechnicianRequest(request.uid),
+                  onPressed: branchAdmin?.branchId == null
+                      ? null
+                      : () => _showRejectionDialog(
+                            context: context,
+                            ref: ref,
+                            branchAdmin: branchAdmin!,
+                          ),
                   icon: const Icon(Icons.close),
                   label: const Text('Reject'),
                 ),
@@ -1702,6 +1909,7 @@ class _PendingTechnicianTile extends ConsumerWidget {
               Expanded(
                 child: FilledButton.icon(
                   onPressed: () {
+                    if (branchAdmin?.branchId == null) return;
                     var branch = branches.first;
                     for (final item in branches) {
                       if (item.id == branchId) {
@@ -1713,6 +1921,7 @@ class _PendingTechnicianTile extends ConsumerWidget {
                           uid: request.uid,
                           branchId: branch.id,
                           branchName: branch.name,
+                          actorId: branchAdmin!.uid,
                         );
                   },
                   icon: const Icon(Icons.check),
@@ -1724,6 +1933,85 @@ class _PendingTechnicianTile extends ConsumerWidget {
         ],
       ),
     );
+  }
+
+  Future<void> _showRejectionDialog({
+    required BuildContext context,
+    required WidgetRef ref,
+    required AppUser branchAdmin,
+  }) async {
+    final formKey = GlobalKey<FormState>();
+    final reason = TextEditingController();
+    try {
+      await showDialog<void>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          title: const Text('Reject technician request'),
+          content: Form(
+            key: formKey,
+            child: TextFormField(
+              controller: reason,
+              autofocus: true,
+              minLines: 3,
+              maxLines: 5,
+              decoration: const InputDecoration(
+                labelText: 'Reason for rejection',
+                hintText: 'Explain what the technician needs to correct',
+              ),
+              validator: (value) {
+                try {
+                  normalizeTechnicianRejectionReason(value ?? '');
+                  return null;
+                } on ArgumentError catch (error) {
+                  return error.message?.toString();
+                }
+              },
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('Cancel'),
+            ),
+            FilledButton.icon(
+              onPressed: () async {
+                if (!formKey.currentState!.validate()) return;
+                try {
+                  await ref
+                      .read(adminRepositoryProvider)
+                      .rejectTechnicianRequest(
+                        uid: request.uid,
+                        actorId: branchAdmin.uid,
+                        branchId: branchAdmin.branchId!,
+                        reason: reason.text,
+                      );
+                  if (dialogContext.mounted) Navigator.pop(dialogContext);
+                  if (context.mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content: Text('Technician request rejected.'),
+                      ),
+                    );
+                  }
+                } catch (error) {
+                  if (!dialogContext.mounted) return;
+                  ScaffoldMessenger.of(dialogContext).showSnackBar(
+                    SnackBar(
+                      content: Text(error.toString()),
+                      backgroundColor: Colors.red.shade700,
+                    ),
+                  );
+                }
+              },
+              icon: const Icon(Icons.close),
+              label: const Text('Reject request'),
+            ),
+          ],
+        ),
+      );
+    } finally {
+      reason.dispose();
+    }
   }
 }
 
@@ -1783,13 +2071,8 @@ class _MetricCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
+    return FixNowHoverCard(
       padding: const EdgeInsets.all(18),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: AppTheme.divider),
-      ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -1933,6 +2216,7 @@ class _AdminFilterPanel extends StatelessWidget {
                 ),
               );
               final statusField = DropdownButtonFormField<BookingStatus?>(
+                isExpanded: true,
                 initialValue: selectedStatus,
                 decoration: const InputDecoration(
                   labelText: 'Status filter',
@@ -1952,6 +2236,7 @@ class _AdminFilterPanel extends StatelessWidget {
                 onChanged: onStatusChanged,
               );
               final technicianField = DropdownButtonFormField<String?>(
+                isExpanded: true,
                 initialValue: selectedTechnicianValue,
                 decoration: const InputDecoration(
                   labelText: 'Technician filter',
@@ -2357,6 +2642,36 @@ class _RevenueAdminTab extends StatelessWidget {
     required this.bills,
     required this.bookings,
     required this.technicians,
+    required this.branch,
+    required this.now,
+  });
+
+  final List<Bill> bills;
+  final List<Booking> bookings;
+  final List<AppUser> technicians;
+  final BranchInfo branch;
+  final DateTime now;
+
+  @override
+  Widget build(BuildContext context) {
+    return RevenueDashboard(
+      bills: bills,
+      bookings: bookings,
+      branches: [branch],
+      technicians: technicians,
+      now: now,
+      lockedBranchId: branch.id,
+      title: 'Branch revenue dashboard',
+      subtitle: '${branch.name} paid collections and revenue reports',
+    );
+  }
+}
+
+class _LegacyRevenueAdminTab extends StatelessWidget {
+  const _LegacyRevenueAdminTab({
+    required this.bills,
+    required this.bookings,
+    required this.technicians,
     required this.branchName,
     required this.now,
   });
@@ -2585,6 +2900,9 @@ class _LiveMonitoringSection extends StatelessWidget {
     required this.onTechnicianSelected,
     required this.branchName,
     required this.branchCity,
+    required this.travelHistory,
+    required this.overtimeRecords,
+    required this.bills,
   });
 
   final List<TechnicianLocation> locations;
@@ -2594,6 +2912,9 @@ class _LiveMonitoringSection extends StatelessWidget {
   final ValueChanged<String?> onTechnicianSelected;
   final String branchName;
   final String branchCity;
+  final AsyncValue<List<TechnicianLocation>> travelHistory;
+  final List<OvertimeRecord> overtimeRecords;
+  final List<Bill> bills;
 
   @override
   Widget build(BuildContext context) {
@@ -2601,6 +2922,11 @@ class _LiveMonitoringSection extends StatelessWidget {
         ? locations
         : locations
             .where((location) => location.technicianId == selectedTechnicianId)
+            .toList();
+    final visibleOvertime = selectedTechnicianId == null
+        ? overtimeRecords
+        : overtimeRecords
+            .where((record) => record.technicianId == selectedTechnicianId)
             .toList();
     final activeByTechnician = {
       for (final booking in bookings)
@@ -2665,6 +2991,15 @@ class _LiveMonitoringSection extends StatelessWidget {
             ),
             const SizedBox(height: 16),
           ],
+          if (visibleOvertime.isNotEmpty) ...[
+            OvertimeSummaryPanel(
+              records: visibleOvertime,
+              bookings: bookings,
+              bills: bills,
+              technicians: technicians,
+            ),
+            const SizedBox(height: 16),
+          ],
           SizedBox(
             height: 360,
             child: visibleLocations.isEmpty
@@ -2679,6 +3014,13 @@ class _LiveMonitoringSection extends StatelessWidget {
                   ),
           ),
           const SizedBox(height: 16),
+          if (selectedTechnicianId != null) ...[
+            _TravelHistorySection(
+              technician: technicianById[selectedTechnicianId],
+              history: travelHistory,
+            ),
+            const SizedBox(height: 16),
+          ],
           if (technicians.isEmpty)
             const _InlineEmptyState(
               icon: Icons.engineering_outlined,
@@ -2693,6 +3035,364 @@ class _LiveMonitoringSection extends StatelessWidget {
               onTrack: onTechnicianSelected,
             ),
         ],
+      ),
+    );
+  }
+}
+
+class _TravelHistorySection extends StatelessWidget {
+  const _TravelHistorySection({
+    required this.technician,
+    required this.history,
+  });
+
+  final AppUser? technician;
+  final AsyncValue<List<TechnicianLocation>> history;
+
+  @override
+  Widget build(BuildContext context) {
+    return history.when(
+      loading: () => const _InlineEmptyState(
+        icon: Icons.route_outlined,
+        message: 'Loading technician travel history.',
+      ),
+      error: (error, _) => _InlineEmptyState(
+        icon: Icons.error_outline,
+        message: 'Travel history could not be loaded: $error',
+      ),
+      data: (points) => _TechnicianTravelReplayPanel(
+        technician: technician,
+        history: points,
+      ),
+    );
+  }
+}
+
+class _TechnicianTravelReplayPanel extends StatefulWidget {
+  const _TechnicianTravelReplayPanel({
+    required this.technician,
+    required this.history,
+  });
+
+  final AppUser? technician;
+  final List<TechnicianLocation> history;
+
+  @override
+  State<_TechnicianTravelReplayPanel> createState() =>
+      _TechnicianTravelReplayPanelState();
+}
+
+class _TechnicianTravelReplayPanelState
+    extends State<_TechnicianTravelReplayPanel> {
+  Timer? _replayTimer;
+  late int _replayIndex =
+      widget.history.isEmpty ? 0 : widget.history.length - 1;
+  late DateTime? _selectedDay = widget.history.isEmpty
+      ? null
+      : DateUtils.dateOnly(widget.history.last.updatedAt);
+
+  List<TechnicianLocation> get _selectedHistory => widget.history
+      .where((point) => DateUtils.isSameDay(point.updatedAt, _selectedDay))
+      .toList();
+
+  bool get _isPlaying => _replayTimer?.isActive == true;
+
+  @override
+  void didUpdateWidget(covariant _TechnicianTravelReplayPanel oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.history.length != widget.history.length) {
+      _stopReplay();
+      final availableDays = widget.history
+          .map((point) => DateUtils.dateOnly(point.updatedAt))
+          .toSet();
+      if (widget.history.isEmpty) {
+        _selectedDay = null;
+        _replayIndex = 0;
+      } else {
+        if (!availableDays.contains(_selectedDay)) {
+          _selectedDay = DateUtils.dateOnly(widget.history.last.updatedAt);
+        }
+        _replayIndex = _selectedHistory.length - 1;
+      }
+    }
+  }
+
+  @override
+  void dispose() {
+    _replayTimer?.cancel();
+    super.dispose();
+  }
+
+  void _toggleReplay() {
+    if (_isPlaying) {
+      _stopReplay();
+      setState(() {});
+      return;
+    }
+    final history = _selectedHistory;
+    if (history.length < 2) return;
+    setState(() => _replayIndex = 0);
+    _replayTimer = Timer.periodic(const Duration(milliseconds: 650), (timer) {
+      if (!mounted || _replayIndex >= history.length - 1) {
+        _stopReplay();
+        if (mounted) setState(() {});
+        return;
+      }
+      setState(() => _replayIndex++);
+    });
+    setState(() {});
+  }
+
+  void _stopReplay() {
+    _replayTimer?.cancel();
+    _replayTimer = null;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (widget.history.isEmpty) {
+      return const _InlineEmptyState(
+        icon: Icons.route_outlined,
+        message: 'No travel points have been recorded for this technician.',
+      );
+    }
+    final availableDays = widget.history
+        .map((point) => DateUtils.dateOnly(point.updatedAt))
+        .toSet()
+        .toList()
+      ..sort((left, right) => right.compareTo(left));
+    _selectedDay ??= availableDays.first;
+    final history = _selectedHistory;
+    final safeIndex = _replayIndex.clamp(0, history.length - 1).toInt();
+    final displayed = history.take(safeIndex + 1).toList();
+    final current = displayed.last;
+    final visited = technicianVisitedLocations(history);
+    final distance = technicianTravelDistanceMeters(history);
+    final route = displayed
+        .map((point) => LatLng(point.latitude, point.longitude))
+        .toList();
+    final markers = <GoogleMapPoint>[
+      GoogleMapPoint(
+        latitude: history.first.latitude,
+        longitude: history.first.longitude,
+        label: 'S',
+        color: AppTheme.accent,
+        icon: Icons.flag_outlined,
+      ),
+      if (displayed.length > 1)
+        GoogleMapPoint(
+          latitude: current.latitude,
+          longitude: current.longitude,
+          label: 'T',
+          color: AppTheme.primary,
+          icon: Icons.engineering_outlined,
+          bearing: current.bearing,
+        ),
+    ];
+
+    return _SectionCard(
+      title:
+          '${widget.technician == null ? 'Technician' : _registeredTechnicianName(widget.technician!)} travel replay',
+      subtitle:
+          'Working-hours journey path, timeline, visited locations, GPS speed, and accuracy.',
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Align(
+            alignment: Alignment.centerRight,
+            child: DropdownButton<DateTime>(
+              value: _selectedDay,
+              items: availableDays
+                  .map(
+                    (day) => DropdownMenuItem(
+                      value: day,
+                      child: Text(DateFormat('dd MMM yyyy').format(day)),
+                    ),
+                  )
+                  .toList(),
+              onChanged: (day) {
+                if (day == null) return;
+                _stopReplay();
+                setState(() {
+                  _selectedDay = day;
+                  _replayIndex = _selectedHistory.length - 1;
+                });
+              },
+            ),
+          ),
+          const SizedBox(height: 8),
+          Wrap(
+            spacing: 10,
+            runSpacing: 10,
+            children: [
+              _MiniStat(label: 'GPS points', value: '${history.length}'),
+              _MiniStat(
+                label: 'Distance',
+                value: distance < 1000
+                    ? '${distance.round()} m'
+                    : '${(distance / 1000).toStringAsFixed(2)} km',
+              ),
+              _MiniStat(label: 'Visited locations', value: '${visited.length}'),
+              _MiniStat(
+                label: 'Timeline',
+                value:
+                    '${DateFormat.jm().format(history.first.updatedAt)} - ${DateFormat.jm().format(history.last.updatedAt)}',
+              ),
+              const _MiniStat(
+                label: 'Tracking window',
+                value: '9:20 AM - 10:00 PM',
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              FilledButton.icon(
+                onPressed: history.length < 2 ? null : _toggleReplay,
+                style: FilledButton.styleFrom(
+                  minimumSize: const Size(0, 46),
+                ),
+                icon: Icon(_isPlaying ? Icons.pause : Icons.replay),
+                label: Text(_isPlaying ? 'Pause replay' : 'Replay journey'),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: LinearProgressIndicator(
+                  value:
+                      history.length < 2 ? 1 : safeIndex / (history.length - 1),
+                  minHeight: 8,
+                  borderRadius: BorderRadius.circular(99),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Text('${safeIndex + 1}/${history.length}'),
+            ],
+          ),
+          const SizedBox(height: 12),
+          SizedBox(
+            height: 300,
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(14),
+              child: InAppLiveMap(
+                points: markers,
+                routePolyline: route,
+                badge: _isPlaying ? 'Replaying movement' : 'Journey path',
+              ),
+            ),
+          ),
+          const SizedBox(height: 14),
+          LayoutBuilder(
+            builder: (context, constraints) {
+              final timeline = _TravelTimeline(points: history);
+              final stops = _VisitedLocations(points: visited);
+              if (constraints.maxWidth >= 760) {
+                return Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(child: timeline),
+                    const SizedBox(width: 14),
+                    Expanded(child: stops),
+                  ],
+                );
+              }
+              return Column(
+                children: [timeline, const SizedBox(height: 14), stops],
+              );
+            },
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _TravelTimeline extends StatelessWidget {
+  const _TravelTimeline({required this.points});
+
+  final List<TechnicianLocation> points;
+
+  @override
+  Widget build(BuildContext context) {
+    final visible = points.reversed.take(20).toList();
+    return _TravelListCard(
+      title: 'Travel timeline',
+      child: Column(
+        children: [
+          for (final point in visible)
+            ListTile(
+              dense: true,
+              contentPadding: EdgeInsets.zero,
+              leading: const Icon(Icons.timeline, color: AppTheme.primary),
+              title: Text(
+                  DateFormat('dd MMM, hh:mm:ss a').format(point.updatedAt)),
+              subtitle: Text(
+                '${((point.speed ?? 0) * 3.6).toStringAsFixed(1)} km/h · '
+                '±${(point.accuracy ?? 0).toStringAsFixed(0)} m'
+                '${point.activeBookingId == null ? '' : ' · Job ${point.activeBookingId}'}',
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+class _VisitedLocations extends StatelessWidget {
+  const _VisitedLocations({required this.points});
+
+  final List<TechnicianLocation> points;
+
+  @override
+  Widget build(BuildContext context) {
+    return _TravelListCard(
+      title: 'Visited locations',
+      child: Column(
+        children: [
+          for (var index = 0; index < points.length; index++)
+            ListTile(
+              dense: true,
+              contentPadding: EdgeInsets.zero,
+              leading: CircleAvatar(
+                radius: 15,
+                child: Text('${index + 1}'),
+              ),
+              title: Text(
+                '${points[index].latitude.toStringAsFixed(5)}, '
+                '${points[index].longitude.toStringAsFixed(5)}',
+              ),
+              subtitle: Text(DateFormat.jm().format(points[index].updatedAt)),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+class _TravelListCard extends StatelessWidget {
+  const _TravelListCard({required this.title, required this.child});
+
+  final String title;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      constraints: const BoxConstraints(maxHeight: 300),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: AppTheme.surface,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: AppTheme.divider),
+      ),
+      child: SingleChildScrollView(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(title, style: const TextStyle(fontWeight: FontWeight.w900)),
+            const SizedBox(height: 6),
+            child,
+          ],
+        ),
       ),
     );
   }
@@ -3204,11 +3904,22 @@ class _AttendanceTechnicianCard extends ConsumerWidget {
                       ],
                     ),
                   ),
-                  Switch(
-                    value: technician.isActive,
-                    onChanged: (value) => ref
-                        .read(adminRepositoryProvider)
-                        .setTechnicianActive(technician.uid, value),
+                  Tooltip(
+                    message: technician.isActive
+                        ? 'Inactivate technician'
+                        : 'Reactivate technician',
+                    child: Switch(
+                      value: technician.isActive,
+                      onChanged:
+                          technician.accountStatus == AccountStatus.approved
+                              ? (value) => _changeActiveStatus(
+                                    context: context,
+                                    ref: ref,
+                                    technician: technician,
+                                    isActive: value,
+                                  )
+                              : null,
+                    ),
                   ),
                 ],
               ),
@@ -3217,6 +3928,14 @@ class _AttendanceTechnicianCard extends ConsumerWidget {
                 spacing: 8,
                 runSpacing: 8,
                 children: [
+                  _StatusPill(
+                    label: technician.accountStatus.label,
+                    color: switch (technician.accountStatus) {
+                      AccountStatus.approved => AppTheme.accent,
+                      AccountStatus.pendingApproval => const Color(0xFFF38A1F),
+                      AccountStatus.rejected => const Color(0xFFD95C2A),
+                    },
+                  ),
                   _StatusPill(
                     label: technician.isActive ? 'Available' : 'Inactive',
                     color: availabilityColor,
@@ -3261,6 +3980,34 @@ class _AttendanceTechnicianCard extends ConsumerWidget {
                         ? const Color(0xFFD95C2A)
                         : AppTheme.textSecondary,
                   ),
+                  if (technician.approvedAt != null)
+                    _StatusPill(
+                      label:
+                          'Approved ${DateFormat('dd MMM yyyy').format(technician.approvedAt!)}',
+                      color: AppTheme.accent,
+                    ),
+                  if ((technician.approvedBy ?? '').trim().isNotEmpty)
+                    _StatusPill(
+                      label: 'Approved by ${technician.approvedBy}',
+                      color: AppTheme.primary,
+                    ),
+                  if ((technician.rejectionReason ?? '').trim().isNotEmpty)
+                    _StatusPill(
+                      label: 'Reason: ${technician.rejectionReason}',
+                      color: const Color(0xFFD95C2A),
+                    ),
+                  if (!technician.isActive &&
+                      (technician.inactivationReason ?? '').trim().isNotEmpty)
+                    _StatusPill(
+                      label: 'Inactive: ${technician.inactivationReason}',
+                      color: const Color(0xFFD95C2A),
+                    ),
+                  if (!technician.isActive && technician.inactivatedAt != null)
+                    _StatusPill(
+                      label:
+                          'Since ${DateFormat('dd MMM yyyy, hh:mm a').format(technician.inactivatedAt!)}',
+                      color: AppTheme.textSecondary,
+                    ),
                 ],
               ),
               const SizedBox(height: 12),
@@ -3279,6 +4026,150 @@ class _AttendanceTechnicianCard extends ConsumerWidget {
         ),
       ),
     );
+  }
+
+  Future<void> _changeActiveStatus({
+    required BuildContext context,
+    required WidgetRef ref,
+    required AppUser technician,
+    required bool isActive,
+  }) async {
+    final branchAdmin = ref.read(currentUserProvider).valueOrNull;
+    final branchId = branchAdmin?.branchId;
+    if (branchAdmin == null || branchId == null) return;
+
+    if (!isActive && activeBookings.isNotEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Reassign or place active bookings on hold before inactivation.',
+          ),
+        ),
+      );
+      return;
+    }
+
+    String? reason;
+    if (isActive) {
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          title: const Text('Reactivate technician?'),
+          content: Text(
+            '${_registeredTechnicianName(technician)} will be able to sign in and receive bookings again.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext, false),
+              child: const Text('Cancel'),
+            ),
+            FilledButton.icon(
+              onPressed: () => Navigator.pop(dialogContext, true),
+              icon: const Icon(Icons.restore),
+              label: const Text('Reactivate'),
+            ),
+          ],
+        ),
+      );
+      if (confirmed != true) return;
+    } else {
+      reason = await _showInactivationDialog(context, technician);
+      if (reason == null) return;
+    }
+
+    try {
+      await ref.read(adminRepositoryProvider).setTechnicianActive(
+            uid: technician.uid,
+            isActive: isActive,
+            actorId: branchAdmin.uid,
+            branchId: branchId,
+            reason: reason,
+          );
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            isActive
+                ? 'Technician reactivated.'
+                : 'Technician inactivated. Existing history was retained.',
+          ),
+        ),
+      );
+    } catch (error) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(error.toString()),
+          backgroundColor: Colors.red.shade700,
+        ),
+      );
+    }
+  }
+
+  Future<String?> _showInactivationDialog(
+    BuildContext context,
+    AppUser technician,
+  ) async {
+    final formKey = GlobalKey<FormState>();
+    final controller = TextEditingController();
+    try {
+      return await showDialog<String>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          title: const Text('Inactivate technician?'),
+          content: Form(
+            key: formKey,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  '${_registeredTechnicianName(technician)} will lose sign-in and booking assignment access. Historical bookings, earnings, ratings, and GPS records remain.',
+                ),
+                const SizedBox(height: 16),
+                TextFormField(
+                  controller: controller,
+                  autofocus: true,
+                  minLines: 2,
+                  maxLines: 4,
+                  decoration: const InputDecoration(
+                    labelText: 'Reason for inactivation',
+                    hintText: 'Example: technician left the branch',
+                  ),
+                  validator: (value) {
+                    try {
+                      normalizeTechnicianInactivationReason(value ?? '');
+                      return null;
+                    } on ArgumentError catch (error) {
+                      return error.message?.toString();
+                    }
+                  },
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('Cancel'),
+            ),
+            FilledButton.icon(
+              onPressed: () {
+                if (!formKey.currentState!.validate()) return;
+                Navigator.pop(
+                  dialogContext,
+                  normalizeTechnicianInactivationReason(controller.text),
+                );
+              },
+              icon: const Icon(Icons.person_off_outlined),
+              label: const Text('Inactivate'),
+            ),
+          ],
+        ),
+      );
+    } finally {
+      controller.dispose();
+    }
   }
 }
 
@@ -3302,7 +4193,8 @@ class _AttendanceDetailDialog extends ConsumerWidget {
         .where((entry) => entry.record != null)
         .map((entry) => entry.record!)
         .toList();
-    final notMarked = monthEntries.where((entry) => entry.record == null).length;
+    final notMarked =
+        monthEntries.where((entry) => entry.record == null).length;
 
     return AlertDialog(
       title: Text('${_registeredTechnicianName(technician)} attendance'),
@@ -3386,7 +4278,8 @@ class _AttendanceSheetHeader extends StatelessWidget {
           Expanded(
               flex: 2,
               child: Text('Status / Face ID', style: _sheetHeaderStyle)),
-          Expanded(flex: 2, child: Text('Admin action', style: _sheetHeaderStyle)),
+          Expanded(
+              flex: 2, child: Text('Admin action', style: _sheetHeaderStyle)),
         ],
       ),
     );
@@ -3507,7 +4400,8 @@ class _AttendanceSheetRow extends ConsumerWidget {
                       labelText: 'Attendance status',
                     ),
                     items: const [
-                      DropdownMenuItem(value: 'present', child: Text('Present')),
+                      DropdownMenuItem(
+                          value: 'present', child: Text('Present')),
                       DropdownMenuItem(
                         value: 'late',
                         child: Text('Late allowed'),
@@ -3528,10 +4422,9 @@ class _AttendanceSheetRow extends ConsumerWidget {
                       labelText: 'Reason',
                       hintText: 'Example: medical emergency, network issue',
                     ),
-                    validator: (value) =>
-                        value == null || value.trim().isEmpty
-                            ? 'Reason is required'
-                            : null,
+                    validator: (value) => value == null || value.trim().isEmpty
+                        ? 'Reason is required'
+                        : null,
                   ),
                 ],
               ),
@@ -3554,6 +4447,7 @@ class _AttendanceSheetRow extends ConsumerWidget {
                         status: status,
                         adminId: admin.uid,
                         reason: reason.text,
+                        branchId: technician.branchId ?? admin.branchId ?? '',
                       );
                   if (dialogContext.mounted) Navigator.pop(dialogContext);
                 },
@@ -3738,9 +4632,8 @@ class _AdminBookingCard extends ConsumerWidget {
       }
       activeLoad[technicianId] = (activeLoad[technicianId] ?? 0) + 1;
     }
-    final branchRoster = branchTechnicians.isEmpty
-        ? allTechnicians
-        : branchTechnicians;
+    final branchRoster =
+        branchTechnicians.isEmpty ? allTechnicians : branchTechnicians;
     final hasApprovedTechnician = branchRoster.any(
       (tech) => tech.accountStatus == AccountStatus.approved,
     );
@@ -3748,15 +4641,9 @@ class _AdminBookingCard extends ConsumerWidget {
       (tech) => tech.accountStatus == AccountStatus.pendingApproval,
     );
     final hasInactiveTechnician = branchRoster.any(
-      (tech) =>
-          tech.accountStatus == AccountStatus.approved && !tech.isActive,
+      (tech) => tech.accountStatus == AccountStatus.approved && !tech.isActive,
     );
-    final technicians = branchRoster
-        .where(
-          (tech) =>
-              tech.isActive && tech.accountStatus == AccountStatus.approved,
-        )
-        .toList()
+    final technicians = branchRoster.where(isTechnicianAssignable).toList()
       ..sort(
         (left, right) => _compareTechnicianPriority(
           left: left,
@@ -4532,9 +5419,7 @@ class _TechnicianPickerRow extends StatelessWidget {
                 borderRadius: BorderRadius.circular(999),
               ),
               child: Text(
-                busy
-                    ? 'Busy · $activeJobs active'
-                    : 'Free',
+                busy ? 'Busy · $activeJobs active' : 'Free',
                 style: TextStyle(
                   color: statusColor,
                   fontSize: 11,
@@ -4840,7 +5725,8 @@ class _TechnicianTrackingTile extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: selected ? AppTheme.primary.withValues(alpha: 0.06) : Colors.white,
+        color:
+            selected ? AppTheme.primary.withValues(alpha: 0.06) : Colors.white,
         borderRadius: BorderRadius.circular(12),
         border: Border.all(
           color: selected ? AppTheme.primary : AppTheme.divider,
@@ -5157,6 +6043,7 @@ class _AdminStatePanel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    if (busy) return FixNowAdminSkeleton(label: title);
     return Center(
       child: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: 560),
@@ -5172,14 +6059,8 @@ class _AdminStatePanel extends StatelessWidget {
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                if (busy)
-                  const Padding(
-                    padding: EdgeInsets.only(bottom: 16),
-                    child: CircularProgressIndicator(),
-                  )
-                else
-                  Icon(icon, size: 44, color: AppTheme.primary),
-                if (!busy) const SizedBox(height: 12),
+                Icon(icon, size: 44, color: AppTheme.primary),
+                const SizedBox(height: 12),
                 Text(
                   title,
                   textAlign: TextAlign.center,
@@ -5242,7 +6123,7 @@ bool _bookingMatchesBranch({
   required String branchId,
 }) {
   final bookingBranchId = booking.branchId?.trim();
-  if (bookingBranchId == null || bookingBranchId.isEmpty) return true;
+  if (bookingBranchId == null || bookingBranchId.isEmpty) return false;
   if (bookingBranchId == branchId) return true;
 
   final bookingTerms = <String>[

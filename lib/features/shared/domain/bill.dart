@@ -9,12 +9,14 @@ class Bill {
     required this.amount,
     required this.createdAt,
     required this.isPaid,
+    this.branchId,
     this.paymentMode,
     this.paymentSubmittedAt,
     this.paymentConfirmedAt,
     this.paymentConfirmedBy,
     this.paymentApprovedAt,
     this.paymentApprovedBy,
+    this.paidAt,
   });
 
   final String id;
@@ -24,12 +26,17 @@ class Bill {
   final double amount;
   final DateTime createdAt;
   final bool isPaid;
+  final String? branchId;
   final String? paymentMode;
   final DateTime? paymentSubmittedAt;
   final DateTime? paymentConfirmedAt;
   final String? paymentConfirmedBy;
   final DateTime? paymentApprovedAt;
   final String? paymentApprovedBy;
+  final DateTime? paidAt;
+
+  DateTime get revenueDate =>
+      paidAt ?? paymentApprovedAt ?? paymentConfirmedAt ?? createdAt;
 
   bool get hasPaymentForApproval =>
       !isPaid && (paymentMode ?? '').trim().isNotEmpty;
@@ -61,14 +68,14 @@ class Bill {
       amount: (data['amount'] as num?)?.toDouble() ?? 0,
       createdAt: (data['createdAt'] as Timestamp?)?.toDate() ?? DateTime.now(),
       isPaid: data['isPaid'] as bool? ?? false,
+      branchId: data['branchId'] as String?,
       paymentMode: data['paymentMode'] as String?,
-      paymentSubmittedAt:
-          (data['paymentSubmittedAt'] as Timestamp?)?.toDate(),
-      paymentConfirmedAt:
-          (data['paymentConfirmedAt'] as Timestamp?)?.toDate(),
+      paymentSubmittedAt: (data['paymentSubmittedAt'] as Timestamp?)?.toDate(),
+      paymentConfirmedAt: (data['paymentConfirmedAt'] as Timestamp?)?.toDate(),
       paymentConfirmedBy: data['paymentConfirmedBy'] as String?,
       paymentApprovedAt: (data['paymentApprovedAt'] as Timestamp?)?.toDate(),
       paymentApprovedBy: data['paymentApprovedBy'] as String?,
+      paidAt: (data['paidAt'] as Timestamp?)?.toDate(),
     );
   }
 }
