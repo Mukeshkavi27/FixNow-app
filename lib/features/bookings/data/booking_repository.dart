@@ -35,6 +35,21 @@ bool isTechnicianBusyStatus(BookingStatus status) {
   return technicianBusyStatuses.contains(status);
 }
 
+Booking? findTechnicianActiveBooking(
+  Iterable<Booking> bookings,
+  String technicianId, {
+  String? excludingBookingId,
+}) {
+  for (final booking in bookings) {
+    if (booking.id != excludingBookingId &&
+        booking.technicianId == technicianId &&
+        isTechnicianBusyStatus(booking.status)) {
+      return booking;
+    }
+  }
+  return null;
+}
+
 bool isTechnicianVisibleStatus(BookingStatus status) {
   return status != BookingStatus.booked && status != BookingStatus.closed;
 }
@@ -165,6 +180,8 @@ class BookingRepository {
       throw StateError('Invalid booking transition: $expected -> $next');
     }
     final bookingRef = _firestore.collection('bookings').doc(bookingId);
+    final workloadRef =
+        _firestore.collection('technician_active_jobs').doc(technicianId);
     return _firestore.runTransaction((transaction) async {
       final snapshot = await transaction.get(bookingRef);
       final data = snapshot.data();
@@ -181,6 +198,9 @@ class BookingRepository {
         'status': next.name,
         'updatedAt': FieldValue.serverTimestamp(),
       });
+      if (!isTechnicianBusyStatus(next)) {
+        transaction.delete(workloadRef);
+      }
     });
   }
 
@@ -348,13 +368,40 @@ class BookingRepository {
     required String technicianName,
   }) async {
     final bookingRef = _firestore.collection('bookings').doc(bookingId);
-    final notificationRef = _firestore.collection('notifications').doc();
+    final bookingSnapshot = await bookingRef.get();
+    final bookingData = bookingSnapshot.data();
+    if (bookingData == null) throw StateError('Booking not found.');
+    final branchId = bookingData['branchId'] as String? ?? '';
+    if (branchId.isEmpty) {
+      throw StateError(
+          'The booking must belong to a branch before assignment.');
+    }
+
+    final assignedSnapshot = await _firestore
+        .collection('bookings')
+        .where('branchId', isEqualTo: branchId)
+        .where('technicianId', isEqualTo: technicianId)
+        .get();
+    final existingActiveBooking = findTechnicianActiveBooking(
+      assignedSnapshot.docs.map(Booking.fromFirestore),
+      technicianId,
+      excludingBookingId: bookingId,
+    );
+    if (existingActiveBooking != null) {
+      throw StateError(
+        'This technician already has an active job. Complete or place it on hold before assigning another.',
+      );
+    }
+
+    final workloadRef =
+        _firestore.collection('technician_active_jobs').doc(technicianId);
     await _firestore.runTransaction((transaction) async {
       final snapshot = await transaction.get(bookingRef);
       final data = snapshot.data();
       if (data == null) throw StateError('Booking not found.');
       final technicianRef = _firestore.collection('users').doc(technicianId);
       final technicianSnapshot = await transaction.get(technicianRef);
+      final workloadSnapshot = await transaction.get(workloadRef);
       final technician = technicianSnapshot.data();
       if (technician == null ||
           technician['role'] != 'technician' ||
@@ -377,26 +424,61 @@ class BookingRepository {
           'This booking is already in progress. Put it on hold before assigning another technician.',
         );
       }
+
+      final lockedBookingId = workloadSnapshot.data()?['bookingId'] as String?;
+      if (lockedBookingId != null &&
+          lockedBookingId.isNotEmpty &&
+          lockedBookingId != bookingId) {
+        final lockedBookingSnapshot = await transaction.get(
+          _firestore.collection('bookings').doc(lockedBookingId),
+        );
+        final lockedBooking = lockedBookingSnapshot.data();
+        final lockedStatus = BookingStatus.fromString(
+          lockedBooking?['status'] as String? ?? BookingStatus.closed.name,
+        );
+        if (lockedBooking?['technicianId'] == technicianId &&
+            isTechnicianBusyStatus(lockedStatus)) {
+          throw StateError(
+            'This technician already has an active job. Complete or place it on hold before assigning another.',
+          );
+        }
+      }
+
       transaction.update(bookingRef, {
         'technicianId': technicianId,
         'technicianName': technicianName,
         'status': BookingStatus.technicianAssigned.name,
+        'assignedAt': FieldValue.serverTimestamp(),
+        'assignmentUpdatedAt': FieldValue.serverTimestamp(),
         'holdReason': FieldValue.delete(),
         'heldAt': FieldValue.delete(),
         'updatedAt': FieldValue.serverTimestamp(),
       });
-      transaction.set(notificationRef, {
-        'userId': technicianId,
+      transaction.set(workloadRef, {
+        'technicianId': technicianId,
         'bookingId': bookingId,
         'branchId': data['branchId'],
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+    });
+    // Notification policy must never roll back the operational assignment.
+    // Firestore/Sockets already deliver the booking itself in real time.
+    try {
+      await _firestore.collection('notifications').add({
+        'userId': technicianId,
+        'bookingId': bookingId,
+        'branchId': branchId,
         'type': 'technicianAssignment',
         'title': 'New service assigned',
         'body':
-            '${data['applianceType'] ?? 'Service'} for ${data['customerName'] ?? 'customer'} is assigned to you.',
+            '${bookingData['applianceType'] ?? 'Service'} for ${bookingData['customerName'] ?? 'customer'} is assigned to you.',
         'isRead': false,
         'createdAt': FieldValue.serverTimestamp(),
       });
-    });
+    } on FirebaseException {
+      // Socket.IO bookingAssigned and the technician booking snapshot remain
+      // authoritative when optional notification creation is restricted.
+    }
   }
 
   Future<void> rejectAssignment({
@@ -404,6 +486,8 @@ class BookingRepository {
     required String technicianId,
   }) {
     final bookingRef = _firestore.collection('bookings').doc(bookingId);
+    final workloadRef =
+        _firestore.collection('technician_active_jobs').doc(technicianId);
     return _firestore.runTransaction((transaction) async {
       final snapshot = await transaction.get(bookingRef);
       final data = snapshot.data();
@@ -420,6 +504,7 @@ class BookingRepository {
         'heldAt': FieldValue.delete(),
         'updatedAt': FieldValue.serverTimestamp(),
       });
+      transaction.delete(workloadRef);
     });
   }
 
@@ -451,6 +536,12 @@ class BookingRepository {
         'heldAt': FieldValue.serverTimestamp(),
         'updatedAt': FieldValue.serverTimestamp(),
       });
+      final technicianId = data['technicianId'] as String?;
+      if (technicianId != null && technicianId.isNotEmpty) {
+        transaction.delete(
+          _firestore.collection('technician_active_jobs').doc(technicianId),
+        );
+      }
     });
   }
 
@@ -475,11 +566,38 @@ class BookingRepository {
       if (technicianId == null || technicianId.isEmpty) {
         throw StateError('Assign a technician before resuming this booking.');
       }
+      final workloadRef =
+          _firestore.collection('technician_active_jobs').doc(technicianId);
+      final workload = await transaction.get(workloadRef);
+      final lockedBookingId = workload.data()?['bookingId'] as String?;
+      if (lockedBookingId != null &&
+          lockedBookingId.isNotEmpty &&
+          lockedBookingId != bookingId) {
+        final lockedBooking = await transaction.get(
+          _firestore.collection('bookings').doc(lockedBookingId),
+        );
+        final lockedData = lockedBooking.data();
+        final lockedStatus = BookingStatus.fromString(
+          lockedData?['status'] as String? ?? BookingStatus.closed.name,
+        );
+        if (lockedData?['technicianId'] == technicianId &&
+            isTechnicianBusyStatus(lockedStatus)) {
+          throw StateError(
+            'This technician already has another active job.',
+          );
+        }
+      }
       transaction.update(bookingRef, {
         'status': BookingStatus.serviceStarted.name,
         'holdReason': FieldValue.delete(),
         'heldAt': FieldValue.delete(),
         'resumedAt': FieldValue.serverTimestamp(),
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+      transaction.set(workloadRef, {
+        'technicianId': technicianId,
+        'bookingId': bookingId,
+        'branchId': data['branchId'],
         'updatedAt': FieldValue.serverTimestamp(),
       });
       transaction.set(technicianNotificationRef, {

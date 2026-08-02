@@ -10,6 +10,7 @@ class Bill {
     required this.createdAt,
     required this.isPaid,
     this.branchId,
+    this.revenueBranchId,
     this.paymentMode,
     this.paymentSubmittedAt,
     this.paymentConfirmedAt,
@@ -27,6 +28,7 @@ class Bill {
   final DateTime createdAt;
   final bool isPaid;
   final String? branchId;
+  final String? revenueBranchId;
   final String? paymentMode;
   final DateTime? paymentSubmittedAt;
   final DateTime? paymentConfirmedAt;
@@ -69,6 +71,7 @@ class Bill {
       createdAt: (data['createdAt'] as Timestamp?)?.toDate() ?? DateTime.now(),
       isPaid: data['isPaid'] as bool? ?? false,
       branchId: data['branchId'] as String?,
+      revenueBranchId: data['revenueBranchId'] as String?,
       paymentMode: data['paymentMode'] as String?,
       paymentSubmittedAt: (data['paymentSubmittedAt'] as Timestamp?)?.toDate(),
       paymentConfirmedAt: (data['paymentConfirmedAt'] as Timestamp?)?.toDate(),

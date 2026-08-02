@@ -14,8 +14,8 @@ export function validateBranchAdminInput(body) {
     throw new Error('A valid email is required');
   }
   if (input.phone.length < 7) throw new Error('A valid phone is required');
-  if (input.password.length < 12) {
-    throw new Error('Temporary password must contain at least 12 characters');
+  if (input.password.length < 6) {
+    throw new Error('Temporary password must contain at least 6 characters');
   }
   if (!input.branchId) throw new Error('Branch assignment is required');
   return input;

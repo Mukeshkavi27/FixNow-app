@@ -17,6 +17,7 @@ class Attendance {
     this.adminOverrideReason,
     this.adminOverrideAt,
     this.branchId,
+    this.locationSource = 'deviceGps',
   });
 
   final String id;
@@ -34,6 +35,7 @@ class Attendance {
   final String? adminOverrideReason;
   final DateTime? adminOverrideAt;
   final String? branchId;
+  final String locationSource;
 
   factory Attendance.fromFirestore(DocumentSnapshot<Map<String, dynamic>> doc) {
     final data = doc.data() ?? {};
@@ -53,6 +55,7 @@ class Attendance {
       adminOverrideReason: data['adminOverrideReason'] as String?,
       adminOverrideAt: (data['adminOverrideAt'] as Timestamp?)?.toDate(),
       branchId: data['branchId'] as String?,
+      locationSource: data['locationSource'] as String? ?? 'deviceGps',
     );
   }
 
@@ -68,6 +71,7 @@ class Attendance {
         if (faceMatchScore != null) 'faceMatchScore': faceMatchScore,
         'markedBy': markedBy,
         if (branchId != null) 'branchId': branchId,
+        'locationSource': locationSource,
         if (adminOverrideBy != null) 'adminOverrideBy': adminOverrideBy,
         if (adminOverrideReason != null)
           'adminOverrideReason': adminOverrideReason,

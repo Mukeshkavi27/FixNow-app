@@ -8,7 +8,7 @@
   <meta name="description" content="Book trusted home appliance repair and maintenance with FixNow. Schedule AC, refrigerator, washing machine, TV, microwave, fan, and water purifier service with verified technicians and live job tracking.">
   <meta name="keywords" content="home appliance repair, appliance service booking, AC repair, refrigerator repair, washing machine repair, TV repair, microwave repair, water purifier service, verified technicians, FixNow">
   <meta name="robots" content="index, follow">
-  <meta name="theme-color" content="#A23C35">
+  <meta name="theme-color" content="#0B5EEA">
   <meta property="og:title" content="FixNow | Home Appliance Repair & Service Booking">
   <meta property="og:description" content="Schedule trusted appliance repair services with verified technicians, clear estimates, live tracking, and secure service updates.">
   <meta property="og:type" content="website">
@@ -29,8 +29,73 @@
   <title>FixNow | Home Appliance Repair & Service Booking</title>
   <link rel="manifest" href="manifest.json">
 
+  <style>
+    html, body {
+      height: 100%;
+      margin: 0;
+      background: #f7faff;
+    }
+
+    #app-loading {
+      position: fixed;
+      inset: 0;
+      z-index: 9999;
+      display: grid;
+      place-items: center;
+      background: #f7faff;
+      color: #15243b;
+      font: 600 14px/1.4 Arial, sans-serif;
+      transition: opacity 180ms ease;
+    }
+
+    #app-loading.is-ready {
+      opacity: 0;
+      pointer-events: none;
+    }
+
+    .app-loading-content {
+      display: grid;
+      justify-items: center;
+      gap: 14px;
+    }
+
+    .app-loading-mark {
+      width: 48px;
+      height: 48px;
+      object-fit: contain;
+    }
+
+    .app-loading-spinner {
+      width: 24px;
+      height: 24px;
+      border: 3px solid #dbe7fb;
+      border-top-color: #0b5eea;
+      border-radius: 50%;
+      animation: app-loading-spin 700ms linear infinite;
+    }
+
+    @keyframes app-loading-spin {
+      to { transform: rotate(360deg); }
+    }
+  </style>
+
 </head>
 <body>
+  <div id="app-loading" role="status" aria-live="polite">
+    <div class="app-loading-content">
+      <img class="app-loading-mark" src="icons/Icon-192.png" alt="FixNow">
+      <div class="app-loading-spinner" aria-hidden="true"></div>
+      <span>Preparing FixNow…</span>
+    </div>
+  </div>
+  <script>
+    window.addEventListener('flutter-first-frame', function () {
+      const loading = document.getElementById('app-loading');
+      if (!loading) return;
+      loading.classList.add('is-ready');
+      window.setTimeout(function () { loading.remove(); }, 200);
+    });
+  </script>
   <script src="flutter_bootstrap.js" async></script>
 </body>
 </html>

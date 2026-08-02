@@ -241,16 +241,24 @@ class TechnicianRepository {
 
   Stream<List<TechnicianLocation>> watchTravelHistory(
     String technicianId, {
+    String? branchId,
     int limit = 5000,
   }) {
-    return _firestore
+    Query<Map<String, dynamic>> query = _firestore
         .collection('technician_locations')
         .doc(technicianId)
-        .collection('history')
-        .orderBy('updatedAt', descending: true)
-        .limit(limit)
-        .snapshots()
-        .map((snapshot) {
+        .collection('history');
+
+    if (branchId != null && branchId.isNotEmpty) {
+      // Branch admins may only read history documents from their own branch.
+      // Firestore rules evaluate the query itself, so this constraint must be
+      // present even when every existing history point belongs to the branch.
+      query = query.where('branchId', isEqualTo: branchId);
+    } else {
+      query = query.orderBy('updatedAt', descending: true);
+    }
+
+    return query.limit(limit).snapshots().map((snapshot) {
       final points = snapshot.docs
           .map(TechnicianLocation.fromFirestore)
           .toList()

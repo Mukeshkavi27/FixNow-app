@@ -87,6 +87,7 @@ void main() {
     List<AppUser>? technicianRoster,
     String? initialMonitoringTechnicianId,
     List<TechnicianLocation> travelHistory = const [],
+    Object? travelHistoryError,
     List<OvertimeRecord> overtimeRecords = const [],
   }) {
     return ProviderScope(
@@ -117,7 +118,9 @@ void main() {
           (ref) => Stream.value(approvalNotifications),
         ),
         technicianTravelHistoryProvider.overrideWith(
-          (ref, technicianId) => Stream.value(travelHistory),
+          (ref, technicianId) => travelHistoryError == null
+              ? Stream.value(travelHistory)
+              : Stream.error(travelHistoryError),
         ),
         adminOvertimeProvider.overrideWith(
           (ref) => Stream.value(overtimeRecords),
@@ -349,6 +352,29 @@ void main() {
     expect(find.text('Travel timeline'), findsOneWidget);
     expect(find.text('Visited locations'), findsWidgets);
     expect(find.text('Tracking window: 9:20 AM - 10:00 PM'), findsOneWidget);
+  });
+
+  testWidgets('travel history errors do not expose Firestore details', (
+    tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(1440, 1200));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.pumpWidget(
+      dashboard(
+        initialMonitoringTechnicianId: technician.uid,
+        travelHistoryError: Exception(
+          '[cloud_firestore/permission-denied] Missing permissions',
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(
+      find.text('Travel history is temporarily unavailable. Please try again.'),
+      findsOneWidget,
+    );
+    expect(find.textContaining('cloud_firestore'), findsNothing);
+    expect(find.textContaining('permission-denied'), findsNothing);
   });
 
   testWidgets('Branch Admin sees overtime duration and extra work', (

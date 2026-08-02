@@ -1,5 +1,7 @@
 // ignore_for_file: unused_element, unused_element_parameter
 
+import 'dart:convert';
+
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -18,6 +20,7 @@ import '../../../core/branches/branch_resolver.dart';
 import '../../../core/enums/account_status.dart';
 import '../../../core/enums/booking_status.dart';
 import '../../../core/enums/user_role.dart';
+import '../../../core/enums/technician_category.dart';
 import '../../../core/maps/google_static_map.dart';
 import '../../auth/data/auth_repository.dart';
 import '../../auth/domain/app_user.dart';
@@ -26,9 +29,11 @@ import '../../bookings/domain/booking.dart';
 import '../../shared/data/bill_repository.dart';
 import '../../shared/data/notification_repository.dart';
 import '../../shared/data/review_repository.dart';
+import '../../shared/data/technician_incentive_repository.dart';
 import '../../shared/domain/bill.dart';
 import '../../shared/domain/app_notification.dart';
 import '../../shared/domain/review.dart';
+import '../../shared/domain/technician_incentive.dart';
 import '../../shared/presentation/revenue_dashboard.dart';
 import '../../shared/presentation/technician_performance_dashboard.dart';
 import '../../technician/data/technician_repository.dart';
@@ -52,6 +57,11 @@ final allBookingsProvider = StreamProvider.autoDispose<List<Booking>>((ref) {
 final techniciansProvider = StreamProvider.autoDispose<List<AppUser>>((ref) {
   final admin = ref.watch(currentUserProvider).valueOrNull;
   final branchId = admin?.role == UserRole.branchAdmin ? admin?.branchId : null;
+  if (branchId != null && branchId.isNotEmpty) {
+    return ref
+        .watch(adminRepositoryProvider)
+        .watchTechniciansVisibleToBranch(branchId);
+  }
   return ref
       .watch(adminRepositoryProvider)
       .watchTechnicians(branchId: branchId);
@@ -67,6 +77,15 @@ final allBillsProvider = StreamProvider.autoDispose<List<Bill>>((ref) {
   final admin = ref.watch(currentUserProvider).valueOrNull;
   final branchId = admin?.role == UserRole.branchAdmin ? admin?.branchId : null;
   return ref.watch(billRepositoryProvider).watchAllBills(branchId: branchId);
+});
+
+final allTechnicianIncentivesProvider =
+    StreamProvider.autoDispose<List<TechnicianIncentive>>((ref) {
+  final admin = ref.watch(currentUserProvider).valueOrNull;
+  final branchId = admin?.role == UserRole.branchAdmin ? admin?.branchId : null;
+  return ref
+      .watch(technicianIncentiveRepositoryProvider)
+      .watchAll(revenueBranchId: branchId);
 });
 
 final allReviewsProvider = StreamProvider.autoDispose<List<Review>>((ref) {
@@ -88,9 +107,16 @@ final activeTechnicianLocationsProvider =
 
 final technicianTravelHistoryProvider = StreamProvider.autoDispose
     .family<List<TechnicianLocation>, String>((ref, technicianId) {
+  final admin = ref.watch(currentUserProvider).valueOrNull;
+  if (admin == null) return Stream.value(const <TechnicianLocation>[]);
+  final branchId = admin.role == UserRole.branchAdmin ? admin.branchId : null;
+  if (admin.role == UserRole.branchAdmin &&
+      (branchId == null || branchId.isEmpty)) {
+    return Stream.value(const <TechnicianLocation>[]);
+  }
   return ref
       .watch(technicianRepositoryProvider)
-      .watchTravelHistory(technicianId);
+      .watchTravelHistory(technicianId, branchId: branchId);
 });
 
 final adminOvertimeProvider =
@@ -207,6 +233,7 @@ class _AdminDashboardScreenState extends ConsumerState<AdminDashboardScreen> {
     final techniciansAsync = ref.watch(techniciansProvider);
     final customersAsync = ref.watch(customersProvider);
     final billsAsync = ref.watch(allBillsProvider);
+    final incentivesAsync = ref.watch(allTechnicianIncentivesProvider);
     final reviewsAsync = ref.watch(allReviewsProvider);
     final locationsAsync = ref.watch(activeTechnicianLocationsProvider);
     final attendanceAsync = ref.watch(attendanceProvider);
@@ -307,6 +334,13 @@ class _AdminDashboardScreenState extends ConsumerState<AdminDashboardScreen> {
                         branch: effectiveBranch,
                         branchId: effectiveBranchId,
                       ),
+                    )
+                    .toList();
+                final branchRevenueTechnicians = technicians
+                    .where(
+                      (technician) =>
+                          (technician.nativeBranchId ?? technician.branchId) ==
+                          effectiveBranchId,
                     )
                     .toList();
                 if (customersAsync.hasError) {
@@ -487,7 +521,8 @@ class _AdminDashboardScreenState extends ConsumerState<AdminDashboardScreen> {
                       _AdminTab.revenue => _RevenueAdminTab(
                           bills: bills,
                           bookings: branchBookings,
-                          technicians: branchTechnicians,
+                          technicians: branchRevenueTechnicians,
+                          incentives: incentivesAsync.valueOrNull ?? const [],
                           branch: effectiveBranch,
                           now: now,
                         ),
@@ -515,6 +550,7 @@ class _AdminDashboardScreenState extends ConsumerState<AdminDashboardScreen> {
                         ref.invalidate(allBookingsProvider);
                         ref.invalidate(techniciansProvider);
                         ref.invalidate(allBillsProvider);
+                        ref.invalidate(allTechnicianIncentivesProvider);
                         ref.invalidate(activeTechnicianLocationsProvider);
                         ref.invalidate(adminOvertimeProvider);
                       },
@@ -2642,6 +2678,7 @@ class _RevenueAdminTab extends StatelessWidget {
     required this.bills,
     required this.bookings,
     required this.technicians,
+    required this.incentives,
     required this.branch,
     required this.now,
   });
@@ -2649,6 +2686,7 @@ class _RevenueAdminTab extends StatelessWidget {
   final List<Bill> bills;
   final List<Booking> bookings;
   final List<AppUser> technicians;
+  final List<TechnicianIncentive> incentives;
   final BranchInfo branch;
   final DateTime now;
 
@@ -2659,6 +2697,7 @@ class _RevenueAdminTab extends StatelessWidget {
       bookings: bookings,
       branches: [branch],
       technicians: technicians,
+      incentives: incentives,
       now: now,
       lockedBranchId: branch.id,
       title: 'Branch revenue dashboard',
@@ -3058,7 +3097,7 @@ class _TravelHistorySection extends StatelessWidget {
       ),
       error: (error, _) => _InlineEmptyState(
         icon: Icons.error_outline,
-        message: 'Travel history could not be loaded: $error',
+        message: 'Travel history is temporarily unavailable. Please try again.',
       ),
       data: (points) => _TechnicianTravelReplayPanel(
         technician: technician,
@@ -3826,6 +3865,17 @@ class _AttendanceTechnicianCard extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final technician = item.technician;
+    final technicianReviews =
+        (ref.watch(allReviewsProvider).valueOrNull ?? const <Review>[])
+            .where((review) => review.technicianId == technician.uid)
+            .toList();
+    final averageRating = technicianReviews.isEmpty
+        ? 0.0
+        : technicianReviews.fold<int>(
+              0,
+              (sum, review) => sum + review.rating,
+            ) /
+            technicianReviews.length;
     final sortedRecords = [...records]
       ..sort((left, right) => right.timestamp.compareTo(left.timestamp));
     final latest = sortedRecords.isEmpty ? null : sortedRecords.first;
@@ -3937,6 +3987,24 @@ class _AttendanceTechnicianCard extends ConsumerWidget {
                     },
                   ),
                   _StatusPill(
+                    label: technician.technicianCategory.label,
+                    color: AppTheme.primary,
+                  ),
+                  _StatusPill(
+                    label: technician.monthlySalary > 0
+                        ? 'Salary Rs. ${technician.monthlySalary.toStringAsFixed(0)}/month'
+                        : 'Salary not set',
+                    color: technician.monthlySalary > 0
+                        ? AppTheme.instantGreen
+                        : AppTheme.textSecondary,
+                  ),
+                  _StatusPill(
+                    label: technicianReviews.isEmpty
+                        ? 'No reviews yet'
+                        : '${averageRating.toStringAsFixed(1)} ★ · ${technicianReviews.length} reviews',
+                    color: AppTheme.starColor,
+                  ),
+                  _StatusPill(
                     label: technician.isActive ? 'Available' : 'Inactive',
                     color: availabilityColor,
                   ),
@@ -4011,21 +4079,345 @@ class _AttendanceTechnicianCard extends ConsumerWidget {
                 ],
               ),
               const SizedBox(height: 12),
-              const Align(
-                alignment: Alignment.centerRight,
-                child: Text(
-                  'Open monthly sheet',
-                  style: TextStyle(
-                    color: AppTheme.primary,
-                    fontWeight: FontWeight.w800,
+              Wrap(
+                alignment: WrapAlignment.end,
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  OutlinedButton.icon(
+                    onPressed: () => _editCategory(context, ref, technician),
+                    icon: const Icon(Icons.badge_outlined, size: 17),
+                    label: const Text('Edit category'),
                   ),
-                ),
+                  OutlinedButton.icon(
+                    onPressed: () => _addReview(context, ref, technician),
+                    icon: const Icon(Icons.star_outline, size: 17),
+                    label: const Text('Add review'),
+                  ),
+                  OutlinedButton.icon(
+                    onPressed: () => _editSalary(context, ref, technician),
+                    icon: const Icon(Icons.payments_outlined, size: 17),
+                    label: Text(
+                      technician.monthlySalary > 0
+                          ? 'Edit salary'
+                          : 'Set salary',
+                    ),
+                  ),
+                  FilledButton.icon(
+                    onPressed: () => _addIncentive(context, ref, technician),
+                    icon: const Icon(Icons.card_giftcard, size: 17),
+                    label: const Text('Add incentive'),
+                  ),
+                  const Padding(
+                    padding: EdgeInsets.symmetric(vertical: 10),
+                    child: Text(
+                      'Open monthly sheet',
+                      style: TextStyle(
+                        color: AppTheme.primary,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                  ),
+                ],
               ),
             ],
           ),
         ),
       ),
     );
+  }
+
+  Future<void> _editSalary(
+    BuildContext context,
+    WidgetRef ref,
+    AppUser technician,
+  ) async {
+    final formKey = GlobalKey<FormState>();
+    final controller = TextEditingController(
+      text: technician.monthlySalary > 0
+          ? technician.monthlySalary.toStringAsFixed(0)
+          : '',
+    );
+    try {
+      final salary = await showDialog<double>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          title: Text(
+            'Monthly salary · ${_registeredTechnicianName(technician)}',
+          ),
+          content: Form(
+            key: formKey,
+            child: TextFormField(
+              controller: controller,
+              autofocus: true,
+              keyboardType:
+                  const TextInputType.numberWithOptions(decimal: true),
+              decoration: const InputDecoration(
+                labelText: 'Monthly base salary',
+                prefixText: 'Rs. ',
+                helperText: 'Enter 0 to clear the assigned salary.',
+              ),
+              validator: (value) {
+                final parsed = double.tryParse(value?.trim() ?? '');
+                return parsed == null || parsed < 0
+                    ? 'Enter a valid salary'
+                    : null;
+              },
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('Cancel'),
+            ),
+            FilledButton.icon(
+              onPressed: () {
+                if (formKey.currentState!.validate()) {
+                  Navigator.pop(
+                    dialogContext,
+                    double.parse(controller.text.trim()),
+                  );
+                }
+              },
+              icon: const Icon(Icons.save_outlined),
+              label: const Text('Save salary'),
+            ),
+          ],
+        ),
+      );
+      if (salary == null || !context.mounted) return;
+      final admin = ref.read(currentUserProvider).valueOrNull;
+      final branchId = technician.branchId ?? admin?.branchId;
+      if (admin == null || branchId == null) return;
+      await ref.read(adminRepositoryProvider).updateTechnicianSalary(
+            uid: technician.uid,
+            monthlySalary: salary,
+            actorId: admin.uid,
+            branchId: branchId,
+          );
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Monthly salary updated.')),
+        );
+      }
+    } finally {
+      controller.dispose();
+    }
+  }
+
+  Future<void> _editCategory(
+    BuildContext context,
+    WidgetRef ref,
+    AppUser technician,
+  ) async {
+    var selected = technician.technicianCategory;
+    final category = await showDialog<TechnicianCategory>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: Text('Edit ${_registeredTechnicianName(technician)} category'),
+          content: DropdownButtonFormField<TechnicianCategory>(
+            initialValue: selected,
+            decoration: const InputDecoration(labelText: 'Category'),
+            items: [
+              for (final item in TechnicianCategory.values)
+                DropdownMenuItem(value: item, child: Text(item.label)),
+            ],
+            onChanged: (value) {
+              if (value != null) setDialogState(() => selected = value);
+            },
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(dialogContext, selected),
+              child: const Text('Save category'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (category == null || !context.mounted) return;
+    final admin = ref.read(currentUserProvider).valueOrNull;
+    final branchId = technician.branchId ?? admin?.branchId;
+    if (admin == null || branchId == null) return;
+    await ref.read(adminRepositoryProvider).updateTechnicianCategory(
+          uid: technician.uid,
+          category: category,
+          actorId: admin.uid,
+          branchId: branchId,
+        );
+  }
+
+  Future<void> _addIncentive(
+    BuildContext context,
+    WidgetRef ref,
+    AppUser technician,
+  ) async {
+    final formKey = GlobalKey<FormState>();
+    final amount = TextEditingController();
+    final reason = TextEditingController();
+    try {
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          title:
+              Text('Add incentive · ${_registeredTechnicianName(technician)}'),
+          content: Form(
+            key: formKey,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextFormField(
+                  controller: amount,
+                  keyboardType:
+                      const TextInputType.numberWithOptions(decimal: true),
+                  decoration: const InputDecoration(
+                    labelText: 'Incentive amount',
+                    prefixText: 'Rs. ',
+                  ),
+                  validator: (value) {
+                    final parsed = double.tryParse(value?.trim() ?? '');
+                    return parsed == null || parsed <= 0
+                        ? 'Enter a valid amount'
+                        : null;
+                  },
+                ),
+                const SizedBox(height: 12),
+                TextFormField(
+                  controller: reason,
+                  minLines: 2,
+                  maxLines: 3,
+                  decoration: const InputDecoration(
+                    labelText: 'Reason',
+                    hintText: 'Example: monthly target achievement',
+                  ),
+                  validator: (value) => (value?.trim().length ?? 0) < 3
+                      ? 'Enter a short reason'
+                      : null,
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext, false),
+              child: const Text('Cancel'),
+            ),
+            FilledButton.icon(
+              onPressed: () {
+                if (formKey.currentState!.validate()) {
+                  Navigator.pop(dialogContext, true);
+                }
+              },
+              icon: const Icon(Icons.add),
+              label: const Text('Add incentive'),
+            ),
+          ],
+        ),
+      );
+      if (confirmed != true || !context.mounted) return;
+      final admin = ref.read(currentUserProvider).valueOrNull;
+      final branchId = technician.branchId ?? admin?.branchId;
+      if (admin == null || branchId == null) return;
+      await ref.read(technicianIncentiveRepositoryProvider).addIncentive(
+            technicianId: technician.uid,
+            branchId: branchId,
+            revenueBranchId: technician.nativeBranchId ?? branchId,
+            amount: double.parse(amount.text.trim()),
+            description: reason.text,
+            awardedBy: admin.uid,
+          );
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Incentive added successfully.')),
+        );
+      }
+    } finally {
+      amount.dispose();
+      reason.dispose();
+    }
+  }
+
+  Future<void> _addReview(
+    BuildContext context,
+    WidgetRef ref,
+    AppUser technician,
+  ) async {
+    var rating = 5;
+    final text = TextEditingController();
+    try {
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (dialogContext) => StatefulBuilder(
+          builder: (context, setDialogState) => AlertDialog(
+            title: Text('Review ${_registeredTechnicianName(technician)}'),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    for (var index = 1; index <= 5; index++)
+                      IconButton(
+                        tooltip: '$index star',
+                        onPressed: () => setDialogState(() => rating = index),
+                        icon: Icon(
+                          index <= rating ? Icons.star : Icons.star_border,
+                          color: AppTheme.starColor,
+                        ),
+                      ),
+                  ],
+                ),
+                TextField(
+                  controller: text,
+                  minLines: 3,
+                  maxLines: 5,
+                  decoration: const InputDecoration(
+                    labelText: 'Admin review',
+                    hintText: 'Quality, punctuality, customer handling…',
+                  ),
+                ),
+              ],
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(dialogContext, false),
+                child: const Text('Cancel'),
+              ),
+              FilledButton.icon(
+                onPressed: () => Navigator.pop(dialogContext, true),
+                icon: const Icon(Icons.star),
+                label: const Text('Submit review'),
+              ),
+            ],
+          ),
+        ),
+      );
+      if (confirmed != true || !context.mounted) return;
+      final admin = ref.read(currentUserProvider).valueOrNull;
+      final branchId = technician.branchId ?? admin?.branchId;
+      if (admin == null || branchId == null) return;
+      await ref.read(reviewRepositoryProvider).submitAdminReview(
+            technicianId: technician.uid,
+            branchId: branchId,
+            reviewerId: admin.uid,
+            reviewerName: admin.name,
+            reviewerRole: admin.role.name,
+            rating: rating,
+            text: text.text,
+          );
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Technician review submitted.')),
+        );
+      }
+    } finally {
+      text.dispose();
+    }
   }
 
   Future<void> _changeActiveStatus({
@@ -4472,12 +4864,7 @@ class _AttendanceSheetRow extends ConsumerWidget {
         ),
         content: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 420, maxHeight: 520),
-          child: Image.network(
-            record.selfieUrl,
-            fit: BoxFit.contain,
-            errorBuilder: (_, __, ___) =>
-                const Text('Selfie could not be previewed.'),
-          ),
+          child: _attendanceSelfie(record.selfieUrl),
         ),
         actions: [
           TextButton(
@@ -4486,6 +4873,29 @@ class _AttendanceSheetRow extends ConsumerWidget {
           ),
         ],
       ),
+    );
+  }
+
+  Widget _attendanceSelfie(String source) {
+    const marker = ';base64,';
+    if (source.startsWith('data:image/') && source.contains(marker)) {
+      try {
+        return Image.memory(
+          base64Decode(
+              source.substring(source.indexOf(marker) + marker.length)),
+          fit: BoxFit.contain,
+          errorBuilder: (_, __, ___) =>
+              const Text('Selfie could not be previewed.'),
+        );
+      } catch (_) {
+        return const Text('Selfie could not be previewed.');
+      }
+    }
+    return Image.network(
+      source,
+      fit: BoxFit.contain,
+      errorBuilder: (_, __, ___) =>
+          const Text('Selfie could not be previewed.'),
     );
   }
 }
@@ -4659,9 +5069,12 @@ class _AdminBookingCard extends ConsumerWidget {
     final canResumeHeldBooking = booking.status == BookingStatus.onHold;
     final canChangeTechnician = canAssignTechnician || canResumeHeldBooking;
     final assignableTechnicians = technicians.where((tech) {
-      if (canChangeTechnician) return true;
+      if (canChangeTechnician) return (activeLoad[tech.uid] ?? 0) == 0;
       return tech.uid == booking.technicianId;
     }).toList();
+    final hasBusyTechnician = technicians.any(
+      (tech) => (activeLoad[tech.uid] ?? 0) > 0,
+    );
     final bill = ref.watch(bookingBillProvider(booking.id)).valueOrNull;
     final overdue = isBookingOverdue(booking, now);
     final deadline = bookingDeadline(booking);
@@ -4799,7 +5212,7 @@ class _AdminBookingCard extends ConsumerWidget {
                 hasApprovedTechnician: hasApprovedTechnician,
                 hasPendingTechnician: hasPendingTechnician,
                 hasInactiveTechnician: hasInactiveTechnician,
-                activeTechnicianCount: technicians.length,
+                hasBusyTechnician: hasBusyTechnician,
                 canChangeTechnician: canChangeTechnician,
               ),
             ),
@@ -4973,7 +5386,7 @@ class _AdminBookingCard extends ConsumerWidget {
     required bool hasApprovedTechnician,
     required bool hasPendingTechnician,
     required bool hasInactiveTechnician,
-    required int activeTechnicianCount,
+    required bool hasBusyTechnician,
     required bool canChangeTechnician,
   }) {
     if (!canChangeTechnician) {
@@ -4985,7 +5398,10 @@ class _AdminBookingCard extends ConsumerWidget {
     if (hasInactiveTechnician) {
       return 'Approved technicians in this branch are inactive. Switch one technician to Available, then assign this booking.';
     }
-    return 'No approved technicians are active in this branch. Once a technician is active, admin can assign them even if they already have another job.';
+    if (hasBusyTechnician) {
+      return 'All available technicians already have an active job. Complete or place a job on hold before assigning another.';
+    }
+    return 'No approved technicians are active in this branch.';
   }
 
   static bool _canPlaceOnHold(BookingStatus status) {
@@ -5091,11 +5507,13 @@ class _AdminBookingCard extends ConsumerWidget {
         ),
       );
     } catch (error) {
+      debugPrint('FixNow assignment failed for ${booking.id}: $error');
       if (!context.mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(error.toString()),
           backgroundColor: Colors.red.shade700,
+          duration: const Duration(seconds: 15),
         ),
       );
     }
@@ -5132,7 +5550,7 @@ class _AdminBookingCard extends ConsumerWidget {
                   ),
                   const SizedBox(height: 4),
                   const Text(
-                    'Busy technicians can still be assigned after confirmation.',
+                    'Only technicians without an active job are available.',
                     style: TextStyle(
                       color: AppTheme.textSecondary,
                       fontSize: 12,
@@ -5143,7 +5561,7 @@ class _AdminBookingCard extends ConsumerWidget {
                     child: ListView.separated(
                       itemCount: technicians.length,
                       separatorBuilder: (_, __) => const SizedBox(height: 10),
-                      itemBuilder: (context, index) {
+                      itemBuilder: (_, index) {
                         final technician = technicians[index];
                         final location = locationByTechnician[technician.uid];
                         final activeJobs = activeLoad[technician.uid] ?? 0;
@@ -5687,6 +6105,7 @@ class _TechnicianTrackingTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final now = DateTime.now();
     final stale = location == null ||
+        !location!.isOnline ||
         now.difference(location!.updatedAt) > _idleTechnicianThreshold;
     final hasActiveJob = booking != null;
     final statusColor = stale
@@ -5694,13 +6113,7 @@ class _TechnicianTrackingTile extends StatelessWidget {
         : hasActiveJob
             ? AppTheme.primary
             : AppTheme.accent;
-    final statusLabel = location == null
-        ? 'No location shared'
-        : stale
-            ? 'Location stale'
-            : hasActiveJob
-                ? 'On active job'
-                : 'Available on map';
+    final statusLabel = _technicianLiveStatus(location, booking, stale: stale);
     final techPoint = location == null
         ? null
         : GoogleMapPoint(
@@ -6199,8 +6612,30 @@ String _formatDuration(Duration duration) {
 
 String _formatRelative(DateTime time) {
   final delta = DateTime.now().difference(time);
-  if (delta.inMinutes < 1) return 'just now';
+  if (delta.inSeconds < 5) return 'just now';
+  if (delta.inMinutes < 1) return '${delta.inSeconds}s ago';
   if (delta.inHours < 1) return '${delta.inMinutes}m ago';
   if (delta.inDays < 1) return '${delta.inHours}h ago';
   return DateFormat('dd MMM, hh:mm a').format(time);
+}
+
+String _technicianLiveStatus(
+  TechnicianLocation? location,
+  Booking? booking, {
+  required bool stale,
+}) {
+  if (location == null) return 'No location shared';
+  if (!location.isOnline) return 'Offline';
+  if (stale) return 'Location stale';
+  return switch (booking?.status) {
+    BookingStatus.onTheWay => 'Driving',
+    BookingStatus.arrived ||
+    BookingStatus.customerConfirmedArrival ||
+    BookingStatus.estimateSent ||
+    BookingStatus.estimateRejected ||
+    BookingStatus.estimateApproved =>
+      'Reached Customer',
+    BookingStatus.serviceStarted => 'Repairing',
+    _ => 'Idle',
+  };
 }

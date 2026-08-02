@@ -58,7 +58,7 @@ class OperationsConfig {
       attendanceStartHour: data['attendanceStartHour'] as int? ?? 0,
       attendanceStartMinute: data['attendanceStartMinute'] as int? ?? 0,
       attendanceEndHour: data['attendanceEndHour'] as int? ?? 9,
-      attendanceEndMinute: data['attendanceEndMinute'] as int? ?? 30,
+      attendanceEndMinute: data['attendanceEndMinute'] as int? ?? 45,
       whatsappApprovalNumber:
           data['whatsappApprovalNumber'] as String? ?? '+919999999999',
     );

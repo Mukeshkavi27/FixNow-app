@@ -12,11 +12,16 @@ class AnalyticsRepository {
 
   final FirebaseFirestore _firestore;
 
-  Stream<DocumentSnapshot<Map<String, dynamic>>> watchDailyRevenue(String dayKey) {
+  Stream<DocumentSnapshot<Map<String, dynamic>>> watchDailyRevenue(
+      String dayKey) {
     return _firestore.collection('analytics').doc('daily_$dayKey').snapshots();
   }
 
-  Stream<DocumentSnapshot<Map<String, dynamic>>> watchMonthlyRevenue(String monthKey) {
-    return _firestore.collection('analytics').doc('monthly_$monthKey').snapshots();
+  Stream<DocumentSnapshot<Map<String, dynamic>>> watchMonthlyRevenue(
+      String monthKey) {
+    return _firestore
+        .collection('analytics')
+        .doc('monthly_$monthKey')
+        .snapshots();
   }
 }

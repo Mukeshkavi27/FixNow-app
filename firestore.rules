@@ -64,6 +64,12 @@ service cloud.firestore {
       return get(/databases/$(database)/documents/branches/$(branchId)).data;
     }
 
+    function technicianRevenueBranch(technicianId) {
+      return ('nativeBranchId' in userAfter(technicianId))
+        ? userAfter(technicianId).nativeBranchId
+        : userAfter(technicianId).branchId;
+    }
+
     function userAfter(userId) {
       return getAfter(/databases/$(database)/documents/users/$(userId)).data;
     }
@@ -95,12 +101,37 @@ service cloud.firestore {
             == 'approved');
     }
 
-    function branchAdminBookingUpdate() {
+    function isTechnicianBusyStatus(status) {
+      return status in [
+        'technicianAssigned',
+        'accepted',
+        'onTheWay',
+        'arrived',
+        'customerConfirmedArrival',
+        'estimateSent',
+        'estimateRejected',
+        'estimateApproved',
+        'serviceStarted'
+      ];
+    }
+
+    function validActiveJobLock(bookingId, data) {
+      return !isTechnicianBusyStatus(data.status)
+        || (data.technicianId is string
+          && existsAfter(/databases/$(database)/documents/technician_active_jobs/$(data.technicianId))
+          && getAfter(/databases/$(database)/documents/technician_active_jobs/$(data.technicianId)).data.bookingId
+            == bookingId
+          && getAfter(/databases/$(database)/documents/technician_active_jobs/$(data.technicianId)).data.branchId
+            == data.branchId);
+    }
+
+    function branchAdminBookingUpdate(bookingId) {
       return isBranchAdmin()
         && resource.data.branchId == currentUser().branchId
         && request.resource.data.branchId == currentUser().branchId
         && request.resource.data.branchName == resource.data.branchName
-        && validTechnicianAssignment(request.resource.data);
+        && validTechnicianAssignment(request.resource.data)
+        && validActiveJobLock(bookingId, request.resource.data);
     }
 
     function onlyChanges(fields) {
@@ -119,7 +150,9 @@ service cloud.firestore {
       allow get: if signedIn() && request.auth.uid == userId;
       allow list: if isSuperAdmin()
         || (isBranchAdmin()
-          && resource.data.branchId == currentUser().branchId);
+          && (resource.data.branchId == currentUser().branchId
+            || (resource.data.role == 'technician'
+              && resource.data.nativeBranchId == currentUser().branchId)));
       allow get: if canAdministerUser(resource.data);
       allow create: if signedIn()
         && request.resource.data.uid == userId
@@ -163,6 +196,8 @@ service cloud.firestore {
             'inactivationReason',
             'reactivatedAt',
             'reactivatedBy',
+            'technicianCategory',
+            'monthlySalary',
             'updatedAt'
           ]))
         || (signedIn()
@@ -231,8 +266,10 @@ service cloud.firestore {
       allow update: if (isSuperAdmin()
           && request.resource.data.branchId == resource.data.branchId
           && request.resource.data.branchName == resource.data.branchName
-          && request.resource.data.branchId is string)
-        || branchAdminBookingUpdate()
+          && request.resource.data.branchId is string
+          && validTechnicianAssignment(request.resource.data)
+          && validActiveJobLock(bookingId, request.resource.data))
+        || branchAdminBookingUpdate(bookingId)
         || (ownsBooking(resource.data)
           && resource.data.status == 'estimateSent'
           && request.resource.data.status == 'estimateApproved'
@@ -336,7 +373,8 @@ service cloud.firestore {
     match /bills/{bookingId} {
       allow read: if canAdministerBooking(booking(bookingId))
         || (isBranchAdmin()
-          && resource.data.branchId == currentUser().branchId)
+          && (resource.data.branchId == currentUser().branchId
+            || resource.data.revenueBranchId == currentUser().branchId))
         || (signedIn()
           && (resource.data.customerId == request.auth.uid
             || resource.data.technicianId == request.auth.uid));
@@ -345,10 +383,16 @@ service cloud.firestore {
         && request.resource.data.technicianId == request.auth.uid
         && request.resource.data.customerId == booking(bookingId).customerId
         && request.resource.data.branchId == booking(bookingId).branchId
+        && request.resource.data.revenueBranchId
+          == technicianRevenueBranch(request.auth.uid)
         && booking(bookingId).technicianId == request.auth.uid
         && booking(bookingId).status == 'serviceCompleted'
         && request.resource.data.amount > 0
         && request.resource.data.isPaid == false;
+      // Permit a super admin to attach legacy bills to their service and
+      // native revenue branches without changing any financial values.
+      allow update: if isSuperAdmin()
+        && onlyChanges(['branchId', 'revenueBranchId']);
       allow update: if isTechnician()
         && resource.data.technicianId == request.auth.uid
         && resource.data.isPaid == false
@@ -396,7 +440,8 @@ service cloud.firestore {
     match /reviews/{bookingId} {
       allow read: if isSuperAdmin()
         || (isBranchAdmin()
-          && resource.data.branchId == currentUser().branchId)
+          && (resource.data.branchId == currentUser().branchId
+            || resource.data.revenueBranchId == currentUser().branchId))
         || (signedIn()
           && (resource.data.customerId == request.auth.uid
             || resource.data.technicianId == request.auth.uid));
@@ -412,7 +457,54 @@ service cloud.firestore {
         && request.resource.data.rating is int
         && request.resource.data.rating >= 1
         && request.resource.data.rating <= 5;
-      allow update, delete: if canAdministerBooking(booking(bookingId));
+      allow create: if (isSuperAdmin() || isBranchAdmin())
+        && request.resource.data.bookingId == ''
+        && request.resource.data.customerId == ''
+        && request.resource.data.reviewerId == request.auth.uid
+        && request.resource.data.reviewerRole == currentUser().role
+        && request.resource.data.branchId is string
+        && request.resource.data.revenueBranchId is string
+        && (isSuperAdmin()
+          || request.resource.data.branchId == currentUser().branchId)
+        && request.resource.data.technicianId is string
+        && get(/databases/$(database)/documents/users/$(request.resource.data.technicianId)).data.role
+          == 'technician'
+        && get(/databases/$(database)/documents/users/$(request.resource.data.technicianId)).data.branchId
+          == request.resource.data.branchId
+        && request.resource.data.rating is int
+        && request.resource.data.rating >= 1
+        && request.resource.data.rating <= 5;
+      allow update, delete: if canAdministerBooking(booking(bookingId))
+        || isSuperAdmin()
+        || (isBranchAdmin()
+          && resource.data.branchId == currentUser().branchId);
+    }
+
+    match /technician_incentives/{incentiveId} {
+      allow read: if isSuperAdmin()
+        || (isBranchAdmin()
+          && resource.data.branchId == currentUser().branchId)
+        || (isTechnician()
+          && resource.data.technicianId == request.auth.uid);
+      allow create: if (isSuperAdmin() || isBranchAdmin())
+        && request.resource.data.technicianId is string
+        && request.resource.data.branchId is string
+        && request.resource.data.awardedBy == request.auth.uid
+        && request.resource.data.amount is number
+        && request.resource.data.amount > 0
+        && request.resource.data.description is string
+        && request.resource.data.awardedAt == request.time
+        && (isSuperAdmin()
+          || request.resource.data.branchId == currentUser().branchId)
+        && get(/databases/$(database)/documents/users/$(request.resource.data.technicianId)).data.role
+          == 'technician'
+        && get(/databases/$(database)/documents/users/$(request.resource.data.technicianId)).data.branchId
+          == request.resource.data.branchId
+        && request.resource.data.revenueBranchId
+          == technicianRevenueBranch(request.resource.data.technicianId);
+      allow update, delete: if isSuperAdmin()
+        || (isBranchAdmin()
+          && resource.data.branchId == currentUser().branchId);
     }
 
     match /attendance/{attendanceId} {
@@ -455,6 +547,41 @@ service cloud.firestore {
       allow delete: if isSuperAdmin()
         || (isBranchAdmin()
           && resource.data.branchId == currentUser().branchId);
+    }
+
+    match /technician_active_jobs/{technicianId} {
+      allow read: if isSuperAdmin()
+        // Assignment transactions must be able to read a technician's lock
+        // even before that lock document exists. The create/update rule below
+        // still constrains branch admins to bookings in their own branch.
+        || isBranchAdmin()
+        || (isTechnician() && technicianId == request.auth.uid);
+      allow create, update: if canAdministerBooking(request.resource.data)
+        && request.resource.data.keys().hasOnly([
+          'technicianId',
+          'bookingId',
+          'branchId',
+          'updatedAt'
+        ])
+        && request.resource.data.technicianId == technicianId
+        && request.resource.data.bookingId is string
+        && getAfter(/databases/$(database)/documents/bookings/$(request.resource.data.bookingId)).data.technicianId
+          == technicianId
+        && getAfter(/databases/$(database)/documents/bookings/$(request.resource.data.bookingId)).data.branchId
+          == request.resource.data.branchId
+        && isTechnicianBusyStatus(
+          getAfter(/databases/$(database)/documents/bookings/$(request.resource.data.bookingId)).data.status
+        );
+      allow delete: if resource.data.technicianId == technicianId
+        && resource.data.bookingId is string
+        && signedIn()
+        && (isSuperAdmin()
+          || (isBranchAdmin()
+            && resource.data.branchId == currentUser().branchId)
+          || (isTechnician() && technicianId == request.auth.uid))
+        && !isTechnicianBusyStatus(
+          getAfter(/databases/$(database)/documents/bookings/$(resource.data.bookingId)).data.status
+        );
     }
 
     match /technician_locations/{technicianId} {
@@ -564,6 +691,26 @@ service cloud.firestore {
             && resource.data.type == 'technicianRegistration'
             && resource.data.branchId == currentUser().branchId))
         && onlyChanges(['isRead', 'readAt']);
+      allow create: if (isSuperAdmin() || isBranchAdmin())
+        && request.resource.data.type == 'technicianAssignment'
+        && request.resource.data.bookingId is string
+        && request.resource.data.userId is string
+        && booking(request.resource.data.bookingId).technicianId
+          == request.resource.data.userId
+        && canAdministerBooking(booking(request.resource.data.bookingId))
+        && request.resource.data.branchId
+          == booking(request.resource.data.bookingId).branchId
+        && request.resource.data.isRead == false
+        && request.resource.data.keys().hasOnly([
+          'userId',
+          'bookingId',
+          'branchId',
+          'type',
+          'title',
+          'body',
+          'isRead',
+          'createdAt',
+        ]);
       allow create: if signedIn()
         && userAfter(request.auth.uid).role == 'technician'
         && userAfter(request.auth.uid).accountStatus == 'pendingApproval'

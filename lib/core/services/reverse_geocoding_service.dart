@@ -227,7 +227,8 @@ class GoogleReverseGeocodingService implements ReverseGeocodingService {
   }) async {
     if (_apiKey.trim().isEmpty) return null;
     final uri = Uri.https('maps.googleapis.com', '/maps/api/geocode/json', {
-      'latlng': '${latitude.toStringAsFixed(7)},${longitude.toStringAsFixed(7)}',
+      'latlng':
+          '${latitude.toStringAsFixed(7)},${longitude.toStringAsFixed(7)}',
       'key': _apiKey,
     });
 
@@ -354,7 +355,8 @@ class GooglePlacesAddressSearchService implements AddressSearchService {
     if (_apiKey.trim().isEmpty || placeId == null || placeId.isEmpty) {
       return null;
     }
-    final uri = Uri.https('maps.googleapis.com', '/maps/api/place/details/json', {
+    final uri =
+        Uri.https('maps.googleapis.com', '/maps/api/place/details/json', {
       'place_id': placeId,
       'key': _apiKey,
       'fields': 'place_id,formatted_address,geometry,address_component,name',
@@ -465,7 +467,8 @@ class NominatimAddressGeocodingService implements AddressGeocodingService {
     final latitude = double.tryParse(first['lat'] as String? ?? '');
     final longitude = double.tryParse(first['lon'] as String? ?? '');
     if (latitude == null || longitude == null) return null;
-    final parts = _nominatimAddressParts(first['address'] as Map<String, dynamic>?);
+    final parts =
+        _nominatimAddressParts(first['address'] as Map<String, dynamic>?);
     return AddressGeocodingResult(
       latitude: latitude,
       longitude: longitude,
@@ -518,13 +521,15 @@ class NominatimAddressSearchService implements AddressSearchService {
       return null;
     }
     final geocoded = await NominatimAddressGeocodingService(client: _client)
-        .search(suggestion.subtitle.isEmpty ? suggestion.title : suggestion.subtitle);
+        .search(suggestion.subtitle.isEmpty
+            ? suggestion.title
+            : suggestion.subtitle);
     if (geocoded != null) return geocoded;
-    final reversed = await NominatimReverseGeocodingService(client: _client)
-        .reverse(
-          latitude: suggestion.latitude!,
-          longitude: suggestion.longitude!,
-        );
+    final reversed =
+        await NominatimReverseGeocodingService(client: _client).reverse(
+      latitude: suggestion.latitude!,
+      longitude: suggestion.longitude!,
+    );
     if (reversed == null) return null;
     return AddressGeocodingResult(
       latitude: suggestion.latitude!,
@@ -596,7 +601,8 @@ Map<String, String?> _nominatimAddressParts(Map<String, dynamic>? address) {
     return null;
   }
 
-  final locality = pick(['suburb', 'neighbourhood', 'quarter', 'city_district']);
+  final locality =
+      pick(['suburb', 'neighbourhood', 'quarter', 'city_district']);
   return {
     'house': pick(['house_number', 'building']),
     'street': pick(['road', 'pedestrian', 'footway']),

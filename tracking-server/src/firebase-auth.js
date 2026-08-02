@@ -1,6 +1,7 @@
 import { applicationDefault, getApps, initializeApp } from 'firebase-admin/app';
 import { getAuth } from 'firebase-admin/auth';
 import { getFirestore } from 'firebase-admin/firestore';
+import { getMessaging } from 'firebase-admin/messaging';
 import { buildPrincipal } from './rbac.js';
 
 const projectId = process.env.FIREBASE_PROJECT_ID
@@ -17,6 +18,7 @@ if (getApps().length === 0) {
 
 export const firebaseAuth = getAuth();
 export const firestore = getFirestore();
+export const firebaseMessaging = getMessaging();
 
 export function firebaseAdminSetupMessage(error) {
   const message = String(error?.message ?? '');

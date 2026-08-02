@@ -17,9 +17,9 @@
 	<key>NSCameraUsageDescription</key>
 	<string>FixNow uses the camera for attendance selfies and service photos.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
-	<string>FixNow uses location to book services and track technicians during working hours.</string>
+	<string>FixNow automatically shares a signed-in technician's location with their branch administrator and assigned customer.</string>
 	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
-	<string>FixNow tracks technicians from 9:20 AM to 10:00 PM so dispatchers can monitor journeys and service coverage.</string>
+	<string>FixNow automatically tracks signed-in technicians so branch administrators and assigned customers can monitor service journeys.</string>
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>location</string>

@@ -9,6 +9,7 @@ import '../../../app/widgets/resilient_asset_image.dart';
 import '../../../core/branches/branch_info.dart';
 import '../../../core/branches/branch_repository.dart';
 import '../../../core/branches/branch_resolver.dart';
+import '../../../core/errors/user_facing_error.dart';
 import '../data/auth_repository.dart';
 
 class LoginScreen extends ConsumerStatefulWidget {
@@ -28,6 +29,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
   bool _isTechnicianRequest = false;
   bool _isLoading = false;
   bool _obscurePassword = true;
+  String? _errorMessage;
   String? _selectedBranchId;
 
   @override
@@ -41,7 +43,10 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
 
   Future<void> _submit() async {
     if (!_formKey.currentState!.validate()) return;
-    setState(() => _isLoading = true);
+    setState(() {
+      _isLoading = true;
+      _errorMessage = null;
+    });
     try {
       final repo = ref.read(authRepositoryProvider);
       if (_isRegister) {
@@ -79,13 +84,12 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
       }
     } catch (error) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(error.toString()),
-          behavior: SnackBarBehavior.floating,
-          backgroundColor: Colors.red.shade700,
-        ),
-      );
+      setState(() {
+        _errorMessage = userFacingAuthError(
+          error,
+          action: _isRegister ? AuthAction.createAccount : AuthAction.signIn,
+        );
+      });
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
@@ -404,6 +408,45 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                   validator: (v) =>
                       v == null || v.length < 6 ? 'Minimum 6 characters' : null,
                 ),
+                if (_errorMessage != null) ...[
+                  SizedBox(height: fieldGap),
+                  Semantics(
+                    liveRegion: true,
+                    label: 'Sign in error',
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 10,
+                      ),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFFFECE8),
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: const Color(0xFFE46A4A)),
+                      ),
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Icon(
+                            Icons.error_outline,
+                            color: Color(0xFFB93820),
+                            size: 20,
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              _errorMessage!,
+                              style: const TextStyle(
+                                color: Color(0xFF8A2718),
+                                fontSize: 13,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
                 SizedBox(height: isMobile ? 14 : (isSmall ? 16 : 24)),
                 SizedBox(
                   height: isMobile || isSmall ? 46 : 52,
@@ -443,7 +486,10 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                   child: GestureDetector(
                     onTap: _isLoading
                         ? null
-                        : () => setState(() => _isRegister = !_isRegister),
+                        : () => setState(() {
+                              _isRegister = !_isRegister;
+                              _errorMessage = null;
+                            }),
                     child: RichText(
                       text: TextSpan(
                         style: const TextStyle(fontSize: 13),

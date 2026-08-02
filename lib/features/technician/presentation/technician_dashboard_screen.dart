@@ -16,8 +16,10 @@ import '../../../core/data/app_config_repository.dart';
 import '../../../core/enums/booking_status.dart';
 import '../../../core/maps/google_static_map.dart';
 import '../../../core/maps/route_recalculation.dart';
+import '../../../core/providers/firebase_providers.dart';
 import '../../../core/services/face_match_service.dart';
 import '../../../core/services/location_tracking_service.dart';
+import '../../../core/services/push_token_service.dart';
 import '../../../core/services/reverse_geocoding_service.dart';
 import '../../auth/data/auth_repository.dart';
 import '../../bookings/data/booking_repository.dart';
@@ -25,8 +27,13 @@ import '../../bookings/domain/booking.dart';
 import '../../estimates/data/estimate_repository.dart';
 import '../../estimates/domain/estimate.dart';
 import '../../shared/data/bill_repository.dart';
+import '../../shared/data/review_repository.dart';
 import '../../shared/data/storage_repository.dart';
+import '../../shared/data/technician_incentive_repository.dart';
 import '../../shared/domain/bill.dart';
+import '../../shared/domain/review.dart';
+import '../../shared/domain/technician_incentive.dart';
+import '../../shared/domain/technician_compensation.dart';
 import '../data/technician_repository.dart';
 import '../domain/attendance.dart';
 import '../domain/overtime_record.dart';
@@ -44,6 +51,13 @@ final technicianBillsProvider = StreamProvider.autoDispose<List<Bill>>((ref) {
   final user = ref.watch(currentUserProvider).valueOrNull;
   if (user == null) return Stream.value(<Bill>[]);
   return ref.watch(billRepositoryProvider).watchTechnicianBills(user.uid);
+});
+
+final currentTechnicianReviewsProvider =
+    StreamProvider.autoDispose<List<Review>>((ref) {
+  final user = ref.watch(currentUserProvider).valueOrNull;
+  if (user == null) return Stream.value(const <Review>[]);
+  return ref.watch(reviewRepositoryProvider).watchTechnicianReviews(user.uid);
 });
 
 final technicianAttendanceProvider =
@@ -90,6 +104,13 @@ final _technicianTabProvider = StateProvider.autoDispose<int>((ref) => 0);
 final _earningsRangeProvider =
     StateProvider.autoDispose<_EarningsRange>((ref) => _EarningsRange.week);
 
+bool isLocalAttendanceHost(String host) {
+  final normalized = host.trim().toLowerCase();
+  return normalized == 'localhost' ||
+      normalized == '127.0.0.1' ||
+      normalized == '::1';
+}
+
 enum _EarningsRange {
   week('Week'),
   month('Month');
@@ -98,25 +119,209 @@ enum _EarningsRange {
   final String label;
 }
 
-class TechnicianDashboardScreen extends ConsumerWidget {
+enum _AutomaticLocationState {
+  waitingForAttendance,
+  starting,
+  sharing,
+  permissionRequired,
+  profileRequired,
+}
+
+class TechnicianDashboardScreen extends ConsumerStatefulWidget {
   const TechnicianDashboardScreen({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<TechnicianDashboardScreen> createState() =>
+      _TechnicianDashboardScreenState();
+}
+
+class _TechnicianDashboardScreenState
+    extends ConsumerState<TechnicianDashboardScreen> {
+  _AutomaticLocationState _locationState =
+      _AutomaticLocationState.waitingForAttendance;
+  String? _requestedTrackingKey;
+  String? _pushRegistrationUserId;
+
+  void _schedulePushRegistration(String userId) {
+    if (_pushRegistrationUserId == userId) return;
+    _pushRegistrationUserId = userId;
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      if (!mounted) return;
+      try {
+        await PushTokenService.instance.registerTechnician(
+          userId: userId,
+          firestore: ref.read(firebaseRefsProvider).firestore,
+        );
+      } catch (_) {
+        // Notification permission or token failures must not block jobs,
+        // attendance, or location sharing. The next app session retries.
+      }
+    });
+  }
+
+  void _scheduleAutomaticLocation({
+    required String technicianId,
+    required String? branchId,
+    required String? bookingId,
+  }) {
+    final key = '$technicianId|${branchId ?? ''}|${bookingId ?? ''}';
+    if (_requestedTrackingKey == key) return;
+    _requestedTrackingKey = key;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      _startAutomaticLocation(
+        technicianId: technicianId,
+        branchId: branchId,
+        bookingId: bookingId,
+      );
+    });
+  }
+
+  Future<void> _startAutomaticLocation({
+    required String technicianId,
+    required String? branchId,
+    required String? bookingId,
+    bool force = false,
+  }) async {
+    final normalizedBranchId = branchId?.trim() ?? '';
+    if (normalizedBranchId.isEmpty) {
+      if (mounted) {
+        setState(() {
+          _locationState = _AutomaticLocationState.profileRequired;
+        });
+      }
+      return;
+    }
+    final service = ref.read(locationTrackingServiceProvider);
+    if (!force && service.isTracking && service.activeBookingId == bookingId) {
+      if (mounted) {
+        setState(() => _locationState = _AutomaticLocationState.sharing);
+      }
+      return;
+    }
+    if (mounted) {
+      setState(() => _locationState = _AutomaticLocationState.starting);
+    }
+    try {
+      await service.startShift(
+        technicianId: technicianId,
+        branchId: normalizedBranchId,
+        bookingId: bookingId,
+      );
+      if (mounted) {
+        setState(() => _locationState = _AutomaticLocationState.sharing);
+      }
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _locationState = _AutomaticLocationState.permissionRequired;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Automatic location could not start. Enable device location permission and try again.',
+          ),
+        ),
+      );
+    }
+  }
+
+  String get _locationTooltip => switch (_locationState) {
+        _AutomaticLocationState.waitingForAttendance =>
+          'Off duty - location starts after attendance',
+        _AutomaticLocationState.starting => 'Starting automatic location',
+        _AutomaticLocationState.sharing => 'Location is automatically shared',
+        _AutomaticLocationState.permissionRequired =>
+          'Enable location permission and retry',
+        _AutomaticLocationState.profileRequired =>
+          'Branch assignment is required for location sharing',
+      };
+
+  Widget get _locationIcon => switch (_locationState) {
+        _AutomaticLocationState.waitingForAttendance =>
+          const Icon(Icons.work_off_outlined),
+        _AutomaticLocationState.starting => const SizedBox(
+            width: 20,
+            height: 20,
+            child: CircularProgressIndicator(strokeWidth: 2),
+          ),
+        _AutomaticLocationState.sharing => const Icon(Icons.location_on),
+        _AutomaticLocationState.permissionRequired =>
+          const Icon(Icons.location_disabled),
+        _AutomaticLocationState.profileRequired =>
+          const Icon(Icons.wrong_location_outlined),
+      };
+
+  @override
+  Widget build(BuildContext context) {
     final tab = ref.watch(_technicianTabProvider);
+    final user = ref.watch(currentUserProvider).valueOrNull;
+    final bookings = ref.watch(technicianBookingsProvider).valueOrNull;
+    final attendance = ref.watch(technicianAttendanceProvider).valueOrNull;
+    final activeBooking = user == null || bookings == null
+        ? null
+        : findTechnicianActiveBooking(bookings, user.uid);
+    final checkedInToday = user != null &&
+        attendance != null &&
+        attendance.any(
+          (record) =>
+              record.technicianId == user.uid &&
+              _sameCalendarDay(record.timestamp, DateTime.now()) &&
+              (record.status == 'present' || record.status == 'late'),
+        );
+    if (user != null) {
+      _schedulePushRegistration(user.uid);
+    }
+    if (user != null && bookings != null && checkedInToday) {
+      _scheduleAutomaticLocation(
+        technicianId: user.uid,
+        branchId: user.branchId,
+        bookingId: activeBooking?.id,
+      );
+    }
     return Scaffold(
       backgroundColor: AppTheme.background,
       appBar: AppBar(
         title: const Text('FixNow Technician App'),
         actions: [
-          IconButton(
-            tooltip: 'Share live location',
-            onPressed: () => _shareLocation(context, ref, null),
-            icon: const Icon(Icons.my_location),
+          _LocationStatusBadge(
+            label: switch (_locationState) {
+              _AutomaticLocationState.waitingForAttendance => 'OFF DUTY',
+              _AutomaticLocationState.starting => 'STARTING',
+              _AutomaticLocationState.sharing => 'LIVE',
+              _AutomaticLocationState.permissionRequired => 'LOCATION OFF',
+              _AutomaticLocationState.profileRequired => 'NO BRANCH',
+            },
+            tooltip: _locationTooltip,
+            icon: _locationIcon,
+            color: switch (_locationState) {
+              _AutomaticLocationState.waitingForAttendance =>
+                AppTheme.textSecondary,
+              _AutomaticLocationState.starting => const Color(0xFFF38A1F),
+              _AutomaticLocationState.sharing => const Color(0xFF138A52),
+              _AutomaticLocationState.permissionRequired ||
+              _AutomaticLocationState.profileRequired =>
+                const Color(0xFFD95C2A),
+            },
+            onRetry:
+                _locationState == _AutomaticLocationState.permissionRequired &&
+                        user != null &&
+                        bookings != null &&
+                        checkedInToday
+                    ? () => _startAutomaticLocation(
+                          technicianId: user.uid,
+                          branchId: user.branchId,
+                          bookingId: activeBooking?.id,
+                          force: true,
+                        )
+                    : null,
           ),
           IconButton(
             tooltip: 'Sign out',
-            onPressed: () => ref.read(authRepositoryProvider).signOut(),
+            onPressed: () async {
+              await ref.read(locationTrackingServiceProvider).stop();
+              await ref.read(authRepositoryProvider).signOut();
+            },
             icon: const Icon(Icons.logout),
           ),
         ],
@@ -127,7 +332,9 @@ class TechnicianDashboardScreen extends ConsumerWidget {
           children: const [
             _JobsView(),
             _AttendanceView(),
+            _MonthlyScheduleView(),
             _EarningsView(),
+            _TechnicianReviewsView(),
           ],
         ),
       ),
@@ -145,46 +352,83 @@ class TechnicianDashboardScreen extends ConsumerWidget {
               selectedIcon: Icon(Icons.how_to_reg),
               label: 'Attendance'),
           NavigationDestination(
+              icon: Icon(Icons.calendar_month_outlined),
+              selectedIcon: Icon(Icons.calendar_month),
+              label: 'Schedule'),
+          NavigationDestination(
               icon: Icon(Icons.payments_outlined),
               selectedIcon: Icon(Icons.payments),
               label: 'Earnings'),
+          NavigationDestination(
+              icon: Icon(Icons.star_outline),
+              selectedIcon: Icon(Icons.star),
+              label: 'Reviews'),
         ],
       ),
     );
   }
+}
 
-  static Future<Position?> _position() async {
-    var permission = await Geolocator.checkPermission();
-    if (permission == LocationPermission.denied) {
-      permission = await Geolocator.requestPermission();
-    }
-    if (permission == LocationPermission.denied ||
-        permission == LocationPermission.deniedForever) {
-      return null;
-    }
-    return Geolocator.getCurrentPosition();
-  }
+bool _sameCalendarDay(DateTime left, DateTime right) =>
+    left.year == right.year &&
+    left.month == right.month &&
+    left.day == right.day;
 
-  static Future<void> _shareLocation(
-      BuildContext context, WidgetRef ref, String? bookingId) async {
-    final user = ref.read(currentUserProvider).valueOrNull;
-    final position = await _position();
-    if (user == null || position == null) return;
-    await ref.read(technicianRepositoryProvider).updateLocation(
-          TechnicianLocation(
-            technicianId: user.uid,
-            latitude: position.latitude,
-            longitude: position.longitude,
-            updatedAt: DateTime.now(),
-            activeBookingId: bookingId,
-            branchId: user.branchId,
+class _LocationStatusBadge extends StatelessWidget {
+  const _LocationStatusBadge({
+    required this.label,
+    required this.tooltip,
+    required this.icon,
+    required this.color,
+    this.onRetry,
+  });
+
+  final String label;
+  final String tooltip;
+  final Widget icon;
+  final Color color;
+  final VoidCallback? onRetry;
+
+  @override
+  Widget build(BuildContext context) {
+    final badge = Container(
+      margin: const EdgeInsets.only(right: 4),
+      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 6),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.1),
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: color.withValues(alpha: 0.28)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          IconTheme(
+            data: IconThemeData(color: color, size: 16),
+            child: SizedBox(width: 16, height: 16, child: icon),
           ),
-        );
-    if (context.mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Live location shared with the customer')),
-      );
-    }
+          const SizedBox(width: 5),
+          Text(
+            label,
+            style: TextStyle(
+              color: color,
+              fontSize: 10,
+              fontWeight: FontWeight.w900,
+              letterSpacing: 0.3,
+            ),
+          ),
+        ],
+      ),
+    );
+    return Tooltip(
+      message: tooltip,
+      child: onRetry == null
+          ? Semantics(label: tooltip, child: badge)
+          : InkWell(
+              borderRadius: BorderRadius.circular(999),
+              onTap: onRetry,
+              child: badge,
+            ),
+    );
   }
 }
 
@@ -392,38 +636,75 @@ class _TechnicianJobCard extends ConsumerWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Container(
+            LayoutBuilder(
+              builder: (context, constraints) {
+                final compact = constraints.maxWidth < 430;
+                final appliance = Container(
                   width: 48,
                   height: 48,
                   decoration: BoxDecoration(
-                      color: AppTheme.surface,
-                      borderRadius: BorderRadius.circular(8)),
-                  child: Icon(_applianceIcon(booking.applianceType),
-                      color: AppTheme.primary),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
+                    color: AppTheme.surface,
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Icon(
+                    _applianceIcon(booking.applianceType),
+                    color: AppTheme.primary,
+                  ),
+                );
+                final details = Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      booking.applianceType,
+                      style: const TextStyle(
+                        fontWeight: FontWeight.w800,
+                        fontSize: 16,
+                      ),
+                    ),
+                    const SizedBox(height: 3),
+                    Text(
+                      booking.customerName,
+                      style: const TextStyle(color: AppTheme.textSecondary),
+                    ),
+                    const SizedBox(height: 3),
+                    Text(
+                      booking.problemDescription,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ],
+                );
+                if (compact) {
+                  return Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(booking.applianceType,
-                          style: const TextStyle(
-                              fontWeight: FontWeight.w800, fontSize: 16)),
-                      const SizedBox(height: 3),
-                      Text(booking.customerName,
-                          style:
-                              const TextStyle(color: AppTheme.textSecondary)),
-                      const SizedBox(height: 3),
-                      Text(booking.problemDescription,
-                          maxLines: 2, overflow: TextOverflow.ellipsis),
+                      Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          appliance,
+                          const SizedBox(width: 12),
+                          Expanded(child: details),
+                        ],
+                      ),
+                      const SizedBox(height: 10),
+                      Chip(
+                        visualDensity: VisualDensity.compact,
+                        label: Text(booking.status.label),
+                      ),
                     ],
-                  ),
-                ),
-                Chip(label: Text(booking.status.label)),
-              ],
+                  );
+                }
+                return Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    appliance,
+                    const SizedBox(width: 12),
+                    Expanded(child: details),
+                    const SizedBox(width: 8),
+                    Chip(label: Text(booking.status.label)),
+                  ],
+                );
+              },
             ),
             const SizedBox(height: 12),
             _StatusRail(status: booking.status),
@@ -979,7 +1260,7 @@ class _TechnicianJobMap extends ConsumerWidget {
 
     if (serviceLatitude == null || serviceLongitude == null) {
       return Container(
-        height: 168,
+        constraints: const BoxConstraints(minHeight: 168),
         padding: const EdgeInsets.all(14),
         decoration: BoxDecoration(
           color: AppTheme.surface,
@@ -987,6 +1268,7 @@ class _TechnicianJobMap extends ConsumerWidget {
           border: Border.all(color: AppTheme.divider),
         ),
         child: Column(
+          mainAxisSize: MainAxisSize.min,
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
             const Icon(Icons.map_outlined, color: AppTheme.primary, size: 30),
@@ -1880,6 +2162,7 @@ class _AttendanceViewState extends ConsumerState<_AttendanceView> {
   bool _enrolling = false;
   bool _marked = false;
   String? _result;
+  bool _usingLocalTestPosition = false;
 
   void _setViewState(VoidCallback update) {
     if (!mounted) return;
@@ -1913,15 +2196,20 @@ class _AttendanceViewState extends ConsumerState<_AttendanceView> {
             const Duration(seconds: 12),
           );
       if (!mounted) return;
-      if (bytes.length > 5 * 1024 * 1024) {
+      if (bytes.length > 600 * 1024) {
         _setViewState(() {
           _result =
-              'Reference selfie is too large. Please choose a photo under 5 MB.';
+              'Reference selfie is too large. Please choose a smaller photo.';
         });
         return;
       }
       final faceService = const FaceMatchService();
       final signature = await faceService.createSignature(bytes);
+      if (!mounted) return;
+      // The matching signature is sufficient for later verification. Keeping
+      // the full reference image out of the user document prevents every
+      // technician-directory listener from downloading large profile records.
+      _setViewState(() => _result = 'Saving your Face ID reference...');
       if (!mounted) return;
       await ref.read(authRepositoryProvider).updateFaceReference(
             uid: user.uid,
@@ -1933,8 +2221,10 @@ class _AttendanceViewState extends ConsumerState<_AttendanceView> {
       });
     } catch (e) {
       _setViewState(() {
-        _result =
-            'Face ID reference was not saved. Please try again. ${e.toString()}';
+        _result = _selfieFailureMessage(
+          e,
+          fallback: 'Face ID reference was not saved. Please try again.',
+        );
       });
     } finally {
       _setViewState(() => _enrolling = false);
@@ -1973,6 +2263,18 @@ class _AttendanceViewState extends ConsumerState<_AttendanceView> {
       final attendanceStatusLabel =
           attendanceStatus == 'late' ? 'Late' : 'Present';
 
+      _setViewState(() => _result = 'Checking attendance location...');
+      final position = await _attendancePosition(config);
+      if (!mounted) return;
+      if (position == null) {
+        _setViewState(() {
+          _result = kIsWeb
+              ? 'Allow location for this site in the browser, then tap Upload selfie photo again.'
+              : 'Enable precise location permission, then tap Take selfie again.';
+        });
+        return;
+      }
+
       final image = await ImagePicker().pickImage(
         source: kIsWeb ? ImageSource.gallery : ImageSource.camera,
         imageQuality: 45,
@@ -1991,22 +2293,9 @@ class _AttendanceViewState extends ConsumerState<_AttendanceView> {
             const Duration(seconds: 12),
           );
       if (!mounted) return;
-      if (bytes.length > 650 * 1024) {
+      if (bytes.length > 600 * 1024) {
         _setViewState(() {
-          _result =
-              'Selfie image is too large. Please choose a smaller selfie photo.';
-        });
-        return;
-      }
-      final contentType = image.mimeType ?? 'image/jpeg';
-      final selfieDataUrl = 'data:$contentType;base64,${base64Encode(bytes)}';
-      _setViewState(() => _result = 'Getting attendance location...');
-      final position = await _attendancePosition();
-      if (!mounted) return;
-      if (position == null) {
-        _setViewState(() {
-          _result =
-              'Location permission is needed to mark attendance with time and place.';
+          _result = 'Selfie image is too large. Please choose a smaller photo.';
         });
         return;
       }
@@ -2024,12 +2313,21 @@ class _AttendanceViewState extends ConsumerState<_AttendanceView> {
         referenceSignature: referenceSignature,
         selfieSignature: selfieSignature,
       );
+      // Firebase Storage is not initialized for the current project. Store a
+      // compact data URL with this day's attendance record so marking
+      // attendance remains functional and no failing Storage POST is issued.
+      _setViewState(() => _result = 'Saving attendance selfie...');
+      final mimeType = image.mimeType?.startsWith('image/') == true
+          ? image.mimeType!
+          : 'image/jpeg';
+      final selfieUrl = 'data:$mimeType;base64,${base64Encode(bytes)}';
+      if (!mounted) return;
       if (!match.passed) {
         await ref.read(technicianRepositoryProvider).markAttendance(
               Attendance(
                 id: '',
                 technicianId: user.uid,
-                selfieUrl: selfieDataUrl,
+                selfieUrl: selfieUrl,
                 latitude: position.latitude,
                 longitude: position.longitude,
                 timestamp: now,
@@ -2038,6 +2336,8 @@ class _AttendanceViewState extends ConsumerState<_AttendanceView> {
                 geofencePassed: geofencePassed,
                 faceMatchScore: match.score,
                 branchId: user.branchId,
+                locationSource:
+                    _usingLocalTestPosition ? 'localTestFallback' : 'deviceGps',
               ),
             );
         _setViewState(() {
@@ -2051,7 +2351,7 @@ class _AttendanceViewState extends ConsumerState<_AttendanceView> {
             Attendance(
               id: '',
               technicianId: user.uid,
-              selfieUrl: selfieDataUrl,
+              selfieUrl: selfieUrl,
               latitude: position.latitude,
               longitude: position.longitude,
               timestamp: now,
@@ -2060,36 +2360,85 @@ class _AttendanceViewState extends ConsumerState<_AttendanceView> {
               geofencePassed: geofencePassed,
               faceMatchScore: match.score,
               branchId: user.branchId,
+              locationSource:
+                  _usingLocalTestPosition ? 'localTestFallback' : 'deviceGps',
             ),
           );
 
-      var trackingMessage = ' GPS tracking is active from 9:20 AM to 10:00 PM.';
+      var trackingMessage = ' Live location is now shared automatically.';
       try {
-        await ref.read(locationTrackingServiceProvider).startWorkingDay(
+        final activeBooking = findTechnicianActiveBooking(
+          ref.read(technicianBookingsProvider).valueOrNull ?? const <Booking>[],
+          user.uid,
+        );
+        await ref.read(locationTrackingServiceProvider).startShift(
               technicianId: user.uid,
-              branchId: user.branchId,
+              branchId: user.branchId ?? '',
+              bookingId: activeBooking?.id,
             );
       } catch (error) {
-        trackingMessage = ' GPS tracking could not start: $error';
+        trackingMessage =
+            ' Attendance was saved, but location permission is still required.';
       }
 
       _setViewState(() {
         _marked = true;
+        final locationNote =
+            _usingLocalTestPosition ? ' Localhost test location was used.' : '';
         _result =
-            '$attendanceStatusLabel marked for today. Face ID score ${(match.score * 100).round()}%.$trackingMessage';
+            '$attendanceStatusLabel marked for today. Face ID score ${(match.score * 100).round()}%.$locationNote$trackingMessage';
       });
     } catch (e) {
       _setViewState(() {
         _marked = false;
-        _result =
-            'Attendance was not sent. Please check your connection and try again. ${e.toString()}';
+        _result = _selfieFailureMessage(
+          e,
+          fallback:
+              'Attendance was not sent. Check your connection and try again.',
+        );
       });
     } finally {
       _setViewState(() => _loading = false);
     }
   }
 
-  Future<Position?> _attendancePosition() async {
+  Future<Position?> _attendancePosition(OperationsConfig config) async {
+    _usingLocalTestPosition = false;
+    if (kIsWeb) {
+      try {
+        // Some embedded browsers do not implement the Permissions API, so
+        // checkPermission reports denied even though getCurrentPosition can
+        // still show the browser prompt and return a valid position.
+        return await Geolocator.getCurrentPosition(
+          locationSettings: const LocationSettings(
+            accuracy: LocationAccuracy.high,
+          ),
+        ).timeout(const Duration(seconds: 20));
+      } catch (_) {
+        // Desktop browsers and embedded local test browsers may have no GPS
+        // provider even after permission is granted. Keep production strict,
+        // but allow the complete attendance workflow to be exercised from a
+        // localhost build using the configured branch point.
+        if (isLocalAttendanceHost(Uri.base.host)) {
+          _usingLocalTestPosition = true;
+          return Position(
+            longitude: config.branchLongitude,
+            latitude: config.branchLatitude,
+            timestamp: DateTime.now(),
+            accuracy: 0,
+            altitude: 0,
+            altitudeAccuracy: 0,
+            heading: 0,
+            headingAccuracy: 0,
+            speed: 0,
+            speedAccuracy: 0,
+            isMocked: true,
+          );
+        }
+        return null;
+      }
+    }
+    if (!await Geolocator.isLocationServiceEnabled()) return null;
     var permission = await Geolocator.checkPermission();
     if (permission == LocationPermission.denied) {
       permission = await Geolocator.requestPermission();
@@ -2103,6 +2452,25 @@ class _AttendanceViewState extends ConsumerState<_AttendanceView> {
         accuracy: LocationAccuracy.high,
       ),
     ).timeout(const Duration(seconds: 12));
+  }
+
+  String _selfieFailureMessage(
+    Object error, {
+    required String fallback,
+  }) {
+    final normalized = error.toString().toLowerCase();
+    if (normalized.contains('permission-denied') ||
+        normalized.contains('unauthorized')) {
+      return 'Selfie upload is not permitted for this account. Sign out, sign in, and try again.';
+    }
+    if (normalized.contains('object-not-found') ||
+        normalized.contains('bucket-not-found')) {
+      return 'Selfie storage is temporarily unavailable. Please try again shortly.';
+    }
+    if (normalized.contains('network') || normalized.contains('timeout')) {
+      return 'Selfie upload could not connect. Check your internet and try again.';
+    }
+    return fallback;
   }
 
   @override
@@ -2133,7 +2501,7 @@ class _AttendanceViewState extends ConsumerState<_AttendanceView> {
                       fontSize: 22,
                       fontWeight: FontWeight.w900)),
               SizedBox(height: 6),
-              Text('Face ID attendance; late uploads are marked absent',
+              Text('Face ID attendance; uploads after 09:45 are marked late',
                   style: TextStyle(color: Colors.white70)),
             ],
           ),
@@ -2153,7 +2521,7 @@ class _AttendanceViewState extends ConsumerState<_AttendanceView> {
               const SizedBox(width: 8),
               Expanded(
                 child: Text(
-                  '$windowText. Uploads after this are saved as absent.',
+                  '$windowText. Uploads after this are marked late.',
                   style: const TextStyle(fontWeight: FontWeight.w700),
                 ),
               ),
@@ -2177,7 +2545,7 @@ class _AttendanceViewState extends ConsumerState<_AttendanceView> {
                 const SizedBox(width: 8),
                 const Expanded(
                   child: Text(
-                    'Please upload a selfie photo. Uploads after the cutoff are saved as absent.',
+                    'Please upload a selfie photo. Uploads after the cutoff are marked late.',
                     style: TextStyle(fontSize: 13),
                   ),
                 ),
@@ -2400,6 +2768,289 @@ class _AttendanceStatusChip extends StatelessWidget {
   }
 }
 
+class _MonthlyScheduleView extends ConsumerStatefulWidget {
+  const _MonthlyScheduleView();
+
+  @override
+  ConsumerState<_MonthlyScheduleView> createState() =>
+      _MonthlyScheduleViewState();
+}
+
+class _MonthlyScheduleViewState extends ConsumerState<_MonthlyScheduleView> {
+  DateTime _month = DateTime(DateTime.now().year, DateTime.now().month);
+
+  @override
+  Widget build(BuildContext context) {
+    final bookings =
+        ref.watch(technicianBookingsProvider).valueOrNull ?? const <Booking>[];
+    final monthBookings = bookings
+        .where((booking) =>
+            booking.preferredDate.year == _month.year &&
+            booking.preferredDate.month == _month.month)
+        .toList()
+      ..sort((a, b) => a.preferredDate.compareTo(b.preferredDate));
+    final byDay = <int, List<Booking>>{};
+    for (final booking in monthBookings) {
+      byDay.putIfAbsent(booking.preferredDate.day, () => []).add(booking);
+    }
+    final firstWeekday = DateTime(_month.year, _month.month).weekday;
+    final dayCount = DateTime(_month.year, _month.month + 1, 0).day;
+
+    return ListView(
+      padding: const EdgeInsets.all(16),
+      children: [
+        Card(
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              children: [
+                Row(
+                  children: [
+                    IconButton(
+                      tooltip: 'Previous month',
+                      onPressed: () => setState(() =>
+                          _month = DateTime(_month.year, _month.month - 1)),
+                      icon: const Icon(Icons.chevron_left),
+                    ),
+                    Expanded(
+                      child: Text(
+                        DateFormat('MMMM yyyy').format(_month),
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(
+                          fontSize: 20,
+                          fontWeight: FontWeight.w900,
+                        ),
+                      ),
+                    ),
+                    IconButton(
+                      tooltip: 'Next month',
+                      onPressed: () => setState(() =>
+                          _month = DateTime(_month.year, _month.month + 1)),
+                      icon: const Icon(Icons.chevron_right),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                Row(
+                  children: [
+                    for (final day in [
+                      'Mon',
+                      'Tue',
+                      'Wed',
+                      'Thu',
+                      'Fri',
+                      'Sat',
+                      'Sun'
+                    ])
+                      Expanded(
+                        child: Text(
+                          day,
+                          textAlign: TextAlign.center,
+                          style: const TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.w800,
+                            color: AppTheme.textSecondary,
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                GridView.builder(
+                  shrinkWrap: true,
+                  physics: const NeverScrollableScrollPhysics(),
+                  gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                    crossAxisCount: 7,
+                    mainAxisExtent: 54,
+                    crossAxisSpacing: 5,
+                    mainAxisSpacing: 5,
+                  ),
+                  itemCount: firstWeekday - 1 + dayCount,
+                  itemBuilder: (context, index) {
+                    if (index < firstWeekday - 1) return const SizedBox();
+                    final day = index - firstWeekday + 2;
+                    final count = byDay[day]?.length ?? 0;
+                    final isToday = _sameCalendarDay(
+                      DateTime(_month.year, _month.month, day),
+                      DateTime.now(),
+                    );
+                    return Container(
+                      decoration: BoxDecoration(
+                        color: count > 0
+                            ? AppTheme.primary.withValues(alpha: 0.1)
+                            : Colors.white,
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(
+                          color: isToday ? AppTheme.primary : AppTheme.divider,
+                          width: isToday ? 2 : 1,
+                        ),
+                      ),
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Text('$day',
+                              style:
+                                  const TextStyle(fontWeight: FontWeight.w800)),
+                          if (count > 0)
+                            Text(
+                              '$count job${count == 1 ? '' : 's'}',
+                              style: const TextStyle(
+                                fontSize: 9,
+                                color: AppTheme.primary,
+                                fontWeight: FontWeight.w800,
+                              ),
+                            ),
+                        ],
+                      ),
+                    );
+                  },
+                ),
+              ],
+            ),
+          ),
+        ),
+        const SizedBox(height: 14),
+        Text(
+          '${monthBookings.length} scheduled job${monthBookings.length == 1 ? '' : 's'}',
+          style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w900),
+        ),
+        const SizedBox(height: 10),
+        if (monthBookings.isEmpty)
+          const _EmptyJobsCard(
+            title: 'No jobs this month',
+            message: 'Assigned visits will appear in this monthly schedule.',
+          )
+        else
+          for (final booking in monthBookings)
+            Card(
+              child: ListTile(
+                leading:
+                    const Icon(Icons.event_available, color: AppTheme.primary),
+                title: Text(
+                  '${DateFormat('dd MMM').format(booking.preferredDate)} · ${booking.preferredTime}',
+                  style: const TextStyle(fontWeight: FontWeight.w800),
+                ),
+                subtitle: Text(
+                  '${booking.applianceType} · ${booking.customerName}\n${booking.address}',
+                ),
+                isThreeLine: true,
+              ),
+            ),
+      ],
+    );
+  }
+}
+
+class _TechnicianReviewsView extends ConsumerWidget {
+  const _TechnicianReviewsView();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final user = ref.watch(currentUserProvider).valueOrNull;
+    final reviewsAsync = ref.watch(currentTechnicianReviewsProvider);
+    return reviewsAsync.when(
+      loading: () => const Center(child: CircularProgressIndicator()),
+      error: (_, __) => const Center(
+        child: Text('Reviews could not be loaded. Please try again.'),
+      ),
+      data: (reviews) {
+        final average = reviews.isEmpty
+            ? 0.0
+            : reviews.fold<int>(0, (sum, item) => sum + item.rating) /
+                reviews.length;
+        return ListView(
+          padding: const EdgeInsets.all(16),
+          children: [
+            Card(
+              color: AppTheme.primary,
+              child: Padding(
+                padding: const EdgeInsets.all(20),
+                child: Column(
+                  children: [
+                    Text(
+                      user?.technicianCategory.label ?? 'Junior',
+                      style: const TextStyle(
+                        color: Colors.white70,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      reviews.isEmpty
+                          ? 'No rating yet'
+                          : average.toStringAsFixed(1),
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 36,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                    _ReviewStars(rating: average),
+                    const SizedBox(height: 6),
+                    Text(
+                      '${reviews.length} consolidated review${reviews.length == 1 ? '' : 's'}',
+                      style: const TextStyle(color: Colors.white70),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(height: 14),
+            if (reviews.isEmpty)
+              const _EmptyJobsCard(
+                title: 'No reviews yet',
+                message: 'Customer and admin feedback will appear here.',
+              )
+            else
+              for (final review in reviews)
+                Card(
+                  child: ListTile(
+                    leading: CircleAvatar(
+                      backgroundColor:
+                          AppTheme.starColor.withValues(alpha: 0.15),
+                      child: Text('${review.rating}★'),
+                    ),
+                    title: Text(
+                      review.reviewerName.trim().isNotEmpty
+                          ? review.reviewerName
+                          : review.reviewerRole == 'customer'
+                              ? 'Customer'
+                              : 'Admin',
+                      style: const TextStyle(fontWeight: FontWeight.w800),
+                    ),
+                    subtitle: Text(
+                      '${review.text}\n${DateFormat('dd MMM yyyy').format(review.createdAt)}',
+                    ),
+                    isThreeLine: true,
+                  ),
+                ),
+          ],
+        );
+      },
+    );
+  }
+}
+
+class _ReviewStars extends StatelessWidget {
+  const _ReviewStars({required this.rating});
+
+  final double rating;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: [
+        for (var index = 1; index <= 5; index++)
+          Icon(
+            index <= rating.round() ? Icons.star : Icons.star_border,
+            color: AppTheme.starColor,
+          ),
+      ],
+    );
+  }
+}
+
 class _EarningsView extends ConsumerWidget {
   const _EarningsView();
 
@@ -2407,6 +3058,13 @@ class _EarningsView extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final bills =
         ref.watch(technicianBillsProvider).valueOrNull ?? const <Bill>[];
+    final technician = ref.watch(currentUserProvider).valueOrNull;
+    final technicianId = technician?.uid ?? '';
+    final monthlySalary = technician?.monthlySalary ?? 0;
+    final customIncentives = technicianId.isEmpty
+        ? const <TechnicianIncentive>[]
+        : ref.watch(technicianIncentivesProvider(technicianId)).valueOrNull ??
+            const <TechnicianIncentive>[];
     final range = ref.watch(_earningsRangeProvider);
     final now = DateTime.now();
     final paidBills = bills.where((bill) => bill.isPaid).toList();
@@ -2420,19 +3078,29 @@ class _EarningsView extends ConsumerWidget {
         .where((bill) => !bill.isPaid)
         .fold<double>(0, (sum, bill) => sum + bill.amount);
     final monthDates = _datesForRange(_EarningsRange.month, now);
-    final monthlyIncentive = monthDates.fold<double>(
+    final targetIncentive = monthDates.fold<double>(
       0,
-      (sum, date) => sum + _dailyIncentive(_sumBillsForDay(paidBills, date)),
+      (sum, date) =>
+          sum + automaticDailyIncentive(_sumBillsForDay(paidBills, date)),
     );
+    final adminIncentive = customIncentives
+        .where((item) =>
+            item.awardedAt.year == now.year &&
+            item.awardedAt.month == now.month)
+        .fold<double>(0, (sum, item) => sum + item.amount);
+    final monthlyIncentive = targetIncentive + adminIncentive;
     final chartPoints = _earningPointsForRange(
       range: range,
       now: now,
       paidBills: paidBills,
+      monthlySalary: monthlySalary,
     );
     final rangeCollection =
         chartPoints.fold<double>(0, (sum, point) => sum + point.collection);
     final rangeIncentive =
         chartPoints.fold<double>(0, (sum, point) => sum + point.incentive);
+    final rangeSalary =
+        chartPoints.fold<double>(0, (sum, point) => sum + point.salary);
 
     return ListView(
       padding: const EdgeInsets.all(16),
@@ -2446,12 +3114,16 @@ class _EarningsView extends ConsumerWidget {
               value: 'Rs. ${daily.toStringAsFixed(0)}',
             ),
             _MetricCard(
-              label: 'Monthly payout',
-              value: 'Rs. ${monthly.toStringAsFixed(0)}',
+              label: 'Monthly base salary',
+              value: 'Rs. ${monthlySalary.toStringAsFixed(0)}',
             ),
             _MetricCard(
-              label: 'Incentives',
-              value: 'Rs. ${monthlyIncentive.toStringAsFixed(0)}',
+              label: 'Automatic incentive',
+              value: 'Rs. ${targetIncentive.toStringAsFixed(0)}',
+            ),
+            _MetricCard(
+              label: 'Admin-added incentive',
+              value: 'Rs. ${adminIncentive.toStringAsFixed(0)}',
             ),
             _MetricCard(
               label: 'Pending release',
@@ -2493,7 +3165,7 @@ class _EarningsView extends ConsumerWidget {
                 ),
                 const SizedBox(height: 8),
                 Text(
-                  'Collection + daily incentive for ${range.label.toLowerCase()} view',
+                  'Collection + prorated salary + daily incentive for ${range.label.toLowerCase()} view',
                   style: const TextStyle(color: AppTheme.textSecondary),
                 ),
                 const SizedBox(height: 18),
@@ -2514,13 +3186,17 @@ class _EarningsView extends ConsumerWidget {
                       value: 'Rs. ${rangeCollection.toStringAsFixed(0)}',
                     ),
                     _MiniEarningChip(
-                      label: '${range.label} incentive',
+                      label: '${range.label} automatic incentive',
                       value: 'Rs. ${rangeIncentive.toStringAsFixed(0)}',
+                    ),
+                    _MiniEarningChip(
+                      label: '${range.label} salary',
+                      value: 'Rs. ${rangeSalary.toStringAsFixed(0)}',
                     ),
                     _MiniEarningChip(
                       label: 'Total',
                       value:
-                          'Rs. ${(rangeCollection + rangeIncentive).toStringAsFixed(0)}',
+                          'Rs. ${(rangeCollection + rangeIncentive + rangeSalary).toStringAsFixed(0)}',
                     ),
                   ],
                 ),
@@ -2545,13 +3221,25 @@ class _EarningsView extends ConsumerWidget {
                   value: 'Rs. ${monthly.toStringAsFixed(0)}',
                 ),
                 _PayoutRow(
-                  label: 'Incentive this month',
+                  label: 'Monthly base salary',
+                  value: 'Rs. ${monthlySalary.toStringAsFixed(0)}',
+                ),
+                _PayoutRow(
+                  label: 'Automatic ₹8,000-rule incentive',
+                  value: 'Rs. ${targetIncentive.toStringAsFixed(0)}',
+                ),
+                _PayoutRow(
+                  label: 'Additional incentive added by admin',
+                  value: 'Rs. ${adminIncentive.toStringAsFixed(0)}',
+                ),
+                _PayoutRow(
+                  label: 'Total incentive this month',
                   value: 'Rs. ${monthlyIncentive.toStringAsFixed(0)}',
                 ),
                 _PayoutRow(
                   label: 'Total earnings this month',
                   value:
-                      'Rs. ${(monthly + monthlyIncentive).toStringAsFixed(0)}',
+                      'Rs. ${(monthly + monthlySalary + monthlyIncentive).toStringAsFixed(0)}',
                 ),
                 _PayoutRow(
                   label: 'Pending release',
@@ -2564,6 +3252,27 @@ class _EarningsView extends ConsumerWidget {
                   'Incentive starts at Rs. 8,000 collection and increases with higher daily collection.',
                   style: TextStyle(color: AppTheme.textSecondary),
                 ),
+                if (customIncentives.isNotEmpty) ...[
+                  const Divider(height: 24),
+                  const Text(
+                    'Recent admin incentives',
+                    style: TextStyle(fontWeight: FontWeight.w900),
+                  ),
+                  const SizedBox(height: 8),
+                  for (final incentive in customIncentives.take(5))
+                    ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      leading: const Icon(Icons.card_giftcard,
+                          color: AppTheme.accent),
+                      title: Text(incentive.description),
+                      subtitle: Text(DateFormat('dd MMM yyyy')
+                          .format(incentive.awardedAt)),
+                      trailing: Text(
+                        'Rs. ${incentive.amount.toStringAsFixed(0)}',
+                        style: const TextStyle(fontWeight: FontWeight.w900),
+                      ),
+                    ),
+                ],
               ],
             ),
           ),
@@ -2578,13 +3287,15 @@ class _EarningPoint {
     required this.date,
     required this.collection,
     required this.incentive,
+    required this.salary,
   });
 
   final DateTime date;
   final double collection;
   final double incentive;
+  final double salary;
 
-  double get total => collection + incentive;
+  double get total => collection + incentive + salary;
 }
 
 List<DateTime> _datesForRange(_EarningsRange range, DateTime now) {
@@ -2605,13 +3316,15 @@ List<_EarningPoint> _earningPointsForRange({
   required _EarningsRange range,
   required DateTime now,
   required List<Bill> paidBills,
+  required double monthlySalary,
 }) {
   return _datesForRange(range, now).map((date) {
     final collection = _sumBillsForDay(paidBills, date);
     return _EarningPoint(
       date: date,
       collection: collection,
-      incentive: _dailyIncentive(collection),
+      incentive: automaticDailyIncentive(collection),
+      salary: proratedDailySalary(monthlySalary, date),
     );
   }).toList();
 }
@@ -2623,19 +3336,6 @@ double _sumBillsForDay(List<Bill> bills, DateTime date) {
           bill.createdAt.month == date.month &&
           bill.createdAt.day == date.day)
       .fold<double>(0, (sum, bill) => sum + bill.amount);
-}
-
-double _dailyIncentive(double collection) {
-  if (collection >= 20000) {
-    return 1000 + ((collection - 20000) / 1000).floor() * 100;
-  }
-  if (collection >= 17500) return 750;
-  if (collection >= 15000) return 500;
-  if (collection >= 12500) return 400;
-  if (collection >= 10000) return 300;
-  if (collection >= 9000) return 200;
-  if (collection >= 8000) return 100;
-  return 0;
 }
 
 class _EarningsLineChartPainter extends CustomPainter {

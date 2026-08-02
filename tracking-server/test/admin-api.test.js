@@ -25,7 +25,7 @@ test('Branch Admin creation rejects weak passwords and missing branches', () => 
   assert.throws(() => validateBranchAdminInput({
     name: 'Admin', email: 'admin@example.com', phone: '9999999999',
     password: 'short', branchId: 'branch-a',
-  }), /12 characters/);
+  }), /6 characters/);
   assert.throws(() => validateBranchAdminInput({
     name: 'Admin', email: 'admin@example.com', phone: '9999999999',
     password: 'Temporary#123', branchId: '',

@@ -65,6 +65,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Dashboard content'), findsOneWidget);
+    expect(find.byTooltip('Change dashboard section'), findsOneWidget);
     await tester.tap(find.byTooltip('Open navigation menu'));
     await tester.pumpAndSettle();
     expect(find.text('FixNow Admin Console'), findsOneWidget);

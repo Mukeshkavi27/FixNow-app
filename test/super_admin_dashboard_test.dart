@@ -157,7 +157,25 @@ void main() {
     expect(tester.takeException(), isNull);
     expect(find.text('Overview'), findsWidgets);
     expect(find.text('System overview'), findsOneWidget);
-    expect(find.text('Bookings'), findsWidgets);
+    expect(find.byTooltip('Change dashboard section'), findsOneWidget);
+    expect(find.text('Total revenue'), findsOneWidget);
+    expect(find.text('Active branches'), findsOneWidget);
+  });
+
+  testWidgets('all Super Admin sections fit a compact phone viewport',
+      (tester) async {
+    await tester.binding.setSurfaceSize(const Size(360, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    for (final section in SuperAdminSection.values) {
+      await tester.pumpWidget(dashboard(initialSection: section));
+      await tester.pumpAndSettle();
+      expect(
+        tester.takeException(),
+        isNull,
+        reason: '${section.label} must not overflow on a phone',
+      );
+    }
   });
 
   testWidgets('mobile bookings use readable cards instead of a wide table',

@@ -49,7 +49,8 @@ class BranchResolver {
     double latitude,
     double longitude,
   ) {
-    final coordinateBranches = branches.where((branch) => branch.hasCoordinates).toList();
+    final coordinateBranches =
+        branches.where((branch) => branch.hasCoordinates).toList();
     if (coordinateBranches.isEmpty) {
       return branches.first;
     }
@@ -70,14 +71,16 @@ class BranchResolver {
     return nearest;
   }
 
-  static BranchInfo? matchByAddress(List<BranchInfo> branches, String? address) {
+  static BranchInfo? matchByAddress(
+      List<BranchInfo> branches, String? address) {
     final normalized = address?.trim().toLowerCase() ?? '';
     if (normalized.isEmpty) return null;
 
     for (final branch in branches) {
       if (normalized.contains(branch.city.toLowerCase()) ||
           normalized.contains(branch.name.toLowerCase()) ||
-          branch.aliases.any((alias) => normalized.contains(alias.toLowerCase()))) {
+          branch.aliases
+              .any((alias) => normalized.contains(alias.toLowerCase()))) {
         return branch;
       }
     }

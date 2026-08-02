@@ -10,6 +10,9 @@ class Review {
     required this.text,
     required this.createdAt,
     this.branchId,
+    this.reviewerRole = 'customer',
+    this.reviewerName = '',
+    this.reviewerId,
   });
 
   final String id;
@@ -20,6 +23,9 @@ class Review {
   final String text;
   final DateTime createdAt;
   final String? branchId;
+  final String reviewerRole;
+  final String reviewerName;
+  final String? reviewerId;
 
   factory Review.fromFirestore(
     DocumentSnapshot<Map<String, dynamic>> doc,
@@ -34,6 +40,9 @@ class Review {
       text: data['text'] as String? ?? '',
       createdAt: (data['createdAt'] as Timestamp?)?.toDate() ?? DateTime.now(),
       branchId: data['branchId'] as String?,
+      reviewerRole: data['reviewerRole'] as String? ?? 'customer',
+      reviewerName: data['reviewerName'] as String? ?? '',
+      reviewerId: data['reviewerId'] as String?,
     );
   }
 
@@ -45,5 +54,8 @@ class Review {
         'text': text,
         'createdAt': Timestamp.fromDate(createdAt),
         'branchId': branchId,
+        'reviewerRole': reviewerRole,
+        'reviewerName': reviewerName,
+        'reviewerId': reviewerId,
       };
 }

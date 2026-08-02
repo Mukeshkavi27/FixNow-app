@@ -8,6 +8,8 @@ import '../../auth/domain/app_user.dart';
 import '../../bookings/domain/booking.dart';
 import '../domain/bill.dart';
 import '../domain/revenue_analytics.dart';
+import '../domain/technician_compensation.dart';
+import '../domain/technician_incentive.dart';
 
 class RevenueDashboard extends StatefulWidget {
   const RevenueDashboard({
@@ -17,6 +19,7 @@ class RevenueDashboard extends StatefulWidget {
     required this.branches,
     required this.technicians,
     required this.now,
+    this.incentives = const [],
     this.lockedBranchId,
     this.title = 'Revenue and analytics',
     this.subtitle = 'Paid collection performance and reports',
@@ -27,6 +30,7 @@ class RevenueDashboard extends StatefulWidget {
   final List<BranchInfo> branches;
   final List<AppUser> technicians;
   final DateTime now;
+  final List<TechnicianIncentive> incentives;
   final String? lockedBranchId;
   final String title;
   final String subtitle;
@@ -62,6 +66,100 @@ class _RevenueDashboardState extends State<RevenueDashboard> {
       technicians: widget.technicians,
       now: widget.now,
       branchId: selectedBranch,
+    );
+    String? technicianRevenueBranch(AppUser technician) =>
+        technician.nativeBranchId ?? technician.branchId;
+    final technicianById = {
+      for (final technician in widget.technicians) technician.uid: technician,
+    };
+    String? billRevenueBranch(Bill bill) {
+      final technician = technicianById[bill.technicianId];
+      return bill.revenueBranchId ??
+          bill.branchId ??
+          technician?.nativeBranchId ??
+          technician?.branchId;
+    }
+
+    final revenueTechnicians = widget.technicians
+        .where((technician) =>
+            selectedBranch == null ||
+            technicianRevenueBranch(technician) == selectedBranch)
+        .toList();
+    final salariedTechnicians = revenueTechnicians
+        .where((technician) => technician.monthlySalary > 0)
+        .toList()
+      ..sort(
+          (left, right) => right.monthlySalary.compareTo(left.monthlySalary));
+    final monthlyPayroll = salariedTechnicians.fold<double>(
+      0,
+      (sum, technician) => sum + technician.monthlySalary,
+    );
+    final highestSalary = salariedTechnicians.isEmpty
+        ? 0.0
+        : salariedTechnicians.first.monthlySalary;
+    final salaryBreakdown = salariedTechnicians
+        .map(
+          (technician) => RevenueBreakdown(
+            id: technician.uid,
+            label: technician.name.trim().isEmpty
+                ? technician.email
+                : technician.name,
+            amount: technician.monthlySalary,
+            billCount: 0,
+            share: highestSalary <= 0
+                ? 0
+                : technician.monthlySalary / highestSalary,
+          ),
+        )
+        .toList();
+    final monthStart = DateTime(widget.now.year, widget.now.month);
+    final nextMonth = DateTime(widget.now.year, widget.now.month + 1);
+    final scopedBills = widget.bills
+        .where((bill) =>
+            selectedBranch == null || billRevenueBranch(bill) == selectedBranch)
+        .toList();
+    final compensationRows = <_TechnicianCompensation>[];
+    for (final technician in revenueTechnicians) {
+      final technicianBills = scopedBills
+          .where((bill) => bill.technicianId == technician.uid)
+          .toList();
+      final ruleIncentive = automaticIncentiveForPeriod(
+        bills: technicianBills,
+        start: monthStart,
+        end: nextMonth,
+      );
+      final additionalIncentive = widget.incentives
+          .where((item) =>
+              item.technicianId == technician.uid &&
+              !item.awardedAt.isBefore(monthStart) &&
+              item.awardedAt.isBefore(nextMonth) &&
+              (selectedBranch == null ||
+                  (item.revenueBranchId ??
+                          technicianRevenueBranch(technician) ??
+                          item.branchId) ==
+                      selectedBranch))
+          .fold<double>(0, (sum, item) => sum + item.amount);
+      if (technician.monthlySalary > 0 ||
+          ruleIncentive > 0 ||
+          additionalIncentive > 0) {
+        compensationRows.add(
+          _TechnicianCompensation(
+            technician: technician,
+            salary: technician.monthlySalary,
+            ruleIncentive: ruleIncentive,
+            additionalIncentive: additionalIncentive,
+          ),
+        );
+      }
+    }
+    compensationRows.sort((left, right) => right.total.compareTo(left.total));
+    final automaticIncentive = compensationRows.fold<double>(
+      0,
+      (sum, row) => sum + row.ruleIncentive,
+    );
+    final additionalIncentive = compensationRows.fold<double>(
+      0,
+      (sum, row) => sum + row.additionalIncentive,
     );
     final showFilter =
         widget.lockedBranchId == null && widget.branches.isNotEmpty;
@@ -121,7 +219,12 @@ class _RevenueDashboardState extends State<RevenueDashboard> {
           ],
         ),
         const SizedBox(height: 20),
-        _MetricGrid(analytics: analytics),
+        _MetricGrid(
+          analytics: analytics,
+          monthlyPayroll: monthlyPayroll,
+          automaticIncentive: automaticIncentive,
+          additionalIncentive: additionalIncentive,
+        ),
         const SizedBox(height: 18),
         LayoutBuilder(
           builder: (context, constraints) {
@@ -183,6 +286,16 @@ class _RevenueDashboardState extends State<RevenueDashboard> {
                   color: AppTheme.accent,
                 ),
               ),
+              _RevenuePanel(
+                title: 'Technician salary chart',
+                subtitle: 'Admin-controlled monthly base salary',
+                child: _BreakdownList(
+                  items: salaryBreakdown,
+                  emptyMessage: 'No technician salaries assigned yet',
+                  color: const Color(0xFF7B61FF),
+                  showBillCount: false,
+                ),
+              ),
             ];
             if (constraints.maxWidth >= 1080) {
               return Row(
@@ -204,6 +317,13 @@ class _RevenueDashboardState extends State<RevenueDashboard> {
               ],
             );
           },
+        ),
+        const SizedBox(height: 18),
+        _RevenuePanel(
+          title: 'Technician compensation',
+          subtitle:
+              'Base salary, automatic collection incentive, and admin-added incentive shown separately',
+          child: _CompensationTable(rows: compensationRows),
         ),
         const SizedBox(height: 18),
         _RevenuePanel(
@@ -247,8 +367,16 @@ class _RevenueDashboardState extends State<RevenueDashboard> {
 }
 
 class _MetricGrid extends StatelessWidget {
-  const _MetricGrid({required this.analytics});
+  const _MetricGrid({
+    required this.analytics,
+    required this.monthlyPayroll,
+    required this.automaticIncentive,
+    required this.additionalIncentive,
+  });
   final RevenueAnalytics analytics;
+  final double monthlyPayroll;
+  final double automaticIncentive;
+  final double additionalIncentive;
 
   @override
   Widget build(BuildContext context) {
@@ -282,6 +410,30 @@ class _MetricGrid extends StatelessWidget {
         analytics.allTime,
         Icons.account_balance_wallet_outlined,
         const Color(0xFF0F766E)
+      ),
+      (
+        'Monthly base salary',
+        monthlyPayroll,
+        Icons.payments_outlined,
+        const Color(0xFF7B61FF)
+      ),
+      (
+        'Automatic incentive',
+        automaticIncentive,
+        Icons.auto_graph_outlined,
+        AppTheme.instantGreen
+      ),
+      (
+        'Admin-added incentive',
+        additionalIncentive,
+        Icons.card_giftcard_outlined,
+        AppTheme.accent
+      ),
+      (
+        'Total technician payout',
+        monthlyPayroll + automaticIncentive + additionalIncentive,
+        Icons.account_balance_wallet_outlined,
+        const Color(0xFF7B61FF)
       ),
     ];
     return LayoutBuilder(
@@ -496,10 +648,12 @@ class _BreakdownList extends StatelessWidget {
     required this.items,
     required this.emptyMessage,
     this.color = AppTheme.primary,
+    this.showBillCount = true,
   });
   final List<RevenueBreakdown> items;
   final String emptyMessage;
   final Color color;
+  final bool showBillCount;
 
   @override
   Widget build(BuildContext context) {
@@ -507,7 +661,11 @@ class _BreakdownList extends StatelessWidget {
     return Column(
       children: [
         for (var i = 0; i < items.take(8).length; i++) ...[
-          _BreakdownRow(item: items[i], color: color),
+          _BreakdownRow(
+            item: items[i],
+            color: color,
+            showBillCount: showBillCount,
+          ),
           if (i != items.take(8).length - 1) const SizedBox(height: 14),
         ],
       ],
@@ -516,9 +674,14 @@ class _BreakdownList extends StatelessWidget {
 }
 
 class _BreakdownRow extends StatelessWidget {
-  const _BreakdownRow({required this.item, required this.color});
+  const _BreakdownRow({
+    required this.item,
+    required this.color,
+    required this.showBillCount,
+  });
   final RevenueBreakdown item;
   final Color color;
+  final bool showBillCount;
 
   @override
   Widget build(BuildContext context) {
@@ -555,17 +718,87 @@ class _BreakdownRow extends StatelessWidget {
                 ),
               ),
             ),
-            const SizedBox(width: 9),
-            Text(
-              '${item.billCount} bill(s)',
-              style: const TextStyle(
-                color: AppTheme.textSecondary,
-                fontSize: 11,
+            if (showBillCount) ...[
+              const SizedBox(width: 9),
+              Text(
+                '${item.billCount} bill(s)',
+                style: const TextStyle(
+                  color: AppTheme.textSecondary,
+                  fontSize: 11,
+                ),
               ),
-            ),
+            ],
           ],
         ),
       ],
+    );
+  }
+}
+
+class _TechnicianCompensation {
+  const _TechnicianCompensation({
+    required this.technician,
+    required this.salary,
+    required this.ruleIncentive,
+    required this.additionalIncentive,
+  });
+
+  final AppUser technician;
+  final double salary;
+  final double ruleIncentive;
+  final double additionalIncentive;
+
+  double get total => salary + ruleIncentive + additionalIncentive;
+}
+
+class _CompensationTable extends StatelessWidget {
+  const _CompensationTable({required this.rows});
+
+  final List<_TechnicianCompensation> rows;
+
+  @override
+  Widget build(BuildContext context) {
+    if (rows.isEmpty) {
+      return const _RevenueEmpty('No technician compensation recorded yet');
+    }
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      child: DataTable(
+        columns: const [
+          DataColumn(label: Text('Technician')),
+          DataColumn(label: Text('Native branch')),
+          DataColumn(label: Text('Base salary'), numeric: true),
+          DataColumn(label: Text('₹8,000 rule incentive'), numeric: true),
+          DataColumn(label: Text('Admin-added incentive'), numeric: true),
+          DataColumn(label: Text('Total payout'), numeric: true),
+        ],
+        rows: [
+          for (final row in rows)
+            DataRow(
+              cells: [
+                DataCell(Text(
+                  row.technician.name.trim().isEmpty
+                      ? row.technician.email
+                      : row.technician.name,
+                )),
+                DataCell(Text(
+                  row.technician.nativeBranchName ??
+                      row.technician.branchName ??
+                      'Unassigned',
+                )),
+                DataCell(Text(_money(row.salary))),
+                DataCell(Text(_money(row.ruleIncentive))),
+                DataCell(Text(_money(row.additionalIncentive))),
+                DataCell(
+                  Text(
+                    _money(row.total),
+                    style: const TextStyle(fontWeight: FontWeight.w900),
+                  ),
+                ),
+              ],
+            ),
+        ],
+      ),
     );
   }
 }

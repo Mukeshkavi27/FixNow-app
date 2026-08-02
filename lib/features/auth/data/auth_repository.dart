@@ -46,7 +46,7 @@ class AuthRepository {
         .timeout(
           const Duration(seconds: 25),
           onTimeout: () => throw StateError(
-            'Firebase Auth did not respond. Check internet, Firebase project, and web app config.',
+            'Sign-in is taking too long. Check your connection and try again.',
           ),
         );
     final uid = credential.user?.uid;
@@ -56,7 +56,7 @@ class AuthRepository {
     final profile = await _firestore.collection('users').doc(uid).get().timeout(
           const Duration(seconds: 20),
           onTimeout: () => throw StateError(
-            'Signed in, but Firestore profile did not load. Check Firestore rules and network.',
+            'Your account profile is taking too long to load. Please try again.',
           ),
         );
     if (!profile.exists) {

@@ -9,8 +9,35 @@ import '../../features/technician/domain/technician_location.dart';
 import '../../features/technician/domain/overtime_record.dart';
 import '../../features/technician/domain/technician_travel.dart';
 
+abstract interface class LocationTrackingController {
+  bool get isTracking;
+  String? get activeBookingId;
+
+  Future<void> start({
+    required String technicianId,
+    required String bookingId,
+    String? branchId,
+  });
+
+  Future<void> startWorkingDay({
+    required String technicianId,
+    String? branchId,
+    String? bookingId,
+  });
+
+  Future<void> startShift({
+    required String technicianId,
+    required String branchId,
+    String? bookingId,
+  });
+
+  Future<void> finishBooking();
+  Future<void> stop();
+  Future<bool> recoverNow();
+}
+
 final locationTrackingServiceProvider =
-    Provider<LocationTrackingService>((ref) {
+    Provider<LocationTrackingController>((ref) {
   final service = LocationTrackingService(
     ref.watch(technicianRepositoryProvider),
   );
@@ -18,7 +45,7 @@ final locationTrackingServiceProvider =
   return service;
 });
 
-class LocationTrackingService {
+class LocationTrackingService implements LocationTrackingController {
   LocationTrackingService(this._repository);
 
   final TechnicianRepository _repository;
@@ -26,17 +53,23 @@ class LocationTrackingService {
   Timer? _startTimer;
   Timer? _endTimer;
   Timer? _gpsWatchdog;
+  Timer? _heartbeatTimer;
   bool _sending = false;
   String? _technicianId;
   String? _activeBookingId;
   String? _branchId;
   String? _activeOvertimeDateKey;
   DateTime? _lastSuccessfulGpsAt;
+  Position? _lastPosition;
+  bool _workingHoursOnly = true;
 
+  @override
   bool get isTracking =>
       _positionSubscription != null || _startTimer?.isActive == true;
+  @override
   String? get activeBookingId => _activeBookingId;
 
+  @override
   Future<void> start({
     required String technicianId,
     required String bookingId,
@@ -49,10 +82,39 @@ class LocationTrackingService {
     );
   }
 
+  @override
   Future<void> startWorkingDay({
     required String technicianId,
     String? branchId,
     String? bookingId,
+  }) async {
+    return _startTracking(
+      technicianId: technicianId,
+      branchId: branchId,
+      bookingId: bookingId,
+      workingHoursOnly: true,
+    );
+  }
+
+  @override
+  Future<void> startShift({
+    required String technicianId,
+    required String branchId,
+    String? bookingId,
+  }) {
+    return _startTracking(
+      technicianId: technicianId,
+      branchId: branchId,
+      bookingId: bookingId,
+      workingHoursOnly: false,
+    );
+  }
+
+  Future<void> _startTracking({
+    required String technicianId,
+    required String? branchId,
+    required String? bookingId,
+    required bool workingHoursOnly,
   }) async {
     await stop();
     final permission = await _ensurePermission();
@@ -68,6 +130,11 @@ class LocationTrackingService {
     _technicianId = technicianId;
     _activeBookingId = bookingId;
     _branchId = branchId;
+    _workingHoursOnly = workingHoursOnly;
+    if (!workingHoursOnly) {
+      await _beginPositionStream();
+      return;
+    }
     final start = technicianTrackingStart(now);
     if (now.isBefore(start)) {
       _startTimer = Timer(start.difference(now), _beginPositionStream);
@@ -77,6 +144,7 @@ class LocationTrackingService {
     _endTimer = Timer(end.difference(now), stop);
   }
 
+  @override
   Future<void> finishBooking() async {
     _activeBookingId = null;
     final technicianId = _technicianId;
@@ -85,6 +153,7 @@ class LocationTrackingService {
     }
   }
 
+  @override
   Future<void> stop() async {
     _startTimer?.cancel();
     _startTimer = null;
@@ -92,6 +161,8 @@ class LocationTrackingService {
     _endTimer = null;
     _gpsWatchdog?.cancel();
     _gpsWatchdog = null;
+    _heartbeatTimer?.cancel();
+    _heartbeatTimer = null;
     await _positionSubscription?.cancel();
     _positionSubscription = null;
     final technicianId = _technicianId;
@@ -107,13 +178,17 @@ class LocationTrackingService {
     _branchId = null;
     _activeOvertimeDateKey = null;
     _lastSuccessfulGpsAt = null;
+    _lastPosition = null;
+    _workingHoursOnly = true;
   }
+
+  bool get _canPublishNow =>
+      !_workingHoursOnly || isWithinTechnicianTrackingDay(DateTime.now());
 
   Future<void> _beginPositionStream() async {
     _startTimer = null;
     final technicianId = _technicianId;
-    if (technicianId == null ||
-        !isWithinTechnicianTrackingDay(DateTime.now())) {
+    if (technicianId == null || !_canPublishNow) {
       return;
     }
     final settings = _locationSettings();
@@ -136,11 +211,21 @@ class LocationTrackingService {
       const Duration(seconds: 45),
       (_) => _recoverStaleGps(),
     );
+    // Position streams commonly pause while a device is stationary. Keep the
+    // online timestamp fresh so an on-duty technician never appears offline.
+    _heartbeatTimer?.cancel();
+    _heartbeatTimer = Timer.periodic(
+      const Duration(seconds: 12),
+      (_) {
+        final position = _lastPosition;
+        if (position != null) _publishPosition(position);
+      },
+    );
   }
 
+  @override
   Future<bool> recoverNow() async {
-    if (_technicianId == null ||
-        !isWithinTechnicianTrackingDay(DateTime.now())) {
+    if (_technicianId == null || !_canPublishNow) {
       return false;
     }
     if (_sending) return true;
@@ -171,22 +256,24 @@ class LocationTrackingService {
   }
 
   Future<void> _publishPosition(Position position) async {
-    if (_sending || !isWithinTechnicianTrackingDay(DateTime.now())) {
+    if (_sending || !_canPublishNow) {
       return;
     }
     final technicianId = _technicianId;
     if (technicianId == null) return;
     _sending = true;
     try {
-      if (isTechnicianOvertime(position.timestamp)) {
-        _activeOvertimeDateKey = overtimeDayKey(position.timestamp);
+      _lastPosition = position;
+      final publishedAt = DateTime.now();
+      if (isTechnicianOvertime(publishedAt)) {
+        _activeOvertimeDateKey = overtimeDayKey(publishedAt);
       }
       await _repository.updateLocation(
         TechnicianLocation(
           technicianId: technicianId,
           latitude: position.latitude,
           longitude: position.longitude,
-          updatedAt: position.timestamp,
+          updatedAt: publishedAt,
           activeBookingId: _activeBookingId,
           heading: position.heading.isNaN ? null : position.heading,
           bearing: position.heading.isNaN ? null : position.heading,
@@ -215,9 +302,9 @@ class LocationTrackingService {
           distanceFilter: 5,
           intervalDuration: const Duration(seconds: 10),
           foregroundNotificationConfig: const ForegroundNotificationConfig(
-            notificationTitle: 'FixNow working-hours tracking',
+            notificationTitle: 'FixNow automatic location tracking',
             notificationText:
-                'Tracking is active. Work after 10:00 PM is recorded as overtime.',
+                'Your location is shared while you are signed in.',
             enableWakeLock: true,
           ),
         ),
@@ -236,6 +323,20 @@ class LocationTrackingService {
   }
 
   Future<bool> _ensurePermission() async {
+    if (kIsWeb) {
+      try {
+        // Calling the position API directly is required for embedded web
+        // browsers that do not expose navigator.permissions.
+        await Geolocator.getCurrentPosition(
+          locationSettings: const LocationSettings(
+            accuracy: LocationAccuracy.high,
+          ),
+        ).timeout(const Duration(seconds: 20));
+        return true;
+      } catch (_) {
+        return false;
+      }
+    }
     if (!await Geolocator.isLocationServiceEnabled()) return false;
     var permission = await Geolocator.checkPermission();
     if (permission == LocationPermission.denied) {

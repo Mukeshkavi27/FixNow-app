@@ -35,6 +35,18 @@ val hasReleaseSigning = listOf(
     "keyPassword",
 ).all { keystoreProperties.getProperty(it)?.isNotBlank() == true }
 
+val isReleaseTask = gradle.startParameter.taskNames.any {
+    it.contains("release", ignoreCase = true)
+}
+
+if (isReleaseTask && !hasReleaseSigning) {
+    throw GradleException(
+        "Release signing is not configured. Add storeFile, storePassword, " +
+            "keyAlias, and keyPassword to android/key.properties before " +
+            "building a Play Store artifact."
+    )
+}
+
 android {
     namespace = configValue("FIXNOW_APPLICATION_ID", "com.fixnow.app")
     compileSdk = flutter.compileSdkVersion
@@ -68,9 +80,7 @@ android {
 
     buildTypes {
         release {
-            signingConfig = signingConfigs.getByName(
-                if (hasReleaseSigning) "release" else "debug"
-            )
+            signingConfig = signingConfigs.getByName("release")
         }
     }
 }

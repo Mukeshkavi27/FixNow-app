@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -41,14 +43,63 @@ class BillRepository {
   }
 
   Stream<List<Bill>> watchAllBills({String? branchId}) {
-    Query<Map<String, dynamic>> query = _firestore.collection('bills');
-    if (branchId != null && branchId.isNotEmpty) {
-      query = query.where('branchId', isEqualTo: branchId);
+    if (branchId == null || branchId.isEmpty) {
+      return _firestore.collection('bills').snapshots().map(
+            (snapshot) => _sortNewestFirst(
+                snapshot.docs.map(Bill.fromFirestore).toList()),
+          );
     }
-    return query.snapshots().map(
-          (snapshot) =>
-              _sortNewestFirst(snapshot.docs.map(Bill.fromFirestore).toList()),
-        );
+    final revenueQuery = _firestore
+        .collection('bills')
+        .where('revenueBranchId', isEqualTo: branchId)
+        .snapshots();
+    final legacyQuery = _firestore
+        .collection('bills')
+        .where('branchId', isEqualTo: branchId)
+        .snapshots();
+    return _mergeBillQueries(revenueQuery, legacyQuery);
+  }
+
+  Stream<List<Bill>> _mergeBillQueries(
+    Stream<QuerySnapshot<Map<String, dynamic>>> revenueQuery,
+    Stream<QuerySnapshot<Map<String, dynamic>>> legacyQuery,
+  ) {
+    final controller = StreamController<List<Bill>>();
+    List<Bill>? revenueBills;
+    List<Bill>? legacyBills;
+    StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? revenueSub;
+    StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? legacySub;
+
+    void emit() {
+      if (revenueBills == null || legacyBills == null) return;
+      final byId = <String, Bill>{
+        for (final bill in legacyBills!) bill.id: bill,
+        for (final bill in revenueBills!) bill.id: bill,
+      };
+      controller.add(_sortNewestFirst(byId.values.toList()));
+    }
+
+    controller.onListen = () {
+      revenueSub = revenueQuery.listen(
+        (snapshot) {
+          revenueBills = snapshot.docs.map(Bill.fromFirestore).toList();
+          emit();
+        },
+        onError: controller.addError,
+      );
+      legacySub = legacyQuery.listen(
+        (snapshot) {
+          legacyBills = snapshot.docs.map(Bill.fromFirestore).toList();
+          emit();
+        },
+        onError: controller.addError,
+      );
+    };
+    controller.onCancel = () async {
+      await revenueSub?.cancel();
+      await legacySub?.cancel();
+    };
+    return controller.stream;
   }
 
   List<Bill> _sortNewestFirst(List<Bill> bills) {
@@ -65,8 +116,10 @@ class BillRepository {
     if (amount <= 0) throw ArgumentError('Bill amount must be positive.');
     final billRef = _firestore.collection('bills').doc(bookingId);
     final bookingRef = _firestore.collection('bookings').doc(bookingId);
+    final technicianRef = _firestore.collection('users').doc(technicianId);
     await _firestore.runTransaction((transaction) async {
       final booking = await transaction.get(bookingRef);
+      final technician = await transaction.get(technicianRef);
       final data = booking.data();
       if (data == null) throw StateError('Booking not found.');
       if (data['status'] != BookingStatus.serviceCompleted.name ||
@@ -74,11 +127,19 @@ class BillRepository {
           data['technicianId'] != technicianId) {
         throw StateError('Bill details do not match the completed booking.');
       }
+      final technicianData = technician.data();
+      if (technicianData == null || technicianData['role'] != 'technician') {
+        throw StateError('Technician account not found.');
+      }
+      final revenueBranchId = technicianData['nativeBranchId'] as String? ??
+          technicianData['branchId'] as String? ??
+          data['branchId'] as String?;
       transaction.set(billRef, {
         'bookingId': bookingId,
         'customerId': customerId,
         'technicianId': technicianId,
         'branchId': data['branchId'],
+        'revenueBranchId': revenueBranchId,
         'amount': amount,
         'createdAt': FieldValue.serverTimestamp(),
         'isPaid': false,

@@ -1,8 +1,11 @@
+import 'dart:async';
+
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/enums/account_status.dart';
 import '../../../core/enums/user_role.dart';
+import '../../../core/enums/technician_category.dart';
 import '../../../core/providers/firebase_providers.dart';
 import '../../auth/domain/app_user.dart';
 
@@ -36,6 +39,48 @@ class AdminRepository {
 
   final FirebaseFirestore _firestore;
 
+  Future<void> updateTechnicianCategory({
+    required String uid,
+    required TechnicianCategory category,
+    required String actorId,
+    required String branchId,
+  }) {
+    return _updateBranchTechnician(
+      uid: uid,
+      actorId: actorId,
+      branchId: branchId,
+      action: 'technician.categoryUpdated',
+      summary: 'Technician category changed to ${category.label}',
+      updates: {
+        'technicianCategory': category.name,
+        'updatedAt': FieldValue.serverTimestamp(),
+      },
+    );
+  }
+
+  Future<void> updateTechnicianSalary({
+    required String uid,
+    required double monthlySalary,
+    required String actorId,
+    required String branchId,
+  }) {
+    if (!monthlySalary.isFinite || monthlySalary < 0) {
+      throw ArgumentError('Enter a valid monthly salary.');
+    }
+    return _updateBranchTechnician(
+      uid: uid,
+      actorId: actorId,
+      branchId: branchId,
+      action: 'technician.salaryUpdated',
+      summary: 'Technician monthly salary changed to Rs. '
+          '${monthlySalary.toStringAsFixed(0)}',
+      updates: {
+        'monthlySalary': monthlySalary,
+        'updatedAt': FieldValue.serverTimestamp(),
+      },
+    );
+  }
+
   Stream<List<AppUser>> watchTechnicians({String? branchId}) {
     Query<Map<String, dynamic>> query = _firestore
         .collection('users')
@@ -46,6 +91,49 @@ class AdminRepository {
     return query.snapshots().map(
           (snap) => snap.docs.map(AppUser.fromFirestore).toList(),
         );
+  }
+
+  Stream<List<AppUser>> watchTechniciansVisibleToBranch(String branchId) {
+    final currentQuery = _firestore
+        .collection('users')
+        .where('role', isEqualTo: UserRole.technician.name)
+        .where('branchId', isEqualTo: branchId)
+        .snapshots();
+    final nativeQuery = _firestore
+        .collection('users')
+        .where('role', isEqualTo: UserRole.technician.name)
+        .where('nativeBranchId', isEqualTo: branchId)
+        .snapshots();
+    final controller = StreamController<List<AppUser>>();
+    List<AppUser>? currentUsers;
+    List<AppUser>? nativeUsers;
+    StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? currentSub;
+    StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? nativeSub;
+
+    void emit() {
+      if (currentUsers == null || nativeUsers == null) return;
+      final byId = <String, AppUser>{
+        for (final user in currentUsers!) user.uid: user,
+        for (final user in nativeUsers!) user.uid: user,
+      };
+      controller.add(byId.values.toList());
+    }
+
+    controller.onListen = () {
+      currentSub = currentQuery.listen((snapshot) {
+        currentUsers = snapshot.docs.map(AppUser.fromFirestore).toList();
+        emit();
+      }, onError: controller.addError);
+      nativeSub = nativeQuery.listen((snapshot) {
+        nativeUsers = snapshot.docs.map(AppUser.fromFirestore).toList();
+        emit();
+      }, onError: controller.addError);
+    };
+    controller.onCancel = () async {
+      await currentSub?.cancel();
+      await nativeSub?.cancel();
+    };
+    return controller.stream;
   }
 
   Stream<List<AppUser>> watchCustomers({String? branchId}) {

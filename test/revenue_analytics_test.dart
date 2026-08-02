@@ -148,4 +148,54 @@ void main() {
     expect(
         analytics.reportRows.map((row) => row.period), contains('This year'));
   });
+
+  test('transferred technician revenue remains with the native branch', () {
+    final transferred = AppUser(
+      uid: 'transferred-tech',
+      name: 'Native Chennai Technician',
+      email: 'transfer@test.dev',
+      phone: '9999999996',
+      role: UserRole.technician,
+      accountStatus: AccountStatus.approved,
+      branchId: bengaluru.id,
+      branchName: bengaluru.name,
+      nativeBranchId: chennai.id,
+      nativeBranchName: chennai.name,
+      createdAt: now,
+      isActive: true,
+    );
+    final transferredBill = Bill(
+      id: 'transferred-job',
+      bookingId: 'transferred-job',
+      customerId: 'customer-transfer',
+      technicianId: transferred.uid,
+      amount: 2500,
+      createdAt: now,
+      paidAt: now,
+      isPaid: true,
+      branchId: bengaluru.id,
+      revenueBranchId: chennai.id,
+    );
+    final chennaiRevenue = RevenueAnalytics.calculate(
+      bills: [transferredBill],
+      bookings: const [],
+      branches: const [chennai, bengaluru],
+      technicians: [transferred],
+      now: now,
+      branchId: chennai.id,
+    );
+    final bengaluruRevenue = RevenueAnalytics.calculate(
+      bills: [transferredBill],
+      bookings: const [],
+      branches: const [chennai, bengaluru],
+      technicians: [transferred],
+      now: now,
+      branchId: bengaluru.id,
+    );
+
+    expect(chennaiRevenue.allTime, 2500);
+    expect(chennaiRevenue.technicianRevenue.single.label,
+        'Native Chennai Technician');
+    expect(bengaluruRevenue.allTime, 0);
+  });
 }

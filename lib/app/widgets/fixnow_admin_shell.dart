@@ -363,53 +363,156 @@ class _AdminMobileSectionBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return DecoratedBox(
-      decoration: const BoxDecoration(
-        color: Colors.white,
-        border: Border(bottom: BorderSide(color: AppTheme.divider)),
-      ),
-      child: SizedBox(
-        height: 50,
-        child: ListView.separated(
-          scrollDirection: Axis.horizontal,
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
-          itemCount: destinations.length,
-          separatorBuilder: (_, __) => const SizedBox(width: 6),
-          itemBuilder: (context, index) {
-            final destination = destinations[index];
-            final selected = destination.id == selectedId;
-            return Material(
-              color: selected ? AppTheme.primary : AppTheme.surface,
-              borderRadius: BorderRadius.circular(9),
-              child: InkWell(
-                borderRadius: BorderRadius.circular(9),
-                onTap: () => onSelected(destination.id),
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 11),
-                  child: Row(
-                    children: [
-                      Icon(
-                        destination.icon,
-                        size: 17,
-                        color: selected ? Colors.white : AppTheme.primary,
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final compactPhone = constraints.maxWidth < 600;
+        if (compactPhone) {
+          final selected = destinations.firstWhere(
+            (destination) => destination.id == selectedId,
+            orElse: () => destinations.first,
+          );
+          return DecoratedBox(
+            decoration: const BoxDecoration(
+              color: Colors.white,
+              border: Border(bottom: BorderSide(color: AppTheme.divider)),
+            ),
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(12, 8, 12, 9),
+              child: PopupMenuButton<String>(
+                tooltip: 'Change dashboard section',
+                initialValue: selectedId,
+                position: PopupMenuPosition.under,
+                constraints: const BoxConstraints(minWidth: 260, maxWidth: 360),
+                onSelected: onSelected,
+                itemBuilder: (context) => [
+                  for (final destination in destinations)
+                    PopupMenuItem<String>(
+                      value: destination.id,
+                      child: Row(
+                        children: [
+                          Icon(
+                            destination.icon,
+                            size: 20,
+                            color: destination.id == selectedId
+                                ? AppTheme.primary
+                                : AppTheme.textSecondary,
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Text(
+                              destination.label,
+                              style: TextStyle(
+                                fontWeight: destination.id == selectedId
+                                    ? FontWeight.w800
+                                    : FontWeight.w600,
+                              ),
+                            ),
+                          ),
+                          if (destination.id == selectedId)
+                            const Icon(
+                              Icons.check_circle,
+                              color: AppTheme.primary,
+                              size: 19,
+                            ),
+                        ],
                       ),
-                      const SizedBox(width: 6),
-                      Text(
-                        destination.label,
-                        style: TextStyle(
-                          color: selected ? Colors.white : AppTheme.textPrimary,
-                          fontSize: 12,
-                          fontWeight: FontWeight.w700,
+                    ),
+                ],
+                child: Semantics(
+                  button: true,
+                  label: 'Current section ${selected.label}. Change section',
+                  child: Container(
+                    constraints: const BoxConstraints(minHeight: 48),
+                    padding: const EdgeInsets.symmetric(horizontal: 14),
+                    decoration: BoxDecoration(
+                      color: AppTheme.surface,
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: AppTheme.divider),
+                    ),
+                    child: Row(
+                      children: [
+                        Icon(selected.icon, color: AppTheme.primary, size: 20),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Text(
+                            selected.label,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              color: AppTheme.textPrimary,
+                              fontWeight: FontWeight.w800,
+                            ),
+                          ),
                         ),
-                      ),
-                    ],
+                        const Text(
+                          'Change section',
+                          style: TextStyle(
+                            color: AppTheme.primary,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                        const SizedBox(width: 4),
+                        const Icon(Icons.expand_more, color: AppTheme.primary),
+                      ],
+                    ),
                   ),
                 ),
               ),
-            );
-          },
-        ),
-      ),
+            ),
+          );
+        }
+        return DecoratedBox(
+          decoration: const BoxDecoration(
+            color: Colors.white,
+            border: Border(bottom: BorderSide(color: AppTheme.divider)),
+          ),
+          child: SizedBox(
+            height: 58,
+            child: ListView.separated(
+              scrollDirection: Axis.horizontal,
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              itemCount: destinations.length,
+              separatorBuilder: (_, __) => const SizedBox(width: 6),
+              itemBuilder: (context, index) {
+                final destination = destinations[index];
+                final selected = destination.id == selectedId;
+                return Material(
+                  color: selected ? AppTheme.primary : AppTheme.surface,
+                  borderRadius: BorderRadius.circular(9),
+                  child: InkWell(
+                    borderRadius: BorderRadius.circular(9),
+                    onTap: () => onSelected(destination.id),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 13),
+                      child: Row(
+                        children: [
+                          Icon(
+                            destination.icon,
+                            size: 17,
+                            color: selected ? Colors.white : AppTheme.primary,
+                          ),
+                          const SizedBox(width: 6),
+                          Text(
+                            destination.label,
+                            style: TextStyle(
+                              color: selected
+                                  ? Colors.white
+                                  : AppTheme.textPrimary,
+                              fontSize: 12,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                );
+              },
+            ),
+          ),
+        );
+      },
     );
   }
 }

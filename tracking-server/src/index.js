@@ -9,6 +9,7 @@ import {
   authenticateRequest,
   authenticateSocket,
   firebaseAuth,
+  firebaseMessaging,
   firestore,
 } from './firebase-auth.js';
 import { registerSuperAdminRoutes } from './admin-api.js';
@@ -32,6 +33,11 @@ import {
   permissions,
   roles,
 } from './rbac.js';
+import {
+  socketSyncFor,
+  startRealtimeEventBridge,
+} from './realtime-events.js';
+import { startAttendanceAutomation } from './attendance-automation.js';
 
 const app = express();
 const allowedCorsOrigins = allowedOriginsFor();
@@ -78,6 +84,16 @@ io.use(authenticateSocket);
 
 io.on('connection', (socket) => {
   const principal = socket.data.principal;
+  socket.join(`user:${principal.uid}`);
+  if (principal.role === roles.superAdmin) socket.join('admin:global');
+  if (principal.role === roles.branchAdmin && principal.branchId) {
+    socket.join(`admin:branch:${principal.branchId}`);
+  }
+  // Reconnect recovery: send canonical Firestore state before subsequent
+  // deltas, so events missed during a network outage cannot leave stale UI.
+  socketSyncFor(principal, firestore)
+    .then((snapshot) => socket.emit('syncSnapshot', snapshot))
+    .catch((error) => socket.emit('syncError', { message: error.message }));
 
   socket.on('tracking:join-job', async ({ jobId }, ack) => {
     try {
@@ -190,6 +206,9 @@ io.on('connection', (socket) => {
     ack?.({ ok: true });
   });
 });
+
+startRealtimeEventBridge({ firestore, io });
+startAttendanceAutomation(firestore, console, firebaseMessaging);
 
 async function bookingById(jobId) {
   if (!jobId) throw new Error('Booking ID is required');

@@ -2,6 +2,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 
 import '../../../core/enums/account_status.dart';
 import '../../../core/enums/user_role.dart';
+import '../../../core/enums/technician_category.dart';
 
 class AppUser {
   const AppUser({
@@ -15,6 +16,8 @@ class AppUser {
     this.accountStatus = AccountStatus.approved,
     this.branchId,
     this.branchName,
+    this.nativeBranchId,
+    this.nativeBranchName,
     this.requestLatitude,
     this.requestLongitude,
     this.profilePhoto,
@@ -36,6 +39,8 @@ class AppUser {
     this.reactivatedBy,
     this.transferredAt,
     this.transferredBy,
+    this.technicianCategory = TechnicianCategory.junior,
+    this.monthlySalary = 0,
   });
 
   final String uid;
@@ -52,6 +57,8 @@ class AppUser {
   final bool isActive;
   final String? branchId;
   final String? branchName;
+  final String? nativeBranchId;
+  final String? nativeBranchName;
   final double? requestLatitude;
   final double? requestLongitude;
   final String? lastServiceAddress;
@@ -69,6 +76,8 @@ class AppUser {
   final String? reactivatedBy;
   final DateTime? transferredAt;
   final String? transferredBy;
+  final TechnicianCategory technicianCategory;
+  final double monthlySalary;
 
   bool get hasValidBranchAssignment =>
       role != UserRole.branchAdmin || (branchId?.trim().isNotEmpty ?? false);
@@ -110,6 +119,14 @@ class AppUser {
       isActive: data['isActive'] as bool? ?? true,
       branchId: data['branchId'] as String?,
       branchName: data['branchName'] as String?,
+      nativeBranchId: data['nativeBranchId'] as String? ??
+          (data['role'] == UserRole.technician.name
+              ? data['branchId'] as String?
+              : null),
+      nativeBranchName: data['nativeBranchName'] as String? ??
+          (data['role'] == UserRole.technician.name
+              ? data['branchName'] as String?
+              : null),
       requestLatitude: (data['requestLatitude'] as num?)?.toDouble(),
       requestLongitude: (data['requestLongitude'] as num?)?.toDouble(),
       lastServiceAddress: data['lastServiceAddress'] as String?,
@@ -127,6 +144,10 @@ class AppUser {
       reactivatedBy: data['reactivatedBy'] as String?,
       transferredAt: (data['transferredAt'] as Timestamp?)?.toDate(),
       transferredBy: data['transferredBy'] as String?,
+      technicianCategory: TechnicianCategory.fromString(
+        data['technicianCategory'] as String?,
+      ),
+      monthlySalary: (data['monthlySalary'] as num?)?.toDouble() ?? 0,
     );
   }
 
@@ -148,6 +169,10 @@ class AppUser {
       'isActive': isActive,
       'branchId': branchId,
       'branchName': branchName,
+      if (role == UserRole.technician)
+        'nativeBranchId': nativeBranchId ?? branchId,
+      if (role == UserRole.technician)
+        'nativeBranchName': nativeBranchName ?? branchName,
       'requestLatitude': requestLatitude,
       'requestLongitude': requestLongitude,
       'lastServiceAddress': lastServiceAddress,
@@ -168,6 +193,9 @@ class AppUser {
       'transferredAt':
           transferredAt == null ? null : Timestamp.fromDate(transferredAt!),
       'transferredBy': transferredBy,
+      if (role == UserRole.technician)
+        'technicianCategory': technicianCategory.name,
+      if (role == UserRole.technician) 'monthlySalary': monthlySalary,
     };
   }
 }

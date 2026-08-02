@@ -1,6 +1,8 @@
 import 'package:fixnow/app/theme/app_theme.dart';
 import 'package:fixnow/core/branches/branch_info.dart';
 import 'package:fixnow/core/enums/booking_status.dart';
+import 'package:fixnow/core/enums/user_role.dart';
+import 'package:fixnow/features/auth/domain/app_user.dart';
 import 'package:fixnow/features/bookings/domain/booking.dart';
 import 'package:fixnow/features/shared/domain/bill.dart';
 import 'package:fixnow/features/shared/presentation/revenue_dashboard.dart';
@@ -70,6 +72,32 @@ void main() {
         branchId: bengaluru.id,
       ),
     ];
+    final technicians = [
+      AppUser(
+        uid: 'tech-one',
+        name: 'Chennai technician',
+        email: 'chennai-tech@fixnow.test',
+        phone: '9999999991',
+        role: UserRole.technician,
+        createdAt: now,
+        isActive: true,
+        branchId: chennai.id,
+        branchName: chennai.name,
+        monthlySalary: 30000,
+      ),
+      AppUser(
+        uid: 'tech-two',
+        name: 'Bengaluru technician',
+        email: 'bengaluru-tech@fixnow.test',
+        phone: '9999999992',
+        role: UserRole.technician,
+        createdAt: now,
+        isActive: true,
+        branchId: bengaluru.id,
+        branchName: bengaluru.name,
+        monthlySalary: 20000,
+      ),
+    ];
     await tester.binding.setSurfaceSize(const Size(1440, 1400));
     addTearDown(() => tester.binding.setSurfaceSize(null));
     await tester.pumpWidget(
@@ -82,7 +110,7 @@ void main() {
               bills: bills,
               bookings: bookings,
               branches: const [chennai, bengaluru],
-              technicians: const [],
+              technicians: technicians,
               now: now,
             ),
           ),
@@ -100,10 +128,17 @@ void main() {
       'Technician revenue',
       'Service revenue',
       'Revenue reports',
+      'Monthly base salary',
+      'Automatic incentive',
+      'Admin-added incentive',
+      'Technician compensation',
+      'Technician salary chart',
     ]) {
       expect(find.text(label), findsWidgets);
     }
     expect(find.text('₹2,000'), findsWidgets);
+
+    expect(find.textContaining('50,000'), findsWidgets);
 
     await tester.tap(find.text('All branches'));
     await tester.pumpAndSettle();
@@ -111,6 +146,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('₹1,200'), findsWidgets);
+    expect(find.textContaining('30,000'), findsWidgets);
     expect(tester.takeException(), isNull);
   });
 }

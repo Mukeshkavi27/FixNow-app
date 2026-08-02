@@ -106,7 +106,8 @@ class _BookServiceScreenState extends ConsumerState<BookServiceScreen> {
       }
       if (permission == LocationPermission.denied) {
         if (reportFailure) {
-          throw StateError('Allow location permission to use current location.');
+          throw StateError(
+              'Allow location permission to use current location.');
         }
         return null;
       }
@@ -561,8 +562,7 @@ class _BookServiceScreenState extends ConsumerState<BookServiceScreen> {
                       ),
                     ),
                     OutlinedButton.icon(
-                      onPressed:
-                          _isFindingAddressPin ? null : _findAddressPin,
+                      onPressed: _isFindingAddressPin ? null : _findAddressPin,
                       icon: _isFindingAddressPin
                           ? const SizedBox.square(
                               dimension: 16,
@@ -1215,12 +1215,14 @@ class _PinPickerSheetState extends ConsumerState<_PinPickerSheet> {
       if (!mounted) return;
       if (result == null) {
         setState(() {
-          _message = 'Address lookup failed. Move the map or search nearby landmark.';
+          _message =
+              'Address lookup failed. Move the map or search nearby landmark.';
         });
         return;
       }
-      final enriched =
-          await ref.read(addressGeocodingServiceProvider).search(result.address);
+      final enriched = await ref
+          .read(addressGeocodingServiceProvider)
+          .search(result.address);
       if (!mounted) return;
       setState(() {
         _address = enriched ??

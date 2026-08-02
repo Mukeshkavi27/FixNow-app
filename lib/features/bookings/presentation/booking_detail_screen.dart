@@ -126,8 +126,8 @@ class _BookingDetailScreenState extends ConsumerState<BookingDetailScreen> {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content:
-              Text('Arrival confirmed. The technician can create the estimate now.'),
+          content: Text(
+              'Arrival confirmed. The technician can create the estimate now.'),
         ),
       );
     } catch (error) {
@@ -735,7 +735,7 @@ class _BookingDetailScreenState extends ConsumerState<BookingDetailScreen> {
                                 ? Colors.green.shade50
                                 : bill.hasPaymentForApproval
                                     ? Colors.blue.shade50
-                                : Colors.orange.shade50,
+                                    : Colors.orange.shade50,
                           ),
                         ],
                       ),
@@ -1332,16 +1332,16 @@ class _TrackingCard extends ConsumerWidget {
         ? '${booking.technicianName ?? 'Technician'} is on the way'
         : hasTechnicianLocation
             ? 'Technician location is available'
-        : isAssigned
-            ? 'Technician assigned'
-            : 'Technician assignment pending';
+            : isAssigned
+                ? 'Technician assigned'
+                : 'Technician assignment pending';
     final subtitle = hasTechnicianLocation && isTrackingThisBooking
         ? 'Live location refreshes as the technician moves toward your home.'
         : hasTechnicianLocation
             ? 'The technician has shared a location. Route tracking starts when the journey begins.'
-        : isAssigned
-            ? '${booking.technicianName} will share live location when travel starts.'
-            : 'We will assign a technician before the scheduled visit.';
+            : isAssigned
+                ? '${booking.technicianName} will share live location when travel starts.'
+                : 'We will assign a technician before the scheduled visit.';
     final trackingStateLabel = isTrackingThisBooking
         ? 'Live GPS on'
         : isAssigned

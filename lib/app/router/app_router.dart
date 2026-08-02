@@ -36,6 +36,9 @@ String _homeForRole(UserRole role) => switch (role) {
     };
 
 final appRouterProvider = Provider<GoRouter>((ref) {
+  // Keep imperative pushes visible in the browser URL so customer sub-pages
+  // support refresh, deep links, and normal browser back/forward navigation.
+  GoRouter.optionURLReflectsImperativeAPIs = true;
   final refreshNotifier = _RouterRefreshNotifier();
   ref
     ..onDispose(refreshNotifier.dispose)
@@ -159,7 +162,10 @@ final appRouterProvider = Provider<GoRouter>((ref) {
     ],
     errorBuilder: (context, state) => Scaffold(
       appBar: AppBar(title: const Text('FixNow Appliance Repair')),
-      body: Center(child: Text(state.error.toString())),
+      body: const Center(
+        child:
+            Text('This page could not be opened. Please return and try again.'),
+      ),
     ),
   );
 });

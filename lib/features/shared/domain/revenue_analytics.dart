@@ -52,7 +52,11 @@ class RevenueAnalytics {
       for (final technician in technicians) technician.uid: technician,
     };
     String? billBranch(Bill bill) =>
-        bill.branchId ?? bookingById[bill.bookingId]?.branchId;
+        bill.revenueBranchId ??
+        bill.branchId ??
+        technicianById[bill.technicianId]?.nativeBranchId ??
+        technicianById[bill.technicianId]?.branchId ??
+        bookingById[bill.bookingId]?.branchId;
     final scoped = bills.where((bill) {
       return branchId == null ||
           branchId.isEmpty ||

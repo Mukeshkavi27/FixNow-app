@@ -35,15 +35,19 @@ class SuperAdminApi {
     required FirebaseFirestore firestore,
     required http.Client client,
     String baseUrl = _adminApiUrl,
+    bool? useClientFallback,
   })  : _auth = auth,
         _firestore = firestore,
         _client = client,
-        _baseUrl = baseUrl.replaceFirst(RegExp(r'/$'), '');
+        _baseUrl = baseUrl.replaceFirst(RegExp(r'/$'), ''),
+        _useClientFallback = useClientFallback ??
+            (baseUrl == _adminApiUrl && _configuredAdminApiUrl.isEmpty);
 
   final FirebaseAuth _auth;
   final FirebaseFirestore _firestore;
   final http.Client _client;
   final String _baseUrl;
+  final bool _useClientFallback;
 
   Future<String> createBranchAdmin({
     required String name,
@@ -52,6 +56,15 @@ class SuperAdminApi {
     required String password,
     required String branchId,
   }) async {
+    if (_useClientFallback) {
+      return _createBranchAdminWithClientFallback(
+        name: name,
+        email: email,
+        phone: phone,
+        password: password,
+        branchId: branchId,
+      );
+    }
     final body = {
       'name': name,
       'email': email,
@@ -76,6 +89,15 @@ class SuperAdminApi {
   }
 
   Future<String> createPasswordResetLink(String uid) async {
+    if (_useClientFallback) {
+      final snapshot = await _firestore.collection('users').doc(uid).get();
+      final email = snapshot.data()?['email'] as String?;
+      if (email == null || email.trim().isEmpty) {
+        throw StateError('Branch Admin email address was not found.');
+      }
+      await _auth.sendPasswordResetEmail(email: email.trim());
+      return '';
+    }
     final response = await _send(
       'POST',
       '/api/admin/branch-admins/$uid/password-reset',
@@ -87,6 +109,12 @@ class SuperAdminApi {
     required String uid,
     required bool isActive,
   }) {
+    if (_useClientFallback) {
+      return _setBranchAdminActiveWithClientFallback(
+        uid: uid,
+        isActive: isActive,
+      );
+    }
     return _send(
       'PATCH',
       '/api/admin/branch-admins/$uid/status',
@@ -98,9 +126,32 @@ class SuperAdminApi {
     required String uid,
     required String branchId,
   }) {
+    if (_useClientFallback) {
+      return _transferBranchAdminWithClientFallback(
+        uid: uid,
+        branchId: branchId,
+      );
+    }
     return _send(
       'PATCH',
       '/api/admin/branch-admins/$uid/branch',
+      body: {'branchId': branchId},
+    );
+  }
+
+  Future<void> transferTechnician({
+    required String uid,
+    required String branchId,
+  }) {
+    if (_useClientFallback) {
+      return _transferTechnicianWithClientFallback(
+        uid: uid,
+        branchId: branchId,
+      );
+    }
+    return _send(
+      'PATCH',
+      '/api/admin/technicians/$uid/branch',
       body: {'branchId': branchId},
     );
   }
@@ -254,5 +305,150 @@ class SuperAdminApi {
       await tempAuth.signOut().catchError((_) {});
       await tempApp.delete().catchError((_) {});
     }
+  }
+
+  Future<void> _setBranchAdminActiveWithClientFallback({
+    required String uid,
+    required bool isActive,
+  }) async {
+    final actor = _auth.currentUser;
+    if (actor == null) throw StateError('Super Admin is not signed in.');
+    final userRef = _firestore.collection('users').doc(uid);
+    final snapshot = await userRef.get();
+    final data = snapshot.data();
+    if (data == null || data['role'] != UserRole.branchAdmin.name) {
+      throw StateError('Branch Admin account was not found.');
+    }
+    final auditRef = _firestore.collection('audit_logs').doc();
+    final batch = _firestore.batch();
+    batch.update(userRef, {
+      'isActive': isActive,
+      'updatedAt': FieldValue.serverTimestamp(),
+    });
+    batch.set(auditRef, {
+      'actorId': actor.uid,
+      'actorRole': UserRole.superAdmin.name,
+      'action': isActive ? 'branchAdmin.activated' : 'branchAdmin.deactivated',
+      'targetType': 'branchAdmin',
+      'targetId': uid,
+      if (data['branchId'] is String) 'branchId': data['branchId'],
+      'summary': '${isActive ? 'Activated' : 'Deactivated'} Branch Admin '
+          '${data['email'] ?? uid}',
+      'createdAt': FieldValue.serverTimestamp(),
+    });
+    await batch.commit();
+  }
+
+  Future<void> _transferBranchAdminWithClientFallback({
+    required String uid,
+    required String branchId,
+  }) async {
+    final actor = _auth.currentUser;
+    if (actor == null) throw StateError('Super Admin is not signed in.');
+    final userRef = _firestore.collection('users').doc(uid);
+    final destinationRef = _firestore.collection('branches').doc(branchId);
+    final results = await Future.wait([userRef.get(), destinationRef.get()]);
+    final userData = results[0].data();
+    final branchData = results[1].data();
+    if (userData == null || userData['role'] != UserRole.branchAdmin.name) {
+      throw StateError('Branch Admin account was not found.');
+    }
+    if (branchData == null || branchData['isActive'] == false) {
+      throw StateError('Destination branch is unavailable.');
+    }
+    final previousBranchId = userData['branchId'] as String?;
+    final auditRef = _firestore.collection('audit_logs').doc();
+    final batch = _firestore.batch();
+    batch.update(userRef, {
+      'branchId': branchId,
+      'branchName': branchData['name'] as String? ?? '',
+      'updatedAt': FieldValue.serverTimestamp(),
+    });
+    if (previousBranchId != null && previousBranchId.isNotEmpty) {
+      batch.update(_firestore.collection('branches').doc(previousBranchId), {
+        'branchAdminIds': FieldValue.arrayRemove([uid]),
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+    }
+    batch.update(destinationRef, {
+      'branchAdminIds': FieldValue.arrayUnion([uid]),
+      'updatedAt': FieldValue.serverTimestamp(),
+    });
+    batch.set(auditRef, {
+      'actorId': actor.uid,
+      'actorRole': UserRole.superAdmin.name,
+      'action': 'branchAdmin.transferred',
+      'targetType': 'branchAdmin',
+      'targetId': uid,
+      'branchId': branchId,
+      'summary': 'Transferred Branch Admin ${userData['email'] ?? uid} to '
+          '${branchData['name'] ?? branchId}',
+      'createdAt': FieldValue.serverTimestamp(),
+    });
+    await batch.commit();
+  }
+
+  Future<void> _transferTechnicianWithClientFallback({
+    required String uid,
+    required String branchId,
+  }) async {
+    final actor = _auth.currentUser;
+    if (actor == null) throw StateError('Super Admin is not signed in.');
+    final userRef = _firestore.collection('users').doc(uid);
+    final destinationRef = _firestore.collection('branches').doc(branchId);
+    final activeJobRef =
+        _firestore.collection('technician_active_jobs').doc(uid);
+    final results = await Future.wait([
+      userRef.get(),
+      destinationRef.get(),
+      activeJobRef.get(),
+    ]);
+    final userData = results[0].data();
+    final branchData = results[1].data();
+    if (userData == null || userData['role'] != UserRole.technician.name) {
+      throw StateError('Technician account was not found.');
+    }
+    if (branchData == null || branchData['isActive'] == false) {
+      throw StateError('Destination branch is unavailable.');
+    }
+    if (results[2].exists) {
+      throw StateError(
+        'Complete the technician active job before changing branches.',
+      );
+    }
+    final previousBranchId = userData['branchId'] as String?;
+    final previousBranchName = userData['branchName'] as String?;
+    final nativeBranchId =
+        userData['nativeBranchId'] as String? ?? previousBranchId;
+    final nativeBranchName =
+        userData['nativeBranchName'] as String? ?? previousBranchName;
+    if (nativeBranchId == null || nativeBranchId.isEmpty) {
+      throw StateError('Technician native branch could not be determined.');
+    }
+    final auditRef = _firestore.collection('audit_logs').doc();
+    final batch = _firestore.batch();
+    batch.update(userRef, {
+      'branchId': branchId,
+      'branchName': branchData['name'] as String? ?? '',
+      'nativeBranchId': nativeBranchId,
+      'nativeBranchName': nativeBranchName ?? '',
+      'transferredAt': FieldValue.serverTimestamp(),
+      'transferredBy': actor.uid,
+      'updatedAt': FieldValue.serverTimestamp(),
+    });
+    batch.set(auditRef, {
+      'actorId': actor.uid,
+      'actorRole': UserRole.superAdmin.name,
+      'action': 'technician.transferred',
+      'targetType': 'technician',
+      'targetId': uid,
+      'branchId': branchId,
+      'nativeBranchId': nativeBranchId,
+      'summary': 'Transferred technician ${userData['email'] ?? uid} to '
+          '${branchData['name'] ?? branchId}; revenue remains with '
+          '${nativeBranchName ?? nativeBranchId}',
+      'createdAt': FieldValue.serverTimestamp(),
+    });
+    await batch.commit();
   }
 }

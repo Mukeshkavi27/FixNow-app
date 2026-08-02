@@ -31,6 +31,18 @@ class ReviewRepository {
     });
   }
 
+  Stream<List<Review>> watchTechnicianReviews(String technicianId) {
+    return _firestore
+        .collection('reviews')
+        .where('technicianId', isEqualTo: technicianId)
+        .snapshots()
+        .map((snapshot) {
+      final reviews = snapshot.docs.map(Review.fromFirestore).toList()
+        ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
+      return reviews;
+    });
+  }
+
   Future<void> submitReview({
     required String bookingId,
     required String technicianId,
@@ -62,8 +74,39 @@ class ReviewRepository {
         'branchId': branchId,
         'rating': rating,
         'text': text.trim(),
+        'reviewerRole': 'customer',
+        'reviewerId': customerId,
         'createdAt': FieldValue.serverTimestamp(),
       });
+    });
+  }
+
+  Future<void> submitAdminReview({
+    required String technicianId,
+    required String branchId,
+    required String reviewerId,
+    required String reviewerName,
+    required String reviewerRole,
+    required int rating,
+    required String text,
+  }) async {
+    if (rating < 1 || rating > 5) {
+      throw ArgumentError('Rating must be between 1 and 5.');
+    }
+    if (text.trim().length < 3) {
+      throw ArgumentError('Enter a short review.');
+    }
+    await _firestore.collection('reviews').add({
+      'bookingId': '',
+      'technicianId': technicianId,
+      'customerId': '',
+      'branchId': branchId,
+      'rating': rating,
+      'text': text.trim(),
+      'reviewerRole': reviewerRole,
+      'reviewerId': reviewerId,
+      'reviewerName': reviewerName,
+      'createdAt': FieldValue.serverTimestamp(),
     });
   }
 }

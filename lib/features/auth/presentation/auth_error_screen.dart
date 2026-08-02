@@ -58,7 +58,8 @@ class AuthErrorScreen extends ConsumerWidget {
                     ),
                     const SizedBox(height: 20),
                     FilledButton.icon(
-                      onPressed: () => ref.read(authRepositoryProvider).signOut(),
+                      onPressed: () =>
+                          ref.read(authRepositoryProvider).signOut(),
                       icon: const Icon(Icons.logout),
                       label: const Text('Sign out'),
                     ),

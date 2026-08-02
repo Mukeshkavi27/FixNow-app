@@ -13,6 +13,10 @@
    keyPassword=...
    ```
 
+   Release builds intentionally fail when this file or any required signing
+   value is missing. FixNow never falls back to the debug key for a Play Store
+   artifact.
+
 4. Add a real Google Maps API key with Android app restrictions by setting `GOOGLE_MAPS_API_KEY` in `android/local.properties`, as a Gradle property, or as an environment variable.
 5. Configure launcher icons and adaptive icon assets.
 6. Deploy the authenticated tracking/administration service and pass its HTTPS URL at build time. Device-localhost is intentionally not used as a production fallback:

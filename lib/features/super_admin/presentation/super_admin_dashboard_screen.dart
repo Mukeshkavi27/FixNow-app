@@ -16,8 +16,10 @@ import '../../bookings/data/booking_repository.dart';
 import '../../bookings/domain/booking.dart';
 import '../../shared/data/bill_repository.dart';
 import '../../shared/data/review_repository.dart';
+import '../../shared/data/technician_incentive_repository.dart';
 import '../../shared/domain/bill.dart';
 import '../../shared/domain/review.dart';
+import '../../shared/domain/technician_incentive.dart';
 import '../../shared/presentation/revenue_dashboard.dart';
 import '../../shared/presentation/technician_performance_dashboard.dart';
 import '../../technician/data/technician_repository.dart';
@@ -67,6 +69,11 @@ final superAdminReviewsProvider =
   return ref.watch(reviewRepositoryProvider).watchAllReviews();
 });
 
+final superAdminIncentivesProvider =
+    StreamProvider.autoDispose<List<TechnicianIncentive>>((ref) {
+  return ref.watch(technicianIncentiveRepositoryProvider).watchAll();
+});
+
 final superAdminAuditProvider =
     StreamProvider.autoDispose<List<AuditLogEntry>>((ref) {
   return ref.watch(superAdminRepositoryProvider).watchAuditLogs();
@@ -104,6 +111,7 @@ class SuperAdminDashboardScreen extends ConsumerWidget {
     final branchAdmins = ref.watch(superAdminBranchAdminsProvider);
     final bills = ref.watch(superAdminBillsProvider);
     final reviews = ref.watch(superAdminReviewsProvider);
+    final incentives = ref.watch(superAdminIncentivesProvider);
     final audit = ref.watch(superAdminAuditProvider);
     final overtime = ref.watch(superAdminOvertimeProvider);
     final errors = [
@@ -114,6 +122,7 @@ class SuperAdminDashboardScreen extends ConsumerWidget {
       branchAdmins,
       bills,
       reviews,
+      incentives,
       audit,
       overtime,
     ].where((value) => value.hasError).toList();
@@ -131,6 +140,7 @@ class SuperAdminDashboardScreen extends ConsumerWidget {
       branchAdmins: branchAdmins.valueOrNull ?? const [],
       bills: bills.valueOrNull ?? const [],
       reviews: reviews.valueOrNull ?? const [],
+      incentives: incentives.valueOrNull ?? const [],
       auditLogs: audit.valueOrNull ?? const [],
       overtimeRecords: overtime.valueOrNull ?? const [],
       isLoading: branches.isLoading ||
@@ -140,6 +150,7 @@ class SuperAdminDashboardScreen extends ConsumerWidget {
           branchAdmins.isLoading ||
           bills.isLoading ||
           reviews.isLoading ||
+          incentives.isLoading ||
           audit.isLoading ||
           overtime.isLoading,
       errorMessage: errors.isEmpty ? null : errors.first.error.toString(),
@@ -163,6 +174,14 @@ class SuperAdminDashboardScreen extends ConsumerWidget {
         admin,
         branches.valueOrNull ?? const [],
       ),
+      onTransferTechnician: (technician) => _showTechnicianTransferDialog(
+        context,
+        ref,
+        technician,
+        branches.valueOrNull ?? const [],
+      ),
+      onRepairFinancialLinks: () =>
+          _repairFinancialLinks(context, ref, currentUser),
       onSignOut: () => ref.read(authRepositoryProvider).signOut(),
     );
   }
@@ -313,6 +332,35 @@ class SuperAdminDashboardScreen extends ConsumerWidget {
     aliases.dispose();
   }
 
+  Future<void> _repairFinancialLinks(
+    BuildContext context,
+    WidgetRef ref,
+    AppUser actor,
+  ) async {
+    try {
+      final result = await ref
+          .read(superAdminRepositoryProvider)
+          .backfillFinancialBranches(actorId: actor.uid);
+      ref.invalidate(superAdminBillsProvider);
+      ref.invalidate(superAdminTechniciansProvider);
+      ref.invalidate(superAdminIncentivesProvider);
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            result.totalUpdated == 0
+                ? 'Financial branch links are already up to date.'
+                : 'Updated ${result.billsUpdated} bills, '
+                    '${result.techniciansUpdated} technicians and '
+                    '${result.incentivesUpdated} incentives.',
+          ),
+        ),
+      );
+    } catch (error) {
+      if (context.mounted) _showError(context, error);
+    }
+  }
+
   Future<void> _showBranchAdminDialog(
     BuildContext context,
     WidgetRef ref,
@@ -366,10 +414,10 @@ class SuperAdminDashboardScreen extends ConsumerWidget {
                       obscureText: true,
                       decoration: const InputDecoration(
                         labelText: 'Temporary password',
-                        helperText: 'Minimum 12 characters',
+                        helperText: 'Minimum 6 characters',
                       ),
-                      validator: (value) => (value?.length ?? 0) < 12
-                          ? 'Use at least 12 characters'
+                      validator: (value) => (value?.length ?? 0) < 6
+                          ? 'Use at least 6 characters'
                           : null,
                     ),
                     const SizedBox(height: 12),
@@ -575,26 +623,137 @@ class SuperAdminDashboardScreen extends ConsumerWidget {
       await showDialog<void>(
         context: context,
         builder: (dialogContext) => AlertDialog(
-          title: const Text('Password reset link'),
+          title: Text(
+            link.isEmpty ? 'Password reset email sent' : 'Password reset link',
+          ),
           content: SizedBox(
             width: 520,
-            child: SelectableText(link),
+            child: link.isEmpty
+                ? Text('A secure reset link was emailed to ${admin.email}.')
+                : SelectableText(link),
           ),
           actions: [
-            TextButton.icon(
-              onPressed: () async {
-                await Clipboard.setData(ClipboardData(text: link));
-                if (dialogContext.mounted) Navigator.pop(dialogContext);
-              },
-              icon: const Icon(Icons.copy_outlined),
-              label: const Text('Copy link'),
-            ),
+            if (link.isNotEmpty)
+              TextButton.icon(
+                onPressed: () async {
+                  await Clipboard.setData(ClipboardData(text: link));
+                  if (dialogContext.mounted) Navigator.pop(dialogContext);
+                },
+                icon: const Icon(Icons.copy_outlined),
+                label: const Text('Copy link'),
+              )
+            else
+              TextButton(
+                onPressed: () => Navigator.pop(dialogContext),
+                child: const Text('Done'),
+              ),
           ],
         ),
       );
     } catch (error) {
       if (context.mounted) _showError(context, error);
     }
+  }
+
+  Future<void> _showTechnicianTransferDialog(
+    BuildContext context,
+    WidgetRef ref,
+    AppUser technician,
+    List<BranchInfo> branches,
+  ) async {
+    final destinations = branches
+        .where(
+          (branch) => branch.isActive && branch.id != technician.branchId,
+        )
+        .toList();
+    if (destinations.isEmpty) {
+      _showError(context, 'Create or activate another branch first.');
+      return;
+    }
+    var branchId = destinations.first.id;
+    var saving = false;
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (dialogContext, setState) => AlertDialog(
+          title: const Text('Change technician branch'),
+          content: SizedBox(
+            width: 500,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  '${technician.name} currently works from '
+                  '${technician.branchName ?? 'an unassigned branch'}.',
+                ),
+                const SizedBox(height: 16),
+                DropdownButtonFormField<String>(
+                  initialValue: branchId,
+                  decoration: const InputDecoration(
+                    labelText: 'New operating branch',
+                  ),
+                  items: [
+                    for (final branch in destinations)
+                      DropdownMenuItem(
+                        value: branch.id,
+                        child: Text('${branch.name} - ${branch.city}'),
+                      ),
+                  ],
+                  onChanged:
+                      saving ? null : (value) => branchId = value ?? branchId,
+                ),
+                const SizedBox(height: 14),
+                Text(
+                  'Revenue, salary and incentive reporting will remain with '
+                  '${technician.nativeBranchName ?? technician.branchName ?? 'the native branch'}. '
+                  'A technician with an active job cannot be transferred.',
+                  style: const TextStyle(color: AppTheme.textSecondary),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: saving ? null : () => Navigator.pop(dialogContext),
+              child: const Text('Cancel'),
+            ),
+            FilledButton.icon(
+              onPressed: saving
+                  ? null
+                  : () async {
+                      setState(() => saving = true);
+                      try {
+                        await ref
+                            .read(superAdminApiProvider)
+                            .transferTechnician(
+                              uid: technician.uid,
+                              branchId: branchId,
+                            );
+                        if (dialogContext.mounted) {
+                          Navigator.pop(dialogContext);
+                        }
+                        if (context.mounted) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(
+                              content: Text('Technician branch changed.'),
+                            ),
+                          );
+                        }
+                      } catch (error) {
+                        setState(() => saving = false);
+                        if (dialogContext.mounted) {
+                          _showError(dialogContext, error);
+                        }
+                      }
+                    },
+              icon: const Icon(Icons.swap_horiz),
+              label: Text(saving ? 'Changing...' : 'Change branch'),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   static String? _required(String? value) =>
@@ -621,6 +780,7 @@ class SuperAdminDashboardView extends StatefulWidget {
     required this.branchAdmins,
     required this.bills,
     required this.reviews,
+    this.incentives = const [],
     required this.auditLogs,
     this.overtimeRecords = const [],
     this.isLoading = false,
@@ -632,6 +792,8 @@ class SuperAdminDashboardView extends StatefulWidget {
     this.onToggleBranchAdmin,
     this.onResetBranchAdmin,
     this.onTransferBranchAdmin,
+    this.onTransferTechnician,
+    this.onRepairFinancialLinks,
     this.onSignOut,
     this.initialSection = SuperAdminSection.overview,
   });
@@ -644,6 +806,7 @@ class SuperAdminDashboardView extends StatefulWidget {
   final List<AppUser> branchAdmins;
   final List<Bill> bills;
   final List<Review> reviews;
+  final List<TechnicianIncentive> incentives;
   final List<AuditLogEntry> auditLogs;
   final List<OvertimeRecord> overtimeRecords;
   final bool isLoading;
@@ -655,6 +818,8 @@ class SuperAdminDashboardView extends StatefulWidget {
   final void Function(AppUser admin, bool active)? onToggleBranchAdmin;
   final ValueChanged<AppUser>? onResetBranchAdmin;
   final ValueChanged<AppUser>? onTransferBranchAdmin;
+  final ValueChanged<AppUser>? onTransferTechnician;
+  final VoidCallback? onRepairFinancialLinks;
   final VoidCallback? onSignOut;
   final SuperAdminSection initialSection;
 
@@ -818,30 +983,75 @@ class _SuperAdminDashboardViewState extends State<SuperAdminDashboardView> {
         SuperAdminSection.audit => _audit(),
       };
 
+  String? _revenueBranchId(Bill bill) {
+    AppUser? technician;
+    for (final item in widget.technicians) {
+      if (item.uid == bill.technicianId) {
+        technician = item;
+        break;
+      }
+    }
+    return bill.revenueBranchId ??
+        bill.branchId ??
+        technician?.nativeBranchId ??
+        technician?.branchId;
+  }
+
   Widget _pageHeader(String title, String subtitle,
       {List<Widget> actions = const []}) {
-    return Wrap(
-      alignment: WrapAlignment.spaceBetween,
-      crossAxisAlignment: WrapCrossAlignment.center,
-      spacing: 16,
-      runSpacing: 12,
-      children: [
-        Column(
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final compact = constraints.maxWidth < 600;
+        final heading = Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
               title,
               style: Theme.of(context).textTheme.headlineMedium?.copyWith(
+                    fontSize: compact ? 23 : null,
                     fontWeight: FontWeight.w800,
                   ),
             ),
             const SizedBox(height: 4),
-            Text(subtitle,
-                style: const TextStyle(color: AppTheme.textSecondary)),
+            Text(
+              subtitle,
+              style: const TextStyle(color: AppTheme.textSecondary),
+            ),
           ],
-        ),
-        Wrap(spacing: 10, runSpacing: 10, children: actions),
-      ],
+        );
+        if (compact) {
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              heading,
+              if (actions.isNotEmpty) ...[
+                const SizedBox(height: 14),
+                for (var index = 0; index < actions.length; index++) ...[
+                  SizedBox(width: double.infinity, child: actions[index]),
+                  if (index != actions.length - 1) const SizedBox(height: 8),
+                ],
+              ],
+            ],
+          );
+        }
+        return Row(
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: [
+            Expanded(child: heading),
+            if (actions.isNotEmpty) ...[
+              const SizedBox(width: 16),
+              Flexible(
+                child: Wrap(
+                  alignment: WrapAlignment.end,
+                  spacing: 10,
+                  runSpacing: 10,
+                  children: actions,
+                ),
+              ),
+            ],
+          ],
+        );
+      },
     );
   }
 
@@ -934,7 +1144,9 @@ class _SuperAdminDashboardViewState extends State<SuperAdminDashboardView> {
             ? 3
             : constraints.maxWidth > 620
                 ? 2
-                : 1;
+                : constraints.maxWidth >= 340
+                    ? 2
+                    : 1;
         final width = (constraints.maxWidth - (count - 1) * 16) / count;
         return Wrap(
           spacing: 16,
@@ -952,12 +1164,10 @@ class _SuperAdminDashboardViewState extends State<SuperAdminDashboardView> {
     final rows = widget.branches.map((branch) {
       final bookings =
           widget.bookings.where((item) => item.branchId == branch.id).length;
-      final bookingIds = widget.bookings
-          .where((item) => item.branchId == branch.id)
-          .map((item) => item.id)
-          .toSet();
       final revenue = widget.bills
-          .where((bill) => bill.isPaid && bookingIds.contains(bill.bookingId))
+          .where(
+            (bill) => bill.isPaid && _revenueBranchId(bill) == branch.id,
+          )
           .fold<double>(0, (sum, bill) => sum + bill.amount);
       return (branch, bookings, revenue);
     }).toList()
@@ -1063,7 +1273,8 @@ class _SuperAdminDashboardViewState extends State<SuperAdminDashboardView> {
     }
     final revenueByBranch = <String, double>{};
     for (final bill in widget.bills.where((item) => item.isPaid)) {
-      final branchId = bill.branchId ?? bookingBranchById[bill.bookingId];
+      final branchId =
+          _revenueBranchId(bill) ?? bookingBranchById[bill.bookingId];
       if (branchId == null || branchId.isEmpty) continue;
       revenueByBranch.update(
         branchId,
@@ -1321,7 +1532,15 @@ class _SuperAdminDashboardViewState extends State<SuperAdminDashboardView> {
                     .take(12)
                     .map((user) => _PersonRow(
                           user: user,
-                          detail: user.branchName ?? 'No branch',
+                          detail:
+                              'Current: ${user.branchName ?? 'No branch'} · '
+                              'Revenue: ${user.nativeBranchName ?? user.branchName ?? 'No native branch'}',
+                          trailing: TextButton.icon(
+                            onPressed: () =>
+                                widget.onTransferTechnician?.call(user),
+                            icon: const Icon(Icons.swap_horiz),
+                            label: const Text('Change branch'),
+                          ),
                         ))
                     .toList(),
               ),
@@ -1354,13 +1573,28 @@ class _SuperAdminDashboardViewState extends State<SuperAdminDashboardView> {
   }
 
   Widget _revenue() {
-    return RevenueDashboard(
-      bills: widget.bills,
-      bookings: widget.bookings,
-      branches: widget.branches,
-      technicians: widget.technicians,
-      now: DateTime.now(),
-      subtitle: 'Paid bill performance across the FixNow network',
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Align(
+          alignment: Alignment.centerRight,
+          child: OutlinedButton.icon(
+            onPressed: widget.onRepairFinancialLinks,
+            icon: const Icon(Icons.build_circle_outlined),
+            label: const Text('Repair legacy revenue links'),
+          ),
+        ),
+        const SizedBox(height: 12),
+        RevenueDashboard(
+          bills: widget.bills,
+          bookings: widget.bookings,
+          branches: widget.branches,
+          technicians: widget.technicians,
+          incentives: widget.incentives,
+          now: DateTime.now(),
+          subtitle: 'Paid bill performance across the FixNow network',
+        ),
+      ],
     );
   }
 
@@ -1432,37 +1666,59 @@ class _MetricCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return FixNowHoverCard(
-      padding: const EdgeInsets.all(20),
-      child: Row(
-        children: [
-          Container(
-            width: 48,
-            height: 48,
-            decoration: BoxDecoration(
-              color: metric.color.withValues(alpha: .12),
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: Icon(metric.icon, color: metric.color),
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final compact = constraints.maxWidth < 220;
+        final icon = Container(
+          width: compact ? 42 : 48,
+          height: compact ? 42 : 48,
+          decoration: BoxDecoration(
+            color: metric.color.withValues(alpha: .12),
+            borderRadius: BorderRadius.circular(12),
           ),
-          const SizedBox(width: 14),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(metric.label,
-                    style: const TextStyle(color: AppTheme.textSecondary)),
-                const SizedBox(height: 4),
-                Text(
-                  metric.value,
-                  style: const TextStyle(
-                      fontSize: 23, fontWeight: FontWeight.w800),
+          child: Icon(metric.icon, color: metric.color),
+        );
+        final details = Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              metric.label,
+              maxLines: compact ? 2 : 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(color: AppTheme.textSecondary),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              metric.value,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontSize: compact ? 20 : 23,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+          ],
+        );
+        return FixNowHoverCard(
+          padding: EdgeInsets.all(compact ? 14 : 20),
+          child: compact
+              ? Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    icon,
+                    const SizedBox(height: 12),
+                    details,
+                  ],
+                )
+              : Row(
+                  children: [
+                    icon,
+                    const SizedBox(width: 14),
+                    Expanded(child: details),
+                  ],
                 ),
-              ],
-            ),
-          ),
-        ],
-      ),
+        );
+      },
     );
   }
 }
