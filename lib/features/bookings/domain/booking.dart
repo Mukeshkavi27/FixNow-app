@@ -31,6 +31,18 @@ class Booking {
     this.landmark,
     this.holdReason,
     this.heldAt,
+    this.technicianReachedAt,
+    this.technicianReachedByManualOverride = false,
+    this.technicianReachedLatitude,
+    this.technicianReachedLongitude,
+    this.technicianArrivalDistanceMeters,
+    this.customerConfirmedArrivalAt,
+    this.customerConfirmedLatitude,
+    this.customerConfirmedLongitude,
+    this.customerTechnicianDistanceMeters,
+    this.technicianCompletedWorkAt,
+    this.customerConfirmedWorkCompletedAt,
+    this.customerReportedWorkNotDoneAt,
     this.servicePhotos = const [],
   }) : updatedAt = updatedAt ?? createdAt;
 
@@ -61,6 +73,18 @@ class Booking {
   final String? landmark;
   final String? holdReason;
   final DateTime? heldAt;
+  final DateTime? technicianReachedAt;
+  final bool technicianReachedByManualOverride;
+  final double? technicianReachedLatitude;
+  final double? technicianReachedLongitude;
+  final double? technicianArrivalDistanceMeters;
+  final DateTime? customerConfirmedArrivalAt;
+  final double? customerConfirmedLatitude;
+  final double? customerConfirmedLongitude;
+  final double? customerTechnicianDistanceMeters;
+  final DateTime? technicianCompletedWorkAt;
+  final DateTime? customerConfirmedWorkCompletedAt;
+  final DateTime? customerReportedWorkNotDoneAt;
   final List<ServicePhoto> servicePhotos;
 
   factory Booking.fromFirestore(DocumentSnapshot<Map<String, dynamic>> doc) {
@@ -94,6 +118,30 @@ class Booking {
       landmark: data['landmark'] as String?,
       holdReason: data['holdReason'] as String?,
       heldAt: (data['heldAt'] as Timestamp?)?.toDate(),
+      technicianReachedAt:
+          (data['technicianReachedAt'] as Timestamp?)?.toDate(),
+      technicianReachedByManualOverride:
+          data['technicianReachedByManualOverride'] as bool? ?? false,
+      technicianReachedLatitude:
+          (data['technicianReachedLatitude'] as num?)?.toDouble(),
+      technicianReachedLongitude:
+          (data['technicianReachedLongitude'] as num?)?.toDouble(),
+      technicianArrivalDistanceMeters:
+          (data['technicianArrivalDistanceMeters'] as num?)?.toDouble(),
+      customerConfirmedArrivalAt:
+          (data['customerConfirmedArrivalAt'] as Timestamp?)?.toDate(),
+      customerConfirmedLatitude:
+          (data['customerConfirmedLatitude'] as num?)?.toDouble(),
+      customerConfirmedLongitude:
+          (data['customerConfirmedLongitude'] as num?)?.toDouble(),
+      customerTechnicianDistanceMeters:
+          (data['customerTechnicianDistanceMeters'] as num?)?.toDouble(),
+      technicianCompletedWorkAt:
+          (data['technicianCompletedWorkAt'] as Timestamp?)?.toDate(),
+      customerConfirmedWorkCompletedAt:
+          (data['customerConfirmedWorkCompletedAt'] as Timestamp?)?.toDate(),
+      customerReportedWorkNotDoneAt:
+          (data['customerReportedWorkNotDoneAt'] as Timestamp?)?.toDate(),
       servicePhotos: (data['servicePhotos'] as List<dynamic>? ?? const [])
           .whereType<Map<String, dynamic>>()
           .map(ServicePhoto.fromJson)

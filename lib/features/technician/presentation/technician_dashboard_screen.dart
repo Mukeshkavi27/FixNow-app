@@ -255,6 +255,7 @@ class _TechnicianDashboardScreenState
   @override
   Widget build(BuildContext context) {
     final tab = ref.watch(_technicianTabProvider);
+    final visibleTab = tab > 3 ? 3 : tab;
     final user = ref.watch(currentUserProvider).valueOrNull;
     final bookings = ref.watch(technicianBookingsProvider).valueOrNull;
     final attendance = ref.watch(technicianAttendanceProvider).valueOrNull;
@@ -316,10 +317,24 @@ class _TechnicianDashboardScreenState
                         )
                     : null,
           ),
+          if (checkedInToday)
+            IconButton(
+              tooltip: 'View attendance',
+              onPressed: _showAttendanceHistory,
+              icon: const Icon(Icons.fact_check_outlined),
+            ),
           IconButton(
             tooltip: 'Sign out',
             onPressed: () async {
-              await ref.read(locationTrackingServiceProvider).stop();
+              try {
+                await ref
+                    .read(locationTrackingServiceProvider)
+                    .stop()
+                    .timeout(const Duration(seconds: 8));
+              } catch (_) {
+                // Sign-out must stay available even if GPS shutdown or the
+                // location write takes too long on a device.
+              }
               await ref.read(authRepositoryProvider).signOut();
             },
             icon: const Icon(Icons.logout),
@@ -327,45 +342,97 @@ class _TechnicianDashboardScreenState
         ],
       ),
       body: SafeArea(
-        child: IndexedStack(
-          index: tab,
-          children: const [
-            _JobsView(),
-            _AttendanceView(),
-            _MonthlyScheduleView(),
-            _EarningsView(),
-            _TechnicianReviewsView(),
-          ],
+        child: user == null || attendance == null
+            ? const Center(child: CircularProgressIndicator())
+            : checkedInToday
+                ? IndexedStack(
+                    index: visibleTab,
+                    children: const [
+                      _JobsView(),
+                      _MonthlyScheduleView(),
+                      _EarningsView(),
+                      _TechnicianReviewsView(),
+                    ],
+                  )
+                : const _AttendanceGateView(),
+      ),
+      bottomNavigationBar: checkedInToday
+          ? NavigationBar(
+              selectedIndex: visibleTab,
+              onDestinationSelected: (index) =>
+                  ref.read(_technicianTabProvider.notifier).state = index,
+              destinations: const [
+                NavigationDestination(
+                    icon: Icon(Icons.work_outline),
+                    selectedIcon: Icon(Icons.work),
+                    label: 'Jobs'),
+                NavigationDestination(
+                    icon: Icon(Icons.calendar_month_outlined),
+                    selectedIcon: Icon(Icons.calendar_month),
+                    label: 'Schedule'),
+                NavigationDestination(
+                    icon: Icon(Icons.payments_outlined),
+                    selectedIcon: Icon(Icons.payments),
+                    label: 'Earnings'),
+                NavigationDestination(
+                    icon: Icon(Icons.star_outline),
+                    selectedIcon: Icon(Icons.star),
+                    label: 'Reviews'),
+              ],
+            )
+          : null,
+    );
+  }
+
+  void _showAttendanceHistory() {
+    showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      isScrollControlled: true,
+      builder: (sheetContext) => DraggableScrollableSheet(
+        expand: false,
+        initialChildSize: 0.72,
+        minChildSize: 0.45,
+        maxChildSize: 0.92,
+        builder: (context, scrollController) => Consumer(
+          builder: (context, ref, _) {
+            final attendanceAsync = ref.watch(technicianAttendanceProvider);
+            return ListView(
+              controller: scrollController,
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 20),
+              children: [
+                Row(
+                  children: [
+                    const Icon(
+                      Icons.fact_check_outlined,
+                      color: AppTheme.primary,
+                    ),
+                    const SizedBox(width: 10),
+                    Text(
+                      'My attendance',
+                      style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                            fontWeight: FontWeight.w900,
+                          ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                _TechnicianAttendanceHistory(attendanceAsync: attendanceAsync),
+              ],
+            );
+          },
         ),
       ),
-      bottomNavigationBar: NavigationBar(
-        selectedIndex: tab,
-        onDestinationSelected: (index) =>
-            ref.read(_technicianTabProvider.notifier).state = index,
-        destinations: const [
-          NavigationDestination(
-              icon: Icon(Icons.work_outline),
-              selectedIcon: Icon(Icons.work),
-              label: 'Jobs'),
-          NavigationDestination(
-              icon: Icon(Icons.how_to_reg_outlined),
-              selectedIcon: Icon(Icons.how_to_reg),
-              label: 'Attendance'),
-          NavigationDestination(
-              icon: Icon(Icons.calendar_month_outlined),
-              selectedIcon: Icon(Icons.calendar_month),
-              label: 'Schedule'),
-          NavigationDestination(
-              icon: Icon(Icons.payments_outlined),
-              selectedIcon: Icon(Icons.payments),
-              label: 'Earnings'),
-          NavigationDestination(
-              icon: Icon(Icons.star_outline),
-              selectedIcon: Icon(Icons.star),
-              label: 'Reviews'),
-        ],
-      ),
     );
+  }
+}
+
+class _AttendanceGateView extends StatelessWidget {
+  const _AttendanceGateView();
+
+  @override
+  Widget build(BuildContext context) {
+    return const _AttendanceView();
   }
 }
 
@@ -373,6 +440,10 @@ bool _sameCalendarDay(DateTime left, DateTime right) =>
     left.year == right.year &&
     left.month == right.month &&
     left.day == right.day;
+
+String _attendanceStorageDayKey(DateTime day) {
+  return DateFormat('yyyy-MM-dd').format(day);
+}
 
 class _LocationStatusBadge extends StatelessWidget {
   const _LocationStatusBadge({
@@ -449,6 +520,7 @@ class _JobsView extends ConsumerWidget {
             items.where((b) => b.status == BookingStatus.onHold).toList();
         final billing = items
             .where((b) =>
+                b.status == BookingStatus.workCompletedPendingCustomer ||
                 b.status == BookingStatus.serviceCompleted ||
                 b.status == BookingStatus.billGenerated)
             .toList();
@@ -621,14 +693,6 @@ class _TechnicianJobCard extends ConsumerWidget {
         technicianLocation?.activeBookingId == booking.id;
     final customerDistanceMeters =
         _distanceToCustomer(booking, technicianLocation);
-    final canMarkArrived = trackingThisBooking &&
-        customerDistanceMeters != null &&
-        customerDistanceMeters <= 150;
-    final arrivalGateLabel = !trackingThisBooking
-        ? 'Resume tracking first'
-        : customerDistanceMeters == null
-            ? 'Waiting for GPS'
-            : '${_formatRouteDistance(customerDistanceMeters)} away';
     return Card(
       margin: const EdgeInsets.only(bottom: 12),
       child: Padding(
@@ -799,50 +863,62 @@ class _TechnicianJobCard extends ConsumerWidget {
                     label: const Text('Resume tracking'),
                   ),
                 if (booking.status == BookingStatus.onTheWay)
-                  Wrap(
-                    spacing: 10,
-                    runSpacing: 10,
-                    children: [
-                      canMarkArrived
-                          ? FilledButton.icon(
-                              onPressed: user == null
-                                  ? null
-                                  : () async {
-                                      await bookingRepository()
-                                          .markTechnicianReachedCustomer(
-                                        bookingId: booking.id,
-                                        technicianId: user.uid,
-                                      );
-                                      await ref
-                                          .read(locationTrackingServiceProvider)
-                                          .finishBooking();
-                                    },
-                              icon: const Icon(Icons.location_on_outlined),
-                              label: const Text('Mark arrived'),
-                            )
-                          : OutlinedButton.icon(
-                              onPressed: null,
-                              icon: const Icon(Icons.near_me_disabled_outlined),
-                              label: Text(arrivalGateLabel),
-                            ),
-                      OutlinedButton.icon(
-                        onPressed: user == null || !trackingThisBooking
-                            ? null
-                            : () async {
-                                await bookingRepository()
-                                    .markTechnicianReachedCustomer(
-                                  bookingId: booking.id,
-                                  technicianId: user.uid,
-                                  manualOverride: true,
+                  FilledButton.icon(
+                    onPressed: user == null
+                        ? null
+                        : () async {
+                            try {
+                              final position =
+                                  await _bestAvailableTechnicianPosition();
+                              final distanceMeters = position == null
+                                  ? customerDistanceMeters
+                                  : _distanceToCustomerFromCoordinates(
+                                      booking,
+                                      position.latitude,
+                                      position.longitude,
+                                    );
+                              await bookingRepository()
+                                  .markTechnicianReachedCustomer(
+                                bookingId: booking.id,
+                                technicianId: user.uid,
+                                technicianLatitude: position?.latitude ??
+                                    technicianLocation?.latitude,
+                                technicianLongitude: position?.longitude ??
+                                    technicianLocation?.longitude,
+                                distanceFromCustomerMeters: distanceMeters,
+                                manualOverride: distanceMeters == null ||
+                                    distanceMeters > 150 ||
+                                    !trackingThisBooking,
+                              );
+                              await ref
+                                  .read(locationTrackingServiceProvider)
+                                  .finishBooking();
+                              if (context.mounted) {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  const SnackBar(
+                                    content: Text(
+                                      'Customer confirmation requested.',
+                                    ),
+                                  ),
                                 );
-                                await ref
-                                    .read(locationTrackingServiceProvider)
-                                    .stop();
-                              },
-                        icon: const Icon(Icons.person_pin_circle_outlined),
-                        label: const Text('Reached customer'),
-                      ),
-                    ],
+                              }
+                            } catch (error) {
+                              if (context.mounted) {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(
+                                    content: Text(error.toString()),
+                                    backgroundColor: Colors.red.shade700,
+                                  ),
+                                );
+                              }
+                            }
+                          },
+                    icon: const Icon(Icons.person_pin_circle_outlined),
+                    label: Text(
+                      trackingThisBooking && customerDistanceMeters != null
+                          ? 'I met the customer (${_formatRouteDistance(customerDistanceMeters)})'
+                          : 'I met the customer',
+                    ),
                   ),
                 if (booking.status == BookingStatus.arrived)
                   OutlinedButton.icon(
@@ -885,19 +961,57 @@ class _TechnicianJobCard extends ConsumerWidget {
                   FilledButton.icon(
                     onPressed: () async {
                       if (user == null) return;
-                      await bookingRepository().transitionStatus(
+                      await bookingRepository().requestWorkCompletion(
                         bookingId: booking.id,
                         technicianId: user.uid,
-                        expected: BookingStatus.serviceStarted,
-                        next: BookingStatus.serviceCompleted,
                       );
                       await ref.read(locationTrackingServiceProvider).stop();
                       await ref
                           .read(technicianRepositoryProvider)
                           .stopSharingLocation(user.uid);
+                      if (context.mounted) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(
+                            content: Text(
+                              'Your completion is confirmed. Waiting for customer confirmation.',
+                            ),
+                          ),
+                        );
+                      }
                     },
                     icon: const Icon(Icons.done_all),
-                    label: const Text('Complete'),
+                    label: const Text('I completed the work'),
+                  ),
+                if (booking.status == BookingStatus.serviceCompleted &&
+                    booking.customerConfirmedWorkCompletedAt == null)
+                  FilledButton.icon(
+                    onPressed: user == null
+                        ? null
+                        : () async {
+                            await bookingRepository().requestWorkCompletion(
+                              bookingId: booking.id,
+                              technicianId: user.uid,
+                            );
+                            if (context.mounted) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(
+                                  content: Text(
+                                    'Your completion is confirmed. Waiting for customer confirmation.',
+                                  ),
+                                ),
+                              );
+                            }
+                          },
+                    icon: const Icon(Icons.fact_check_outlined),
+                    label: const Text('I completed the work'),
+                  ),
+                if (booking.status ==
+                    BookingStatus.workCompletedPendingCustomer)
+                  OutlinedButton.icon(
+                    onPressed: null,
+                    icon: const Icon(Icons.fact_check_outlined),
+                    label:
+                        const Text('Technician confirmed - waiting customer'),
                   ),
                 if (booking.status == BookingStatus.onHold)
                   OutlinedButton.icon(
@@ -909,7 +1023,8 @@ class _TechnicianJobCard extends ConsumerWidget {
                           : 'On hold: ${booking.holdReason}',
                     ),
                   ),
-                if (booking.status == BookingStatus.serviceCompleted)
+                if (booking.status == BookingStatus.serviceCompleted &&
+                    booking.customerConfirmedWorkCompletedAt != null)
                   FilledButton.icon(
                     onPressed: user == null || estimate == null
                         ? null
@@ -962,11 +1077,10 @@ class _TechnicianJobCard extends ConsumerWidget {
                     ),
                 ],
                 OutlinedButton.icon(
-                    onPressed: booking.status == BookingStatus.arrived ||
-                            booking.status ==
-                                BookingStatus.customerConfirmedArrival
-                        ? () => _uploadServicePhoto(context, ref, 'before')
-                        : null,
+                    onPressed:
+                        booking.status == BookingStatus.customerConfirmedArrival
+                            ? () => _uploadServicePhoto(context, ref, 'before')
+                            : null,
                     icon: const Icon(Icons.camera_alt_outlined),
                     label: const Text('Before')),
                 OutlinedButton.icon(
@@ -2152,6 +2266,41 @@ double? _distanceToCustomer(
   );
 }
 
+double? _distanceToCustomerFromCoordinates(
+  Booking booking,
+  double latitude,
+  double longitude,
+) {
+  if (booking.latitude == null || booking.longitude == null) return null;
+  return Geolocator.distanceBetween(
+    latitude,
+    longitude,
+    booking.latitude!,
+    booking.longitude!,
+  );
+}
+
+Future<Position?> _bestAvailableTechnicianPosition() async {
+  try {
+    if (!await Geolocator.isLocationServiceEnabled()) return null;
+    var permission = await Geolocator.checkPermission();
+    if (permission == LocationPermission.denied) {
+      permission = await Geolocator.requestPermission();
+    }
+    if (permission == LocationPermission.denied ||
+        permission == LocationPermission.deniedForever) {
+      return null;
+    }
+    return Geolocator.getCurrentPosition(
+      locationSettings: const LocationSettings(
+        accuracy: LocationAccuracy.high,
+      ),
+    ).timeout(const Duration(seconds: 10));
+  } catch (_) {
+    return null;
+  }
+}
+
 String _formatRouteDistance(double meters) {
   if (meters < 1000) return '${meters.round()} m';
   return '${(meters / 1000).toStringAsFixed(1)} km';
@@ -2196,13 +2345,6 @@ class _AttendanceViewState extends ConsumerState<_AttendanceView> {
             const Duration(seconds: 12),
           );
       if (!mounted) return;
-      if (bytes.length > 600 * 1024) {
-        _setViewState(() {
-          _result =
-              'Reference selfie is too large. Please choose a smaller photo.';
-        });
-        return;
-      }
       final faceService = const FaceMatchService();
       final signature = await faceService.createSignature(bytes);
       if (!mounted) return;
@@ -2293,12 +2435,6 @@ class _AttendanceViewState extends ConsumerState<_AttendanceView> {
             const Duration(seconds: 12),
           );
       if (!mounted) return;
-      if (bytes.length > 600 * 1024) {
-        _setViewState(() {
-          _result = 'Selfie image is too large. Please choose a smaller photo.';
-        });
-        return;
-      }
       final distanceFromBranch = Geolocator.distanceBetween(
         config.branchLatitude,
         config.branchLongitude,
@@ -2313,14 +2449,14 @@ class _AttendanceViewState extends ConsumerState<_AttendanceView> {
         referenceSignature: referenceSignature,
         selfieSignature: selfieSignature,
       );
-      // Firebase Storage is not initialized for the current project. Store a
-      // compact data URL with this day's attendance record so marking
-      // attendance remains functional and no failing Storage POST is issued.
-      _setViewState(() => _result = 'Saving attendance selfie...');
-      final mimeType = image.mimeType?.startsWith('image/') == true
-          ? image.mimeType!
-          : 'image/jpeg';
-      final selfieUrl = 'data:$mimeType;base64,${base64Encode(bytes)}';
+      _setViewState(() => _result = 'Uploading attendance selfie...');
+      final dayKey = _attendanceStorageDayKey(now);
+      final selfieUrl = await _uploadAttendanceSelfie(
+        image: image,
+        bytes: bytes,
+        userId: user.uid,
+        dayKey: dayKey,
+      );
       if (!mounted) return;
       if (!match.passed) {
         await ref.read(technicianRepositoryProvider).markAttendance(
@@ -2454,6 +2590,31 @@ class _AttendanceViewState extends ConsumerState<_AttendanceView> {
     ).timeout(const Duration(seconds: 12));
   }
 
+  Future<String> _uploadAttendanceSelfie({
+    required XFile image,
+    required List<int> bytes,
+    required String userId,
+    required String dayKey,
+  }) async {
+    if (kIsWeb && isLocalAttendanceHost(Uri.base.host)) {
+      final mimeType = image.mimeType?.startsWith('image/') == true
+          ? image.mimeType!
+          : 'image/jpeg';
+      return 'data:$mimeType;base64,${base64Encode(bytes)}';
+    }
+    try {
+      return await ref.read(storageRepositoryProvider).uploadXFile(
+            file: image,
+            folder: 'attendance/$userId',
+            fileName: '${dayKey}_${DateTime.now().millisecondsSinceEpoch}.jpg',
+          );
+    } catch (error) {
+      throw StateError(
+        'Selfie upload was blocked. Deploy Storage rules and configure Storage CORS for web testing.',
+      );
+    }
+  }
+
   String _selfieFailureMessage(
     Object error, {
     required String fallback,
@@ -2488,22 +2649,26 @@ class _AttendanceViewState extends ConsumerState<_AttendanceView> {
     return ListView(
       padding: const EdgeInsets.all(16),
       children: [
-        Container(
-          padding: const EdgeInsets.all(18),
-          decoration: BoxDecoration(
-              color: AppTheme.primary, borderRadius: BorderRadius.circular(8)),
-          child: const Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text('Technician attendance',
-                  style: TextStyle(
-                      color: Colors.white,
-                      fontSize: 22,
-                      fontWeight: FontWeight.w900)),
-              SizedBox(height: 6),
-              Text('Face ID attendance; uploads after 09:45 are marked late',
-                  style: TextStyle(color: Colors.white70)),
-            ],
+        Card(
+          elevation: 0,
+          color: AppTheme.primary,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+          child: const Padding(
+            padding: EdgeInsets.all(18),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('Attendance required',
+                    style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 22,
+                        fontWeight: FontWeight.w900)),
+                SizedBox(height: 6),
+                Text(
+                    'Mark today once with Face ID and location. After this, jobs unlock and live location stays shared until sign out.',
+                    style: TextStyle(color: Colors.white70)),
+              ],
+            ),
           ),
         ),
         const SizedBox(height: 16),
@@ -3505,6 +3670,7 @@ class _StatusRail extends StatelessWidget {
       BookingStatus.estimateRejected,
       BookingStatus.estimateApproved,
       BookingStatus.serviceStarted,
+      BookingStatus.workCompletedPendingCustomer,
       BookingStatus.onHold,
       BookingStatus.serviceCompleted,
     ];

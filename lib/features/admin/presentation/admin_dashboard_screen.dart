@@ -6514,6 +6514,7 @@ Color _statusColor(BookingStatus status) {
     BookingStatus.estimateRejected => const Color(0xFFD95C2A),
     BookingStatus.estimateApproved => const Color(0xFF2B8A3E),
     BookingStatus.serviceStarted => const Color(0xFF7B61FF),
+    BookingStatus.workCompletedPendingCustomer => const Color(0xFFF08C00),
     BookingStatus.onHold => const Color(0xFF845EF7),
     BookingStatus.serviceCompleted => AppTheme.accentDark,
     BookingStatus.billGenerated => const Color(0xFF845EF7),
@@ -6636,6 +6637,7 @@ String _technicianLiveStatus(
     BookingStatus.estimateApproved =>
       'Reached Customer',
     BookingStatus.serviceStarted => 'Repairing',
+    BookingStatus.workCompletedPendingCustomer => 'Customer Confirm',
     _ => 'Idle',
   };
 }

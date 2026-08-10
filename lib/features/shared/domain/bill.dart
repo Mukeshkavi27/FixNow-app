@@ -11,6 +11,13 @@ class Bill {
     required this.isPaid,
     this.branchId,
     this.revenueBranchId,
+    this.applianceType,
+    this.customerName,
+    this.technicianName,
+    this.serviceAddress,
+    this.preferredTime,
+    this.technicianCompletedWorkAt,
+    this.customerConfirmedWorkCompletedAt,
     this.paymentMode,
     this.paymentSubmittedAt,
     this.paymentConfirmedAt,
@@ -29,6 +36,13 @@ class Bill {
   final bool isPaid;
   final String? branchId;
   final String? revenueBranchId;
+  final String? applianceType;
+  final String? customerName;
+  final String? technicianName;
+  final String? serviceAddress;
+  final String? preferredTime;
+  final DateTime? technicianCompletedWorkAt;
+  final DateTime? customerConfirmedWorkCompletedAt;
   final String? paymentMode;
   final DateTime? paymentSubmittedAt;
   final DateTime? paymentConfirmedAt;
@@ -72,6 +86,15 @@ class Bill {
       isPaid: data['isPaid'] as bool? ?? false,
       branchId: data['branchId'] as String?,
       revenueBranchId: data['revenueBranchId'] as String?,
+      applianceType: data['applianceType'] as String?,
+      customerName: data['customerName'] as String?,
+      technicianName: data['technicianName'] as String?,
+      serviceAddress: data['serviceAddress'] as String?,
+      preferredTime: data['preferredTime'] as String?,
+      technicianCompletedWorkAt:
+          (data['technicianCompletedWorkAt'] as Timestamp?)?.toDate(),
+      customerConfirmedWorkCompletedAt:
+          (data['customerConfirmedWorkCompletedAt'] as Timestamp?)?.toDate(),
       paymentMode: data['paymentMode'] as String?,
       paymentSubmittedAt: (data['paymentSubmittedAt'] as Timestamp?)?.toDate(),
       paymentConfirmedAt: (data['paymentConfirmedAt'] as Timestamp?)?.toDate(),

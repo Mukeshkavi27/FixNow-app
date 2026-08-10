@@ -8,6 +8,7 @@ import 'package:image_picker/image_picker.dart';
 import '../../../app/theme/app_theme.dart';
 import '../../auth/data/auth_repository.dart';
 import '../../shared/data/storage_repository.dart';
+import 'customer_back_button.dart';
 
 class CustomerProfileScreen extends ConsumerStatefulWidget {
   const CustomerProfileScreen({super.key});
@@ -100,7 +101,10 @@ class _CustomerProfileScreenState extends ConsumerState<CustomerProfileScreen> {
     populate();
 
     return Scaffold(
-      appBar: AppBar(title: const Text('My profile')),
+      appBar: AppBar(
+        leading: const CustomerBackButton(),
+        title: const Text('My profile'),
+      ),
       body: userAsync.when(
         data: (user) {
           if (user == null) {

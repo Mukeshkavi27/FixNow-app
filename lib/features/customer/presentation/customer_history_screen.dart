@@ -6,7 +6,9 @@ import 'package:intl/intl.dart';
 import '../../../app/theme/app_theme.dart';
 import '../../../core/enums/booking_status.dart';
 import '../../bookings/domain/booking.dart';
+import '../../shared/data/bill_pdf_service.dart';
 import '../../shared/domain/bill.dart';
+import 'customer_back_button.dart';
 import 'customer_providers.dart';
 
 class CustomerHistoryScreen extends ConsumerWidget {
@@ -21,6 +23,7 @@ class CustomerHistoryScreen extends ConsumerWidget {
       length: 3,
       child: Scaffold(
         appBar: AppBar(
+          leading: const CustomerBackButton(),
           title: const Text('Bookings and bills'),
           bottom: const TabBar(
             tabs: [
@@ -218,57 +221,96 @@ class _BillList extends StatelessWidget {
             borderRadius: BorderRadius.circular(8),
             border: Border.all(color: AppTheme.divider),
           ),
-          child: Row(
+          child: Column(
             children: [
-              Container(
-                width: 46,
-                height: 46,
-                decoration: BoxDecoration(
-                  color: AppTheme.surface,
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: const Icon(
-                  Icons.receipt_long_outlined,
-                  color: AppTheme.primary,
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'Bill ${bill.bookingId.length > 8 ? bill.bookingId.substring(0, 8) : bill.bookingId}',
-                      style: const TextStyle(fontWeight: FontWeight.w800),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      DateFormat('dd MMM yyyy').format(bill.createdAt),
-                      style: const TextStyle(
-                        fontSize: 11,
-                        color: AppTheme.textSecondary,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.end,
+              Row(
                 children: [
-                  Text(
-                    'Rs. ${bill.amount.toStringAsFixed(0)}',
-                    style: const TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.w900,
+                  Container(
+                    width: 46,
+                    height: 46,
+                    decoration: BoxDecoration(
+                      color: AppTheme.surface,
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: const Icon(
+                      Icons.receipt_long_outlined,
+                      color: AppTheme.primary,
                     ),
                   ),
-                  const SizedBox(height: 4),
-                  Text(
-                    bill.isPaid ? 'Paid' : 'Payment pending',
-                    style: TextStyle(
-                      fontSize: 10,
-                      fontWeight: FontWeight.w700,
-                      color: bill.isPaid ? AppTheme.accentDark : Colors.orange,
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Bill ${bill.bookingId.length > 8 ? bill.bookingId.substring(0, 8) : bill.bookingId}',
+                          style: const TextStyle(fontWeight: FontWeight.w800),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          DateFormat('dd MMM yyyy').format(bill.createdAt),
+                          style: const TextStyle(
+                            fontSize: 11,
+                            color: AppTheme.textSecondary,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.end,
+                    children: [
+                      Text(
+                        'Rs. ${bill.amount.toStringAsFixed(0)}',
+                        style: const TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w900,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        bill.isPaid ? 'Paid' : 'Payment pending',
+                        style: TextStyle(
+                          fontSize: 10,
+                          fontWeight: FontWeight.w700,
+                          color:
+                              bill.isPaid ? AppTheme.accentDark : Colors.orange,
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton.icon(
+                      onPressed: () =>
+                          context.push('/booking/${bill.bookingId}'),
+                      icon: const Icon(Icons.receipt_long_outlined),
+                      label: const Text('Details'),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: FilledButton.icon(
+                      onPressed: () async {
+                        try {
+                          await const BillPdfService()
+                              .openBillPdfFromBill(bill);
+                        } catch (error) {
+                          if (!context.mounted) return;
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(
+                              content: Text('Unable to open PDF: $error'),
+                              backgroundColor: Colors.red.shade700,
+                            ),
+                          );
+                        }
+                      },
+                      icon: const Icon(Icons.picture_as_pdf_outlined),
+                      label: const Text('View bill PDF'),
                     ),
                   ),
                 ],

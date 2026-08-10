@@ -64,6 +64,25 @@ service cloud.firestore {
       return get(/databases/$(database)/documents/branches/$(branchId)).data;
     }
 
+    function validFallbackBranch(data) {
+      return (data.branchId == 'fallback-chennai'
+          && data.branchName == 'FixNow Chennai')
+        || (data.branchId == 'fallback-bengaluru'
+          && data.branchName == 'FixNow Bengaluru')
+        || (data.branchId == 'fallback-hyderabad'
+          && data.branchName == 'FixNow Hyderabad');
+    }
+
+    function validServiceBranch(data) {
+      return data.branchId is string
+        && data.branchName is string
+        && (validFallbackBranch(data)
+          || (exists(/databases/$(database)/documents/branches/$(data.branchId))
+            && data.branchName == branch(data.branchId).name
+            && (!('isActive' in branch(data.branchId))
+              || branch(data.branchId).isActive == true)));
+    }
+
     function technicianRevenueBranch(technicianId) {
       return ('nativeBranchId' in userAfter(technicianId))
         ? userAfter(technicianId).nativeBranchId
@@ -111,7 +130,8 @@ service cloud.firestore {
         'estimateSent',
         'estimateRejected',
         'estimateApproved',
-        'serviceStarted'
+        'serviceStarted',
+        'workCompletedPendingCustomer'
       ];
     }
 
@@ -251,13 +271,7 @@ service cloud.firestore {
             || request.resource.data.technicianId == null)
           && (!('servicePhotos' in request.resource.data)
             || request.resource.data.servicePhotos.size() == 0)))
-        && request.resource.data.branchId is string
-        && request.resource.data.branchName is string
-        && exists(/databases/$(database)/documents/branches/$(request.resource.data.branchId))
-        && request.resource.data.branchName
-          == branch(request.resource.data.branchId).name
-        && (!('isActive' in branch(request.resource.data.branchId))
-          || branch(request.resource.data.branchId).isActive == true);
+        && validServiceBranch(request.resource.data);
 
       allow read: if canAdministerBooking(resource.data)
         || ownsBooking(resource.data)
@@ -279,15 +293,19 @@ service cloud.firestore {
           && request.resource.data.status == 'estimateRejected'
           && onlyChanges(['status', 'updatedAt']))
         || (ownsBooking(resource.data)
-          && resource.data.status == 'arrived'
+          && resource.data.status in ['onTheWay', 'arrived']
           && request.resource.data.status == 'customerConfirmedArrival'
           && onlyChanges([
             'status',
             'customerConfirmedArrivalAt',
+            'customerConfirmedLatitude',
+            'customerConfirmedLongitude',
+            'customerTechnicianDistanceMeters',
+            'customerConfirmationDistanceWarning',
             'updatedAt'
           ]))
         || (ownsBooking(resource.data)
-          && resource.data.status == 'arrived'
+          && resource.data.status in ['onTheWay', 'arrived']
           && request.resource.data.status == resource.data.status
           && onlyChanges([
             'customerReportedNotMetAt',
@@ -309,12 +327,60 @@ service cloud.firestore {
             'status',
             'technicianReachedAt',
             'technicianReachedByManualOverride',
+            'technicianReachedLatitude',
+            'technicianReachedLongitude',
+            'technicianArrivalDistanceMeters',
             'updatedAt'
           ]))
         || technicianTransition('customerConfirmedArrival', 'estimateSent')
         || technicianTransition('estimateRejected', 'estimateSent')
         || technicianTransition('estimateApproved', 'serviceStarted')
-        || technicianTransition('serviceStarted', 'serviceCompleted')
+        || (assignedBooking(resource.data)
+          && resource.data.status == 'serviceStarted'
+          && request.resource.data.status == 'workCompletedPendingCustomer'
+          && onlyChanges([
+            'status',
+            'technicianCompletedWorkAt',
+            'customerReportedWorkNotDoneAt',
+            'updatedAt'
+          ]))
+        || (assignedBooking(resource.data)
+          && resource.data.status == 'serviceCompleted'
+          && !('customerConfirmedWorkCompletedAt' in resource.data)
+          && request.resource.data.status == 'workCompletedPendingCustomer'
+          && onlyChanges([
+            'status',
+            'technicianCompletedWorkAt',
+            'customerReportedWorkNotDoneAt',
+            'updatedAt'
+          ]))
+        || (ownsBooking(resource.data)
+          && resource.data.status == 'workCompletedPendingCustomer'
+          && request.resource.data.status == 'serviceCompleted'
+          && onlyChanges([
+            'status',
+            'technicianCompletedWorkAt',
+            'customerConfirmedWorkCompletedAt',
+            'customerReportedWorkNotDoneAt',
+            'updatedAt'
+          ]))
+        || (ownsBooking(resource.data)
+          && resource.data.status == 'serviceCompleted'
+          && !('customerConfirmedWorkCompletedAt' in resource.data)
+          && request.resource.data.status == 'serviceCompleted'
+          && onlyChanges([
+            'technicianCompletedWorkAt',
+            'customerConfirmedWorkCompletedAt',
+            'customerReportedWorkNotDoneAt',
+            'updatedAt'
+          ]))
+        || (ownsBooking(resource.data)
+          && resource.data.status == 'workCompletedPendingCustomer'
+          && request.resource.data.status == resource.data.status
+          && onlyChanges([
+            'customerReportedWorkNotDoneAt',
+            'updatedAt'
+          ]))
         || technicianTransition('serviceCompleted', 'billGenerated')
         || technicianTransition('billGenerated', 'closed')
         || (assignedBooking(resource.data)
@@ -387,6 +453,8 @@ service cloud.firestore {
           == technicianRevenueBranch(request.auth.uid)
         && booking(bookingId).technicianId == request.auth.uid
         && booking(bookingId).status == 'serviceCompleted'
+        && ('technicianCompletedWorkAt' in booking(bookingId))
+        && ('customerConfirmedWorkCompletedAt' in booking(bookingId))
         && request.resource.data.amount > 0
         && request.resource.data.isPaid == false;
       // Permit a super admin to attach legacy bills to their service and
@@ -783,6 +851,7 @@ service cloud.firestore {
           'paymentSubmitted',
           'paymentConfirmed',
           'technicianReachedCustomer',
+          'workCompletionRequested',
         ]
         && request.resource.data.isRead == false
         && request.resource.data.keys().hasOnly([
@@ -803,12 +872,18 @@ service cloud.firestore {
           || (request.resource.data.type == 'customerArrivalConfirmed'
             && request.resource.data.userId == 'admin')
           || (request.resource.data.type == 'customerReportedTechnicianNotMet'
+            && request.resource.data.userId == 'admin')
+          || (request.resource.data.type == 'customerWorkCompletedConfirmed'
+            && request.resource.data.userId == 'admin')
+          || (request.resource.data.type == 'customerReportedWorkNotDone'
             && request.resource.data.userId == 'admin'))
         && request.resource.data.type in [
           'estimateApproved',
           'estimateRejected',
           'customerArrivalConfirmed',
           'customerReportedTechnicianNotMet',
+          'customerWorkCompletedConfirmed',
+          'customerReportedWorkNotDone',
         ]
         && request.resource.data.isRead == false
         && request.resource.data.keys().hasOnly([

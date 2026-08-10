@@ -5,6 +5,7 @@ import 'package:go_router/go_router.dart';
 import '../../../app/theme/app_theme.dart';
 import '../../../core/constants/app_constants.dart';
 import '../../services/data/service_catalog_repository.dart';
+import 'customer_back_button.dart';
 
 class CustomerServiceSearchScreen extends ConsumerStatefulWidget {
   const CustomerServiceSearchScreen({super.key});
@@ -48,6 +49,7 @@ class _CustomerServiceSearchScreenState
 
     return Scaffold(
       appBar: AppBar(
+        leading: const CustomerBackButton(),
         titleSpacing: 0,
         title: TextField(
           key: const Key('service-search-field'),

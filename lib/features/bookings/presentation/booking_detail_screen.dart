@@ -13,6 +13,7 @@ import '../../auth/data/auth_repository.dart';
 import '../../auth/domain/app_user.dart';
 import '../../estimates/data/estimate_repository.dart';
 import '../../shared/data/bill_repository.dart';
+import '../../shared/data/bill_pdf_service.dart';
 import '../../shared/data/review_repository.dart';
 import '../../technician/data/technician_repository.dart';
 import '../../technician/domain/technician_location.dart';
@@ -50,6 +51,8 @@ final bookingAddressPinProvider =
   },
 );
 
+const _arrivalConfirmationRadiusMeters = 150.0;
+
 class BookingDetailScreen extends ConsumerStatefulWidget {
   const BookingDetailScreen({
     required this.bookingId,
@@ -69,6 +72,7 @@ class _BookingDetailScreenState extends ConsumerState<BookingDetailScreen> {
   final _review = TextEditingController();
   int _rating = 5;
   bool _isConfirmingArrival = false;
+  bool _isConfirmingWork = false;
   bool _arrivalPromptShown = false;
 
   @override
@@ -119,9 +123,24 @@ class _BookingDetailScreenState extends ConsumerState<BookingDetailScreen> {
     if (_isConfirmingArrival) return;
     setState(() => _isConfirmingArrival = true);
     try {
+      final customerPosition = await _getCustomerPosition();
+      final liveTechnicianLocation = booking.technicianId == null
+          ? null
+          : ref
+              .read(bookingTechnicianLocationProvider(booking.technicianId!))
+              .valueOrNull;
+      final technicianLatitude =
+          booking.technicianReachedLatitude ?? liveTechnicianLocation?.latitude;
+      final technicianLongitude = booking.technicianReachedLongitude ??
+          liveTechnicianLocation?.longitude;
       await ref.read(bookingRepositoryProvider).confirmTechnicianArrival(
             bookingId: booking.id,
             customerId: booking.customerId,
+            customerLatitude: customerPosition?.latitude,
+            customerLongitude: customerPosition?.longitude,
+            technicianLatitude: technicianLatitude,
+            technicianLongitude: technicianLongitude,
+            maxDistanceMeters: _arrivalConfirmationRadiusMeters,
           );
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -144,6 +163,27 @@ class _BookingDetailScreenState extends ConsumerState<BookingDetailScreen> {
     }
   }
 
+  Future<Position?> _getCustomerPosition() async {
+    try {
+      if (!await Geolocator.isLocationServiceEnabled()) return null;
+      var permission = await Geolocator.checkPermission();
+      if (permission == LocationPermission.denied) {
+        permission = await Geolocator.requestPermission();
+      }
+      if (permission == LocationPermission.denied ||
+          permission == LocationPermission.deniedForever) {
+        return null;
+      }
+      return Geolocator.getCurrentPosition(
+        locationSettings: const LocationSettings(
+          accuracy: LocationAccuracy.high,
+        ),
+      ).timeout(const Duration(seconds: 10));
+    } catch (_) {
+      return null;
+    }
+  }
+
   Future<void> _reportTechnicianNotMet(Booking booking) async {
     try {
       await ref.read(bookingRepositoryProvider).reportTechnicianNotMet(
@@ -154,6 +194,58 @@ class _BookingDetailScreenState extends ConsumerState<BookingDetailScreen> {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text('Admin has been alerted. We will check this.'),
+        ),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(error.toString()),
+          behavior: SnackBarBehavior.floating,
+          backgroundColor: Colors.red.shade700,
+        ),
+      );
+    }
+  }
+
+  Future<void> _confirmWorkCompleted(Booking booking) async {
+    if (_isConfirmingWork) return;
+    setState(() => _isConfirmingWork = true);
+    try {
+      await ref.read(bookingRepositoryProvider).confirmWorkCompleted(
+            bookingId: booking.id,
+            customerId: booking.customerId,
+          );
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Work confirmed. The final bill can be generated now.'),
+        ),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(error.toString()),
+          behavior: SnackBarBehavior.floating,
+          backgroundColor: Colors.red.shade700,
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _isConfirmingWork = false);
+    }
+  }
+
+  Future<void> _reportWorkNotDone(Booking booking) async {
+    try {
+      await ref.read(bookingRepositoryProvider).reportWorkNotDone(
+            bookingId: booking.id,
+            customerId: booking.customerId,
+          );
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Admin has been alerted. The booking will stay open.'),
         ),
       );
     } catch (error) {
@@ -214,7 +306,32 @@ class _BookingDetailScreenState extends ConsumerState<BookingDetailScreen> {
     return Scaffold(
       backgroundColor: AppTheme.surface,
       appBar: AppBar(
+        leading: IconButton(
+          tooltip: 'Back',
+          icon: const Icon(Icons.arrow_back),
+          onPressed: () {
+            if (context.canPop()) {
+              context.pop();
+            } else {
+              context.go(_bookingBackFallback(user));
+            }
+          },
+        ),
         title: const Text('Appliance Service Details'),
+        actions: [
+          TextButton.icon(
+            onPressed: () {
+              if (context.canPop()) {
+                context.pop();
+              } else {
+                context.go(_bookingBackFallback(user));
+              }
+            },
+            icon: const Icon(Icons.arrow_back),
+            label: const Text('Back'),
+          ),
+          const SizedBox(width: 8),
+        ],
         backgroundColor: AppTheme.background,
         foregroundColor: AppTheme.textPrimary,
         elevation: 0,
@@ -240,7 +357,9 @@ class _BookingDetailScreenState extends ConsumerState<BookingDetailScreen> {
           final canHaveBill =
               booking.status.index >= BookingStatus.billGenerated.index;
           final canHaveReview =
-              booking.status.index >= BookingStatus.serviceCompleted.index;
+              booking.status.index >= BookingStatus.serviceCompleted.index &&
+                  booking.technicianCompletedWorkAt != null &&
+                  booking.customerConfirmedWorkCompletedAt != null;
           final estimateAsync = canHaveEstimate
               ? ref.watch(bookingEstimateProvider(widget.bookingId))
               : const AsyncValue.data(null);
@@ -250,6 +369,10 @@ class _BookingDetailScreenState extends ConsumerState<BookingDetailScreen> {
           final reviewAsync = canHaveReview
               ? ref.watch(bookingReviewProvider(widget.bookingId))
               : const AsyncValue.data(null);
+          final needsWorkCompletionConfirmation =
+              booking.status == BookingStatus.workCompletedPendingCustomer ||
+                  (booking.status == BookingStatus.serviceCompleted &&
+                      booking.customerConfirmedWorkCompletedAt == null);
           final technicianLocation = booking.technicianId == null
               ? null
               : ref
@@ -276,7 +399,8 @@ class _BookingDetailScreenState extends ConsumerState<BookingDetailScreen> {
                 const SizedBox(height: 14),
               ],
               if (user?.uid == booking.customerId &&
-                  booking.status == BookingStatus.arrived) ...[
+                  (booking.status == BookingStatus.onTheWay ||
+                      booking.status == BookingStatus.arrived)) ...[
                 _ArrivalConfirmationCard(
                   booking: booking,
                   isLoading: _isConfirmingArrival,
@@ -285,7 +409,22 @@ class _BookingDetailScreenState extends ConsumerState<BookingDetailScreen> {
                 ),
                 const SizedBox(height: 14),
               ],
-              _StatusBanner(status: booking.status),
+              if (user?.uid == booking.customerId &&
+                  needsWorkCompletionConfirmation) ...[
+                _WorkCompletionConfirmationCard(
+                  booking: booking,
+                  isLoading: _isConfirmingWork,
+                  onConfirm: () => _confirmWorkCompleted(booking),
+                  onNotDone: () => _reportWorkNotDone(booking),
+                ),
+                const SizedBox(height: 14),
+              ],
+              _StatusBanner(
+                status: booking.status,
+                labelOverride: needsWorkCompletionConfirmation
+                    ? BookingStatus.workCompletedPendingCustomer.label
+                    : null,
+              ),
               const SizedBox(height: 14),
               if (booking.status == BookingStatus.onHold &&
                   booking.holdReason != null &&
@@ -699,43 +838,78 @@ class _BookingDetailScreenState extends ConsumerState<BookingDetailScreen> {
                   return Padding(
                     padding: const EdgeInsets.only(top: 14),
                     child: _UCCard(
-                      child: Row(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          const Icon(
-                            Icons.receipt_long_outlined,
-                            color: AppTheme.primary,
+                          Row(
+                            children: [
+                              const Icon(
+                                Icons.receipt_long_outlined,
+                                color: AppTheme.primary,
+                              ),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    const Text(
+                                      'Final bill',
+                                      style: TextStyle(
+                                        fontWeight: FontWeight.w800,
+                                        color: AppTheme.textPrimary,
+                                      ),
+                                    ),
+                                    Text(
+                                      bill.isPaid || bill.hasPaymentForApproval
+                                          ? 'INR ${bill.amount.toStringAsFixed(0)}'
+                                              ' - ${bill.paymentModeLabel}'
+                                          : 'INR ${bill.amount.toStringAsFixed(0)}',
+                                      style: const TextStyle(
+                                        color: AppTheme.textSecondary,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              Chip(
+                                label: Text(bill.paymentStatusLabel),
+                                backgroundColor: bill.isPaid
+                                    ? Colors.green.shade50
+                                    : bill.hasPaymentForApproval
+                                        ? Colors.blue.shade50
+                                        : Colors.orange.shade50,
+                              ),
+                            ],
                           ),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                const Text(
-                                  'Final bill',
-                                  style: TextStyle(
-                                    fontWeight: FontWeight.w800,
-                                    color: AppTheme.textPrimary,
-                                  ),
+                          const SizedBox(height: 12),
+                          SizedBox(
+                            width: double.infinity,
+                            child: OutlinedButton.icon(
+                              onPressed: () async {
+                                try {
+                                  await const BillPdfService().openBillPdf(
+                                    bill: bill,
+                                    booking: booking,
+                                  );
+                                } catch (error) {
+                                  if (!context.mounted) return;
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    SnackBar(
+                                      content:
+                                          Text('Unable to open PDF: $error'),
+                                      backgroundColor: Colors.red.shade700,
+                                    ),
+                                  );
+                                }
+                              },
+                              icon: const Icon(Icons.picture_as_pdf_outlined),
+                              label: const Text(
+                                'View bill PDF',
+                                style: TextStyle(
+                                  fontWeight: FontWeight.w700,
                                 ),
-                                Text(
-                                  bill.isPaid || bill.hasPaymentForApproval
-                                      ? 'INR ${bill.amount.toStringAsFixed(0)}'
-                                          ' - ${bill.paymentModeLabel}'
-                                      : 'INR ${bill.amount.toStringAsFixed(0)}',
-                                  style: const TextStyle(
-                                    color: AppTheme.textSecondary,
-                                  ),
-                                ),
-                              ],
+                              ),
                             ),
-                          ),
-                          Chip(
-                            label: Text(bill.paymentStatusLabel),
-                            backgroundColor: bill.isPaid
-                                ? Colors.green.shade50
-                                : bill.hasPaymentForApproval
-                                    ? Colors.blue.shade50
-                                    : Colors.orange.shade50,
                           ),
                         ],
                       ),
@@ -750,6 +924,8 @@ class _BookingDetailScreenState extends ConsumerState<BookingDetailScreen> {
               ),
               if (booking.status.index >=
                       BookingStatus.serviceCompleted.index &&
+                  booking.technicianCompletedWorkAt != null &&
+                  booking.customerConfirmedWorkCompletedAt != null &&
                   user?.uid == booking.customerId) ...[
                 const SizedBox(height: 14),
                 if (reviewAsync.valueOrNull != null)
@@ -1145,6 +1321,7 @@ class _ArrivalConfirmationCard extends StatelessWidget {
     final technicianName = booking.technicianName?.trim().isNotEmpty == true
         ? booking.technicianName!.trim()
         : 'The technician';
+    final waitingForTechnicianTap = booking.status == BookingStatus.onTheWay;
     return _UCCard(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -1168,8 +1345,10 @@ class _ArrivalConfirmationCard extends StatelessWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Text(
-                      'Technician has arrived',
+                    Text(
+                      waitingForTechnicianTap
+                          ? 'Have you met the technician?'
+                          : 'Technician has arrived',
                       style: TextStyle(
                         fontWeight: FontWeight.w900,
                         color: AppTheme.textPrimary,
@@ -1177,7 +1356,9 @@ class _ArrivalConfirmationCard extends StatelessWidget {
                     ),
                     const SizedBox(height: 4),
                     Text(
-                      '$technicianName is at your service location.',
+                      waitingForTechnicianTap
+                          ? 'If $technicianName is with you, confirm now so the work and photo upload can start.'
+                          : '$technicianName is at your service location. Confirm so the work and photo upload can start.',
                       style: const TextStyle(
                         color: AppTheme.textSecondary,
                         fontSize: 12,
@@ -1211,7 +1392,103 @@ class _ArrivalConfirmationCard extends StatelessWidget {
                         )
                       : const Icon(Icons.person_pin_circle_outlined),
                   label: Text(
-                    isLoading ? 'Confirming...' : 'I have met them',
+                    isLoading ? 'Confirming...' : 'I met the technician',
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _WorkCompletionConfirmationCard extends StatelessWidget {
+  const _WorkCompletionConfirmationCard({
+    required this.booking,
+    required this.isLoading,
+    required this.onConfirm,
+    required this.onNotDone,
+  });
+
+  final Booking booking;
+  final bool isLoading;
+  final VoidCallback onConfirm;
+  final VoidCallback onNotDone;
+
+  @override
+  Widget build(BuildContext context) {
+    final technicianName = booking.technicianName?.trim().isNotEmpty == true
+        ? booking.technicianName!.trim()
+        : 'The technician';
+    return _UCCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 44,
+                height: 44,
+                decoration: BoxDecoration(
+                  color: AppTheme.accent.withValues(alpha: 0.1),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: const Icon(
+                  Icons.fact_check_outlined,
+                  color: AppTheme.accent,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'Confirm completed work',
+                      style: TextStyle(
+                        fontWeight: FontWeight.w900,
+                        color: AppTheme.textPrimary,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      '$technicianName has confirmed the work is completed. Please confirm from your side only after checking the appliance.',
+                      style: const TextStyle(
+                        color: AppTheme.textSecondary,
+                        fontSize: 12,
+                        height: 1.35,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 14),
+          Row(
+            children: [
+              Expanded(
+                child: OutlinedButton.icon(
+                  onPressed: isLoading ? null : onNotDone,
+                  icon: const Icon(Icons.report_problem_outlined),
+                  label: const Text('Work not done'),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: FilledButton.icon(
+                  onPressed: isLoading ? null : onConfirm,
+                  icon: isLoading
+                      ? const SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.verified_outlined),
+                  label: Text(
+                    isLoading ? 'Confirming...' : 'I confirm work completed',
                   ),
                 ),
               ),
@@ -1667,6 +1944,7 @@ class _TrackingSteps extends StatelessWidget {
       (BookingStatus.technicianAssigned, 'Assigned'),
       (BookingStatus.onTheWay, 'On way'),
       (BookingStatus.estimateSent, 'Estimate'),
+      (BookingStatus.workCompletedPendingCustomer, 'Confirm'),
       (BookingStatus.serviceCompleted, 'Done'),
     ];
     return Row(
@@ -1810,8 +2088,9 @@ class _EstimateRow extends StatelessWidget {
 }
 
 class _StatusBanner extends StatelessWidget {
-  const _StatusBanner({required this.status});
+  const _StatusBanner({required this.status, this.labelOverride});
   final BookingStatus status;
+  final String? labelOverride;
 
   @override
   Widget build(BuildContext context) {
@@ -1821,6 +2100,7 @@ class _StatusBanner extends StatelessWidget {
       BookingStatus.onHold => const Color(0xFF845EF7),
       BookingStatus.estimateRejected => Colors.red,
       BookingStatus.serviceStarted ||
+      BookingStatus.workCompletedPendingCustomer ||
       BookingStatus.serviceCompleted ||
       BookingStatus.billGenerated =>
         AppTheme.accent,
@@ -1838,7 +2118,7 @@ class _StatusBanner extends StatelessWidget {
           Icon(Icons.info_outline, size: 16, color: color),
           const SizedBox(width: 8),
           Text(
-            status.label,
+            labelOverride ?? status.label,
             style: TextStyle(
               fontSize: 13,
               fontWeight: FontWeight.w700,
@@ -1875,6 +2155,15 @@ String _serviceAssetName(String name) {
   }
   if (normalized.contains('fan')) return 'assets/images/fan.png';
   return 'assets/images/other_services.png';
+}
+
+String _bookingBackFallback(AppUser? user) {
+  return switch (user?.role) {
+    UserRole.technician => '/technician',
+    UserRole.branchAdmin => '/admin',
+    UserRole.superAdmin => '/super-admin',
+    UserRole.customer || null => '/customer',
+  };
 }
 
 TimeOfDay _parseTimeOfDay(String value) {

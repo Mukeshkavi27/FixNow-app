@@ -182,6 +182,7 @@ DateTime? bookingDeadline(Booking booking) {
     return null;
   }
   if (booking.status == BookingStatus.onHold ||
+      booking.status == BookingStatus.workCompletedPendingCustomer ||
       booking.status == BookingStatus.serviceCompleted ||
       booking.status == BookingStatus.billGenerated) {
     return null;
@@ -194,6 +195,7 @@ bool isBookingOverdue(Booking booking, DateTime now) {
   final deadline = bookingDeadline(booking);
   if (deadline == null) return false;
   if (booking.status == BookingStatus.serviceCompleted ||
+      booking.status == BookingStatus.workCompletedPendingCustomer ||
       booking.status == BookingStatus.billGenerated ||
       booking.status == BookingStatus.closed) {
     return false;

@@ -25,6 +25,7 @@ import '../../auth/data/auth_repository.dart';
 import '../../bookings/data/booking_repository.dart';
 import '../../bookings/domain/booking.dart';
 import '../../shared/data/storage_repository.dart';
+import 'customer_back_button.dart';
 
 class BookServiceScreen extends ConsumerStatefulWidget {
   const BookServiceScreen({required this.appliance, super.key});
@@ -429,7 +430,10 @@ class _BookServiceScreenState extends ConsumerState<BookServiceScreen> {
     final profile = _ServiceProfile.forAppliance(widget.appliance);
     return Scaffold(
       backgroundColor: AppTheme.background,
-      appBar: AppBar(title: Text(profile.title)),
+      appBar: AppBar(
+        leading: const CustomerBackButton(),
+        title: Text(profile.title),
+      ),
       body: LayoutBuilder(
         builder: (context, constraints) {
           final isWide = constraints.maxWidth >= 900;

@@ -64,11 +64,13 @@ final appRouterProvider = Provider<GoRouter>((ref) {
       final firebaseUser = auth.valueOrNull;
       final appUser = user.valueOrNull;
 
-      if (firebaseUser == null) return location == '/login' ? null : '/login';
       if (user.hasError) {
         return location == '/auth-error' ? null : '/auth-error';
       }
-      if (appUser == null) return '/login';
+      if (firebaseUser == null) return location == '/login' ? null : '/login';
+      if (appUser == null) {
+        return location == '/auth-error' ? null : '/auth-error';
+      }
       if (appUser.accessDenialReason != null) {
         return location == '/approval-pending' ? null : '/approval-pending';
       }

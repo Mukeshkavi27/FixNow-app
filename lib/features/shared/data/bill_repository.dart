@@ -127,6 +127,16 @@ class BillRepository {
           data['technicianId'] != technicianId) {
         throw StateError('Bill details do not match the completed booking.');
       }
+      if (data['customerConfirmedWorkCompletedAt'] == null) {
+        throw StateError(
+          'Customer must confirm work completion before billing.',
+        );
+      }
+      if (data['technicianCompletedWorkAt'] == null) {
+        throw StateError(
+          'Technician must request work completion before billing.',
+        );
+      }
       final technicianData = technician.data();
       if (technicianData == null || technicianData['role'] != 'technician') {
         throw StateError('Technician account not found.');
@@ -141,6 +151,14 @@ class BillRepository {
         'branchId': data['branchId'],
         'revenueBranchId': revenueBranchId,
         'amount': amount,
+        'applianceType': data['applianceType'],
+        'customerName': data['customerName'],
+        'technicianName': data['technicianName'],
+        'serviceAddress': data['address'],
+        'preferredTime': data['preferredTime'],
+        'technicianCompletedWorkAt': data['technicianCompletedWorkAt'],
+        'customerConfirmedWorkCompletedAt':
+            data['customerConfirmedWorkCompletedAt'],
         'createdAt': FieldValue.serverTimestamp(),
         'isPaid': false,
         'paymentMode': null,

@@ -9,6 +9,7 @@ enum BookingStatus {
   estimateRejected('Estimate Rejected'),
   estimateApproved('Customer Approved'),
   serviceStarted('Work In Progress'),
+  workCompletedPendingCustomer('Waiting for Customer Completion'),
   onHold('On Hold'),
   serviceCompleted('Completed'),
   billGenerated('Final Bill Generated'),
@@ -38,6 +39,9 @@ enum BookingStatus {
       BookingStatus.estimateRejected => next == BookingStatus.estimateSent,
       BookingStatus.estimateApproved => next == BookingStatus.serviceStarted,
       BookingStatus.serviceStarted =>
+        next == BookingStatus.workCompletedPendingCustomer ||
+            next == BookingStatus.onHold,
+      BookingStatus.workCompletedPendingCustomer =>
         next == BookingStatus.serviceCompleted || next == BookingStatus.onHold,
       BookingStatus.onHold => next == BookingStatus.technicianAssigned,
       BookingStatus.serviceCompleted => next == BookingStatus.billGenerated,
