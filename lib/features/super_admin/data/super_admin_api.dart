@@ -142,17 +142,24 @@ class SuperAdminApi {
   Future<void> transferTechnician({
     required String uid,
     required String branchId,
+    required bool futureRevenueStaysWithPreviousBranch,
   }) {
     if (_useClientFallback) {
       return _transferTechnicianWithClientFallback(
         uid: uid,
         branchId: branchId,
+        futureRevenueStaysWithPreviousBranch:
+            futureRevenueStaysWithPreviousBranch,
       );
     }
     return _send(
       'PATCH',
       '/api/admin/technicians/$uid/branch',
-      body: {'branchId': branchId},
+      body: {
+        'branchId': branchId,
+        'futureRevenueStaysWithPreviousBranch':
+            futureRevenueStaysWithPreviousBranch,
+      },
     );
   }
 
@@ -391,6 +398,7 @@ class SuperAdminApi {
   Future<void> _transferTechnicianWithClientFallback({
     required String uid,
     required String branchId,
+    required bool futureRevenueStaysWithPreviousBranch,
   }) async {
     final actor = _auth.currentUser;
     if (actor == null) throw StateError('Super Admin is not signed in.');
@@ -426,12 +434,40 @@ class SuperAdminApi {
       throw StateError('Technician native branch could not be determined.');
     }
     final auditRef = _firestore.collection('audit_logs').doc();
+    // Lock legacy bills to the previous reporting branch before changing the
+    // technician's future reporting branch. This never moves past revenue.
+    final historicBills = await _firestore
+        .collection('bills')
+        .where('technicianId', isEqualTo: uid)
+        .get();
+    final futureRevenueBranchId = futureRevenueStaysWithPreviousBranch
+        ? nativeBranchId
+        : branchId;
+    final futureRevenueBranchName = futureRevenueStaysWithPreviousBranch
+        ? (nativeBranchName ?? nativeBranchId)
+        : (branchData['name'] as String? ?? branchId);
+    final legacyBills = historicBills.docs.where((bill) {
+      return !((bill.data()['revenueBranchId'] as String?)?.trim().isNotEmpty ??
+          false);
+    }).toList();
+    // Firestore batches permit at most 500 writes. Lock old bill ownership in
+    // small batches before changing the future reporting branch.
+    for (var start = 0; start < legacyBills.length; start += 450) {
+      final ownershipBatch = _firestore.batch();
+      for (final bill in legacyBills.skip(start).take(450)) {
+        ownershipBatch.update(bill.reference, {
+          'revenueBranchId': nativeBranchId,
+          'revenueBranchLockedAt': FieldValue.serverTimestamp(),
+        });
+      }
+      await ownershipBatch.commit();
+    }
     final batch = _firestore.batch();
     batch.update(userRef, {
       'branchId': branchId,
       'branchName': branchData['name'] as String? ?? '',
-      'nativeBranchId': nativeBranchId,
-      'nativeBranchName': nativeBranchName ?? '',
+      'nativeBranchId': futureRevenueBranchId,
+      'nativeBranchName': futureRevenueBranchName,
       'transferredAt': FieldValue.serverTimestamp(),
       'transferredBy': actor.uid,
       'updatedAt': FieldValue.serverTimestamp(),
@@ -443,9 +479,11 @@ class SuperAdminApi {
       'targetType': 'technician',
       'targetId': uid,
       'branchId': branchId,
-      'nativeBranchId': nativeBranchId,
+      'previousRevenueBranchId': nativeBranchId,
+      'futureRevenueBranchId': futureRevenueBranchId,
       'summary': 'Transferred technician ${userData['email'] ?? uid} to '
-          '${branchData['name'] ?? branchId}; revenue remains with '
+          '${branchData['name'] ?? branchId}; future revenue belongs to '
+          '$futureRevenueBranchName. Existing bills remain with '
           '${nativeBranchName ?? nativeBranchId}',
       'createdAt': FieldValue.serverTimestamp(),
     });

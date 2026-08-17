@@ -13,6 +13,7 @@ import {
   firestore,
 } from './firebase-auth.js';
 import { registerSuperAdminRoutes } from './admin-api.js';
+import { registerMobilePasswordAuth } from './mobile-password-auth.js';
 import {
   normalizeGpsPayload,
   persistGpsUpdate,
@@ -38,6 +39,7 @@ import {
   startRealtimeEventBridge,
 } from './realtime-events.js';
 import { startAttendanceAutomation } from './attendance-automation.js';
+import { startNotificationPushBridge } from './notification-push-bridge.js';
 
 const app = express();
 const allowedCorsOrigins = allowedOriginsFor();
@@ -66,6 +68,11 @@ const arrivedMeters = 150;
 app.get('/health', (_, res) => {
   res.json({ ok: true, service: 'fixnow-tracking-server' });
 });
+
+// This endpoint is deliberately before /api authentication: it creates the
+// Firebase session. It validates the password via Firebase Auth and is rate
+// limited in the route itself.
+registerMobilePasswordAuth(app, { auth: firebaseAuth, firestore });
 
 app.use('/api', authenticateRequest);
 app.get('/api/session', (req, res) => {
@@ -209,6 +216,7 @@ io.on('connection', (socket) => {
 
 startRealtimeEventBridge({ firestore, io });
 startAttendanceAutomation(firestore, console, firebaseMessaging);
+startNotificationPushBridge(firestore, firebaseMessaging);
 
 async function bookingById(jobId) {
   if (!jobId) throw new Error('Booking ID is required');

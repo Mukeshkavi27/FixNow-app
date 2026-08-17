@@ -111,9 +111,20 @@ class BillRepository {
     required String bookingId,
     required String customerId,
     required String technicianId,
-    required double amount,
+    required double labourCharge,
+    required double partsCharge,
+    String? adjustmentReason,
   }) async {
-    if (amount <= 0) throw ArgumentError('Bill amount must be positive.');
+    if (labourCharge < 0 || partsCharge < 0) {
+      throw ArgumentError('Bill charges cannot be negative.');
+    }
+    final serviceAmount =
+        double.parse((labourCharge + partsCharge).toStringAsFixed(2));
+    if (serviceAmount <= 0) throw ArgumentError('Bill amount must be positive.');
+    final cgstAmount = double.parse((serviceAmount * 0.09).toStringAsFixed(2));
+    final sgstAmount = double.parse((serviceAmount * 0.09).toStringAsFixed(2));
+    final payableAmount =
+        double.parse((serviceAmount + cgstAmount + sgstAmount).toStringAsFixed(2));
     final billRef = _firestore.collection('bills').doc(bookingId);
     final bookingRef = _firestore.collection('bookings').doc(bookingId);
     final technicianRef = _firestore.collection('users').doc(technicianId);
@@ -150,7 +161,19 @@ class BillRepository {
         'technicianId': technicianId,
         'branchId': data['branchId'],
         'revenueBranchId': revenueBranchId,
-        'amount': amount,
+        // `amount` is always the final amount payable and is what payment and
+        // collection reports use. Tax values are retained for the invoice.
+        'amount': payableAmount,
+        'serviceAmount': serviceAmount,
+        'labourCharge': double.parse(labourCharge.toStringAsFixed(2)),
+        'partsCharge': double.parse(partsCharge.toStringAsFixed(2)),
+        'adjustmentReason': adjustmentReason?.trim().isEmpty ?? true
+            ? null
+            : adjustmentReason!.trim(),
+        'cgstAmount': cgstAmount,
+        'sgstAmount': sgstAmount,
+        'cgstRate': 9,
+        'sgstRate': 9,
         'applianceType': data['applianceType'],
         'customerName': data['customerName'],
         'technicianName': data['technicianName'],
@@ -162,6 +185,8 @@ class BillRepository {
         'createdAt': FieldValue.serverTimestamp(),
         'isPaid': false,
         'paymentMode': null,
+        'amountReceived': null,
+        'paymentProofUrl': null,
         'paymentSubmittedAt': null,
         'paymentConfirmedAt': null,
         'paymentConfirmedBy': null,
@@ -188,10 +213,19 @@ class BillRepository {
     required String bookingId,
     required String technicianId,
     required String paymentMode,
+    required double amountReceived,
+    String? paymentProofUrl,
   }) async {
     final normalizedMode = paymentMode.trim();
     if (normalizedMode.isEmpty) {
       throw ArgumentError('Select the payment mode.');
+    }
+    if (amountReceived <= 0) {
+      throw ArgumentError('Enter the amount received.');
+    }
+    if (normalizedMode != 'cash' &&
+        (paymentProofUrl == null || paymentProofUrl.trim().isEmpty)) {
+      throw ArgumentError('Upload payment proof for online payment.');
     }
     final billRef = _firestore.collection('bills').doc(bookingId);
     final bookingRef = _firestore.collection('bookings').doc(bookingId);
@@ -213,25 +247,28 @@ class BillRepository {
       if (bookingData?['status'] != BookingStatus.billGenerated.name) {
         throw StateError('Payment can only be confirmed after final bill.');
       }
+      if ((billData['amount'] as num).toDouble() != amountReceived) {
+        throw StateError('Received amount must match the final bill amount.');
+      }
       transaction.update(billRef, {
-        'isPaid': true,
+        // Technician confirmation records what was received. The customer
+        // must still verify it before the bill is paid and the booking closes.
+        'isPaid': false,
         'paymentMode': normalizedMode,
+        'amountReceived': amountReceived,
+        'paymentProofUrl': paymentProofUrl,
         'paymentSubmittedAt': FieldValue.serverTimestamp(),
         'paymentConfirmedAt': FieldValue.serverTimestamp(),
         'paymentConfirmedBy': technicianId,
-        'paidAt': FieldValue.serverTimestamp(),
-        'updatedAt': FieldValue.serverTimestamp(),
-      });
-      transaction.update(bookingRef, {
-        'status': BookingStatus.closed.name,
         'updatedAt': FieldValue.serverTimestamp(),
       });
       transaction.set(_firestore.collection('notifications').doc(), {
         'userId': billData['customerId'],
         'bookingId': bookingId,
-        'type': 'paymentConfirmed',
-        'title': 'Payment confirmed',
-        'body': 'Your technician confirmed the payment. The job is now closed.',
+        'type': 'paymentSubmitted',
+        'title': 'Confirm payment received',
+        'body':
+            'Your technician recorded the payment. Please verify the amount and confirm to complete the service.',
         'isRead': false,
         'createdAt': FieldValue.serverTimestamp(),
       });
@@ -242,17 +279,21 @@ class BillRepository {
     required String bookingId,
     required String technicianId,
     required String paymentMode,
+    required double amountReceived,
+    String? paymentProofUrl,
   }) {
     return confirmCollectedPayment(
       bookingId: bookingId,
       technicianId: technicianId,
       paymentMode: paymentMode,
+      amountReceived: amountReceived,
+      paymentProofUrl: paymentProofUrl,
     );
   }
 
   Future<void> approvePayment({
     required String bookingId,
-    String? approvedBy,
+    required String customerId,
   }) async {
     final billRef = _firestore.collection('bills').doc(bookingId);
     final bookingRef = _firestore.collection('bookings').doc(bookingId);
@@ -267,15 +308,22 @@ class BillRepository {
       if (billData['isPaid'] == true) {
         throw StateError('This payment is already approved.');
       }
+      if (billData['customerId'] != customerId) {
+        throw StateError('You can only confirm your own payment.');
+      }
       final paymentMode = billData['paymentMode'] as String?;
       if (paymentMode == null || paymentMode.trim().isEmpty) {
         throw StateError('Technician has not submitted payment mode yet.');
+      }
+      if ((billData['amountReceived'] as num?)?.toDouble() !=
+          (billData['amount'] as num?)?.toDouble()) {
+        throw StateError('The recorded payment amount does not match the bill.');
       }
       transaction.update(billRef, {
         'isPaid': true,
         'paidAt': FieldValue.serverTimestamp(),
         'paymentApprovedAt': FieldValue.serverTimestamp(),
-        'paymentApprovedBy': approvedBy,
+        'paymentApprovedBy': customerId,
         'updatedAt': FieldValue.serverTimestamp(),
       });
       transaction.update(bookingRef, {
@@ -283,9 +331,5 @@ class BillRepository {
         'updatedAt': FieldValue.serverTimestamp(),
       });
     });
-  }
-
-  Future<void> markPaid(String bookingId) {
-    return approvePayment(bookingId: bookingId);
   }
 }

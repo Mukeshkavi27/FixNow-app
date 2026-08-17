@@ -7,11 +7,13 @@ import 'package:intl/intl.dart';
 import '../../../app/theme/app_theme.dart';
 import '../../../core/enums/booking_status.dart';
 import '../../../core/enums/user_role.dart';
+import '../../../core/errors/user_facing_error.dart';
 import '../../../core/maps/google_static_map.dart';
 import '../../../core/services/reverse_geocoding_service.dart';
 import '../../auth/data/auth_repository.dart';
 import '../../auth/domain/app_user.dart';
 import '../../estimates/data/estimate_repository.dart';
+import '../../estimates/domain/estimate.dart';
 import '../../shared/data/bill_repository.dart';
 import '../../shared/data/bill_pdf_service.dart';
 import '../../shared/data/review_repository.dart';
@@ -73,12 +75,43 @@ class _BookingDetailScreenState extends ConsumerState<BookingDetailScreen> {
   int _rating = 5;
   bool _isConfirmingArrival = false;
   bool _isConfirmingWork = false;
+  bool _isSubmittingReview = false;
+  bool _reviewSubmittedLocally = false;
   bool _arrivalPromptShown = false;
 
   @override
   void dispose() {
     _review.dispose();
     super.dispose();
+  }
+
+  Future<void> _submitReview(Booking booking) async {
+    if (_isSubmittingReview || booking.technicianId == null) return;
+    setState(() => _isSubmittingReview = true);
+    try {
+      await ref.read(reviewRepositoryProvider).submitReview(
+            bookingId: booking.id,
+            technicianId: booking.technicianId!,
+            customerId: booking.customerId,
+            rating: _rating,
+            text: _review.text.trim(),
+          );
+      if (!mounted) return;
+      setState(() => _reviewSubmittedLocally = true);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Review submitted: $_rating/5')),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(userFacingOperationError(error)),
+          backgroundColor: Colors.red.shade700,
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _isSubmittingReview = false);
+    }
   }
 
   Future<void> _approveEstimate(String estimateId, String bookingId) async {
@@ -92,7 +125,7 @@ class _BookingDetailScreenState extends ConsumerState<BookingDetailScreen> {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(error.toString()),
+          content: Text(userFacingOperationError(error)),
           behavior: SnackBarBehavior.floating,
           backgroundColor: Colors.red.shade700,
         ),
@@ -111,7 +144,7 @@ class _BookingDetailScreenState extends ConsumerState<BookingDetailScreen> {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(error.toString()),
+          content: Text(userFacingOperationError(error)),
           behavior: SnackBarBehavior.floating,
           backgroundColor: Colors.red.shade700,
         ),
@@ -123,7 +156,13 @@ class _BookingDetailScreenState extends ConsumerState<BookingDetailScreen> {
     if (_isConfirmingArrival) return;
     setState(() => _isConfirmingArrival = true);
     try {
-      final customerPosition = await _getCustomerPosition();
+      // Customer confirmation must never depend on their phone obtaining GPS.
+      // Location is useful only as optional proximity evidence; the technician
+      // has already marked arrival and the customer is explicitly confirming.
+      final customerPosition = await _getCustomerPosition().timeout(
+        const Duration(seconds: 2),
+        onTimeout: () => null,
+      );
       final liveTechnicianLocation = booking.technicianId == null
           ? null
           : ref
@@ -153,7 +192,7 @@ class _BookingDetailScreenState extends ConsumerState<BookingDetailScreen> {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(error.toString()),
+          content: Text(userFacingOperationError(error)),
           behavior: SnackBarBehavior.floating,
           backgroundColor: Colors.red.shade700,
         ),
@@ -174,11 +213,13 @@ class _BookingDetailScreenState extends ConsumerState<BookingDetailScreen> {
           permission == LocationPermission.deniedForever) {
         return null;
       }
+      final lastKnown = await Geolocator.getLastKnownPosition();
+      if (lastKnown != null) return lastKnown;
       return Geolocator.getCurrentPosition(
         locationSettings: const LocationSettings(
-          accuracy: LocationAccuracy.high,
+          accuracy: LocationAccuracy.medium,
         ),
-      ).timeout(const Duration(seconds: 10));
+      ).timeout(const Duration(seconds: 2));
     } catch (_) {
       return null;
     }
@@ -200,7 +241,7 @@ class _BookingDetailScreenState extends ConsumerState<BookingDetailScreen> {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(error.toString()),
+          content: Text(userFacingOperationError(error)),
           behavior: SnackBarBehavior.floating,
           backgroundColor: Colors.red.shade700,
         ),
@@ -226,7 +267,7 @@ class _BookingDetailScreenState extends ConsumerState<BookingDetailScreen> {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(error.toString()),
+          content: Text(userFacingOperationError(error)),
           behavior: SnackBarBehavior.floating,
           backgroundColor: Colors.red.shade700,
         ),
@@ -252,7 +293,7 @@ class _BookingDetailScreenState extends ConsumerState<BookingDetailScreen> {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(error.toString()),
+          content: Text(userFacingOperationError(error)),
           behavior: SnackBarBehavior.floating,
           backgroundColor: Colors.red.shade700,
         ),
@@ -419,6 +460,26 @@ class _BookingDetailScreenState extends ConsumerState<BookingDetailScreen> {
                 ),
                 const SizedBox(height: 14),
               ],
+              estimateAsync.when(
+                data: (estimate) {
+                  final needsEstimateApproval = estimate != null &&
+                      !estimate.isApproved &&
+                      !estimate.isRejected &&
+                      booking.status == BookingStatus.estimateSent &&
+                      user?.uid == booking.customerId;
+                  if (!needsEstimateApproval) return const SizedBox.shrink();
+                  return Padding(
+                    padding: const EdgeInsets.only(bottom: 14),
+                    child: _EstimateApprovalNotification(
+                      estimate: estimate,
+                      onReject: () => _rejectEstimate(estimate.id, booking.id),
+                      onApprove: () => _approveEstimate(estimate.id, booking.id),
+                    ),
+                  );
+                },
+                loading: () => const SizedBox.shrink(),
+                error: (_, __) => const SizedBox.shrink(),
+              ),
               _StatusBanner(
                 status: booking.status,
                 labelOverride: needsWorkCompletionConfirmation
@@ -506,7 +567,9 @@ class _BookingDetailScreenState extends ConsumerState<BookingDetailScreen> {
                               ),
                               const SizedBox(height: 2),
                               Text(
-                                'Booked for ${booking.preferredTime}',
+                                booking.preferredTime == 'Immediately'
+                                    ? 'Requested immediately'
+                                    : 'Requested for ${booking.preferredTime}',
                                 style: const TextStyle(
                                   fontSize: 12,
                                   color: AppTheme.textSecondary,
@@ -549,7 +612,7 @@ class _BookingDetailScreenState extends ConsumerState<BookingDetailScreen> {
                   ],
                 ),
               ),
-              if (booking.imageUrl != null) ...[
+              if ((booking.imageUrl ?? '').trim().isNotEmpty) ...[
                 const SizedBox(height: 14),
                 _UCCard(
                   child: Column(
@@ -571,6 +634,15 @@ class _BookingDetailScreenState extends ConsumerState<BookingDetailScreen> {
                           height: 180,
                           width: double.infinity,
                           fit: BoxFit.cover,
+                          errorBuilder: (_, __, ___) => const SizedBox(
+                            height: 120,
+                            child: Center(
+                              child: Text(
+                                'Photo could not be loaded. Please try again.',
+                                textAlign: TextAlign.center,
+                              ),
+                            ),
+                          ),
                         ),
                       ),
                     ],
@@ -777,54 +849,6 @@ class _BookingDetailScreenState extends ConsumerState<BookingDetailScreen> {
                             ),
                           ),
                         ],
-                        if (!estimate.isApproved &&
-                            !estimate.isRejected &&
-                            booking.status == BookingStatus.estimateSent &&
-                            user?.uid == booking.customerId) ...[
-                          const SizedBox(height: 14),
-                          Row(
-                            children: [
-                              Expanded(
-                                child: OutlinedButton.icon(
-                                  onPressed: () => _rejectEstimate(
-                                    estimate.id,
-                                    booking.id,
-                                  ),
-                                  icon: const Icon(Icons.close, size: 18),
-                                  label: const Text(
-                                    'Reject',
-                                    style:
-                                        TextStyle(fontWeight: FontWeight.w700),
-                                  ),
-                                ),
-                              ),
-                              const SizedBox(width: 10),
-                              Expanded(
-                                child: ElevatedButton.icon(
-                                  style: ElevatedButton.styleFrom(
-                                    backgroundColor: AppTheme.accent,
-                                    foregroundColor: Colors.white,
-                                    elevation: 0,
-                                    shape: RoundedRectangleBorder(
-                                      borderRadius: BorderRadius.circular(10),
-                                    ),
-                                  ),
-                                  onPressed: () => _approveEstimate(
-                                    estimate.id,
-                                    booking.id,
-                                  ),
-                                  icon: const Icon(Icons.check_circle_outline,
-                                      size: 18),
-                                  label: const Text(
-                                    'Approve',
-                                    style:
-                                        TextStyle(fontWeight: FontWeight.w700),
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ),
-                        ],
                       ],
                     ),
                   );
@@ -868,6 +892,31 @@ class _BookingDetailScreenState extends ConsumerState<BookingDetailScreen> {
                                         color: AppTheme.textSecondary,
                                       ),
                                     ),
+                                    Text(
+                                      'Service ₹${bill.taxableAmount.toStringAsFixed(0)} + CGST ₹${bill.cgst.toStringAsFixed(0)} + SGST ₹${bill.sgst.toStringAsFixed(0)}',
+                                      style: const TextStyle(
+                                        color: AppTheme.textSecondary,
+                                        fontSize: 12,
+                                      ),
+                                    ),
+                                    if (bill.labourCharge != null ||
+                                        bill.partsCharge != null)
+                                      Text(
+                                        'Actual labour ₹${(bill.labourCharge ?? 0).toStringAsFixed(0)} · parts ₹${(bill.partsCharge ?? 0).toStringAsFixed(0)}',
+                                        style: const TextStyle(
+                                          color: AppTheme.textSecondary,
+                                          fontSize: 12,
+                                        ),
+                                      ),
+                                    if (bill.adjustmentReason != null &&
+                                        bill.adjustmentReason!.trim().isNotEmpty)
+                                      Text(
+                                        'Final-charge note: ${bill.adjustmentReason}',
+                                        style: const TextStyle(
+                                          color: AppTheme.textSecondary,
+                                          fontSize: 12,
+                                        ),
+                                      ),
                                   ],
                                 ),
                               ),
@@ -911,6 +960,66 @@ class _BookingDetailScreenState extends ConsumerState<BookingDetailScreen> {
                               ),
                             ),
                           ),
+                          if (!bill.isPaid &&
+                              bill.hasPaymentForApproval &&
+                              user?.uid == booking.customerId) ...[
+                            const SizedBox(height: 12),
+                            Text(
+                              'Technician recorded INR ${bill.amountReceived?.toStringAsFixed(0) ?? bill.amount.toStringAsFixed(0)} received by ${bill.paymentModeLabel}.',
+                              style: const TextStyle(
+                                fontWeight: FontWeight.w700,
+                                color: AppTheme.textPrimary,
+                              ),
+                            ),
+                            if ((bill.paymentProofUrl ?? '').isNotEmpty) ...[
+                              const SizedBox(height: 10),
+                              ClipRRect(
+                                borderRadius: BorderRadius.circular(10),
+                                child: Image.network(
+                                  bill.paymentProofUrl!,
+                                  height: 160,
+                                  width: double.infinity,
+                                  fit: BoxFit.cover,
+                                ),
+                              ),
+                            ],
+                            const SizedBox(height: 12),
+                            SizedBox(
+                              width: double.infinity,
+                              child: FilledButton.icon(
+                                onPressed: () async {
+                                  try {
+                                    await ref
+                                        .read(billRepositoryProvider)
+                                        .approvePayment(
+                                          bookingId: booking.id,
+                                          customerId: booking.customerId,
+                                        );
+                                    if (!context.mounted) return;
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      const SnackBar(
+                                        content: Text(
+                                          'Payment confirmed. The booking is completed.',
+                                        ),
+                                      ),
+                                    );
+                                  } catch (error) {
+                                    if (!context.mounted) return;
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      SnackBar(
+                                        content: Text(
+                                          userFacingOperationError(error),
+                                        ),
+                                        backgroundColor: Colors.red,
+                                      ),
+                                    );
+                                  }
+                                },
+                                icon: const Icon(Icons.verified_outlined),
+                                label: const Text('Confirm amount paid'),
+                              ),
+                            ),
+                          ],
                         ],
                       ),
                     ),
@@ -928,7 +1037,7 @@ class _BookingDetailScreenState extends ConsumerState<BookingDetailScreen> {
                   booking.customerConfirmedWorkCompletedAt != null &&
                   user?.uid == booking.customerId) ...[
                 const SizedBox(height: 14),
-                if (reviewAsync.valueOrNull != null)
+                if (reviewAsync.valueOrNull != null || _reviewSubmittedLocally)
                   _UCCard(
                     child: Row(
                       children: [
@@ -936,7 +1045,7 @@ class _BookingDetailScreenState extends ConsumerState<BookingDetailScreen> {
                         const SizedBox(width: 10),
                         Expanded(
                           child: Text(
-                            'Review submitted: ${reviewAsync.valueOrNull!.rating}/5',
+                            'Review submitted: ${reviewAsync.valueOrNull?.rating ?? _rating}/5',
                             style: const TextStyle(
                               fontWeight: FontWeight.w700,
                             ),
@@ -1019,20 +1128,18 @@ class _BookingDetailScreenState extends ConsumerState<BookingDetailScreen> {
                                 borderRadius: BorderRadius.circular(10),
                               ),
                             ),
-                            onPressed: booking.technicianId == null
+                            onPressed: booking.technicianId == null ||
+                                    _isSubmittingReview
                                 ? null
-                                : () => ref
-                                    .read(reviewRepositoryProvider)
-                                    .submitReview(
-                                      bookingId: booking.id,
-                                      technicianId: booking.technicianId!,
-                                      customerId: booking.customerId,
-                                      rating: _rating,
-                                      text: _review.text.trim(),
-                                    ),
+                                : () => _submitReview(booking),
                             icon: const Icon(Icons.star_outline, size: 18),
-                            label: const Text('Submit Review',
-                                style: TextStyle(fontWeight: FontWeight.w700)),
+                            label: Text(
+                              _isSubmittingReview
+                                  ? 'Submitting...'
+                                  : 'Submit Review',
+                              style:
+                                  const TextStyle(fontWeight: FontWeight.w700),
+                            ),
                           ),
                         ),
                         if (booking.technicianId == null) ...[
@@ -1170,7 +1277,7 @@ class _BookingDetailScreenState extends ConsumerState<BookingDetailScreen> {
     } catch (error) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(error.toString())),
+        SnackBar(content: Text(userFacingOperationError(error))),
       );
     }
   }
@@ -1210,7 +1317,7 @@ class _BookingDetailScreenState extends ConsumerState<BookingDetailScreen> {
     } catch (error) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(error.toString())),
+        SnackBar(content: Text(userFacingOperationError(error))),
       );
     }
   }
@@ -1277,9 +1384,11 @@ class _ConfirmationBanner extends StatelessWidget {
                 ),
                 const SizedBox(height: 5),
                 Text(
-                  '${booking.applianceType} service is scheduled for '
-                  '${DateFormat.yMMMd().format(booking.preferredDate)} at '
-                  '${booking.preferredTime}.',
+                  booking.preferredTime == 'Immediately'
+                      ? '${booking.applianceType} service was requested immediately. We will notify you when a technician is assigned.'
+                      : '${booking.applianceType} service is requested for '
+                          '${DateFormat.yMMMd().format(booking.preferredDate)} at '
+                          '${booking.preferredTime}.',
                   style: const TextStyle(
                     color: AppTheme.textSecondary,
                     height: 1.35,
@@ -1296,6 +1405,127 @@ class _ConfirmationBanner extends StatelessWidget {
                 ),
               ],
             ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _EstimateApprovalNotification extends StatelessWidget {
+  const _EstimateApprovalNotification({
+    required this.estimate,
+    required this.onReject,
+    required this.onApprove,
+  });
+
+  final Estimate estimate;
+  final VoidCallback onReject;
+  final VoidCallback onApprove;
+
+  @override
+  Widget build(BuildContext context) {
+    return _UCCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Container(
+                width: 42,
+                height: 42,
+                decoration: BoxDecoration(
+                  color: const Color(0xFFFFF1E6),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: const Icon(
+                  Icons.notifications_active_outlined,
+                  color: AppTheme.accent,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'Estimate approval required',
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w800,
+                        color: AppTheme.textPrimary,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      'Your technician has sent an estimate of ₹${estimate.total.toStringAsFixed(0)}. Review and choose an action.',
+                      style: const TextStyle(
+                        color: AppTheme.textSecondary,
+                        height: 1.35,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 14),
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: AppTheme.surface,
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: AppTheme.divider),
+            ),
+            child: Column(
+              children: [
+                _EstimateRow(
+                  label: 'Labour charge',
+                  value: '₹${estimate.labourCharge.toStringAsFixed(0)}',
+                ),
+                const SizedBox(height: 8),
+                _EstimateRow(
+                  label: 'Parts charge',
+                  value: '₹${estimate.partsCharge.toStringAsFixed(0)}',
+                ),
+                const Divider(height: 20),
+                _EstimateRow(
+                  label: 'Total estimate',
+                  value: '₹${estimate.total.toStringAsFixed(0)}',
+                  bold: true,
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 14),
+          Row(
+            children: [
+              Expanded(
+                child: OutlinedButton.icon(
+                  onPressed: onReject,
+                  icon: const Icon(Icons.close, size: 18),
+                  label: const Text('Reject'),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: ElevatedButton.icon(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: AppTheme.accent,
+                    foregroundColor: Colors.white,
+                    elevation: 0,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                  ),
+                  onPressed: onApprove,
+                  icon: const Icon(Icons.check_circle_outline, size: 18),
+                  label: const Text('Review & approve'),
+                ),
+              ),
+            ],
           ),
         ],
       ),
@@ -1370,7 +1600,6 @@ class _ArrivalConfirmationCard extends StatelessWidget {
               ),
             ],
           ),
-          const SizedBox(height: 14),
           Row(
             children: [
               Expanded(
@@ -1574,6 +1803,12 @@ class _TrackingCard extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    // Customer live tracking is purpose-limited to the technician's journey.
+    // Once the customer confirms they have met, the work has begun and the
+    // customer must no longer receive a live location feed.
+    if (booking.status.index >= BookingStatus.customerConfirmedArrival.index) {
+      return const SizedBox.shrink();
+    }
     final hasServiceLocation =
         booking.latitude != null && booking.longitude != null;
     final approximatePin = !hasServiceLocation

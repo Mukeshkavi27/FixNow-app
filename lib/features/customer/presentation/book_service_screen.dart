@@ -10,7 +10,6 @@ import 'package:go_router/go_router.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:intl/intl.dart';
 import 'package:latlong2/latlong.dart';
-import 'package:uuid/uuid.dart';
 
 import '../../../app/theme/app_theme.dart';
 import '../../../app/widgets/resilient_asset_image.dart';
@@ -20,11 +19,11 @@ import '../../../core/branches/branch_resolver.dart';
 import '../../../core/enums/booking_status.dart';
 import '../../../core/maps/google_static_map.dart';
 import '../../../core/services/reverse_geocoding_service.dart';
-import '../../auth/domain/app_user.dart';
 import '../../auth/data/auth_repository.dart';
+import '../../auth/domain/app_user.dart';
 import '../../bookings/data/booking_repository.dart';
 import '../../bookings/domain/booking.dart';
-import '../../shared/data/storage_repository.dart';
+import '../../shared/data/cloudinary_repository.dart';
 import 'customer_back_button.dart';
 
 class BookServiceScreen extends ConsumerStatefulWidget {
@@ -42,8 +41,9 @@ class _BookServiceScreenState extends ConsumerState<BookServiceScreen> {
   final _phone = TextEditingController();
   final _address = TextEditingController();
   final _problem = TextEditingController();
-  DateTime _date = DateTime.now().add(const Duration(days: 1));
+  DateTime _date = DateTime.now();
   TimeOfDay _time = const TimeOfDay(hour: 10, minute: 0);
+  bool _requestImmediately = true;
   XFile? _image;
   bool _isSaving = false;
   bool _isLocating = false;
@@ -317,21 +317,9 @@ class _BookServiceScreenState extends ConsumerState<BookServiceScreen> {
       return;
     }
 
-    final preferredTime = _time.format(context);
+    final preferredTime = _requestImmediately ? 'Immediately' : _time.format(context);
     setState(() => _isSaving = true);
     try {
-      String? imageUrl;
-      if (_image != null) {
-        try {
-          imageUrl = await ref.read(storageRepositoryProvider).uploadXFile(
-                file: _image!,
-                folder: 'customer_uploads/${user.uid}',
-                fileName: '${const Uuid().v4()}.jpg',
-              );
-        } catch (_) {
-          imageUrl = null;
-        }
-      }
       final confirmed = _confirmedLocation!;
       final branchResolution = BranchResolver.resolve(
         branches: branches,
@@ -348,11 +336,10 @@ class _BookServiceScreenState extends ConsumerState<BookServiceScreen> {
               address: confirmed.displayAddress,
               applianceType: widget.appliance,
               problemDescription: _problem.text.trim(),
-              preferredDate: _date,
+              preferredDate: _requestImmediately ? DateTime.now() : _date,
               preferredTime: preferredTime,
               status: BookingStatus.booked,
               createdAt: DateTime.now(),
-              imageUrl: imageUrl,
               branchId: branchResolution.branch.id,
               branchName: branchResolution.branch.name,
               latitude: confirmed.latitude,
@@ -365,6 +352,23 @@ class _BookServiceScreenState extends ConsumerState<BookServiceScreen> {
               landmark: confirmed.landmark,
             ),
           );
+      var imageUploadFailed = false;
+      if (_image != null) {
+        try {
+          final imageUrl =
+              await ref.read(cloudinaryRepositoryProvider).uploadCustomerPhoto(
+                    file: _image!,
+                    bookingId: id,
+                  );
+          await ref.read(bookingRepositoryProvider).attachCustomerImage(
+                bookingId: id,
+                imageUrl: imageUrl,
+              );
+        } catch (_) {
+          // The booking remains valid if its optional photo cannot be attached.
+          imageUploadFailed = true;
+        }
+      }
       try {
         await ref.read(authRepositoryProvider).updateUserBranch(
               uid: user.uid,
@@ -381,6 +385,16 @@ class _BookServiceScreenState extends ConsumerState<BookServiceScreen> {
         // Profile updates are conveniences; booking creation already succeeded.
       }
       if (!mounted) return;
+      if (imageUploadFailed) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Booking saved, but the photo was not uploaded. Please check your connection and try again.',
+            ),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
       context.go('/booking/$id/confirmed');
     } catch (error) {
       if (mounted) {
@@ -582,8 +596,8 @@ class _BookServiceScreenState extends ConsumerState<BookServiceScreen> {
                     if (_detectedPosition != null)
                       FilledButton.tonalIcon(
                         onPressed: _adjustPin,
-                        icon: const Icon(Icons.edit_location_alt_outlined),
-                        label: const Text('Adjust pin'),
+                        icon: const Icon(Icons.location_on_outlined),
+                        label: const Text('Confirm location'),
                       ),
                     if (user != null &&
                         savedAddress != null &&
@@ -623,18 +637,46 @@ class _BookServiceScreenState extends ConsumerState<BookServiceScreen> {
                   validator: _required,
                 ),
                 const SizedBox(height: 14),
-                if (twoColumns)
-                  Row(
-                    children: [
-                      Expanded(child: _DateTile(date: _date, onTap: _pickDate)),
-                      const SizedBox(width: 12),
-                      Expanded(child: _TimeTile(time: _time, onTap: _pickTime)),
-                    ],
-                  )
-                else ...[
-                  _DateTile(date: _date, onTap: _pickDate),
-                  const SizedBox(height: 10),
-                  _TimeTile(time: _time, onTap: _pickTime),
+                const Text(
+                  'When do you need service?',
+                  style: TextStyle(fontWeight: FontWeight.w900),
+                ),
+                const SizedBox(height: 8),
+                LayoutBuilder(builder: (context, timingConstraints) {
+                  final immediate = _TimingChoice(
+                    selected: _requestImmediately,
+                    icon: Icons.bolt_outlined,
+                    title: 'Immediately',
+                    subtitle: 'Send this request to the branch now',
+                    onTap: () => setState(() => _requestImmediately = true),
+                  );
+                  final scheduled = _TimingChoice(
+                    selected: !_requestImmediately,
+                    icon: Icons.event_outlined,
+                    title: 'Choose date & time',
+                    subtitle: 'Request a specific visit slot',
+                    onTap: () => setState(() => _requestImmediately = false),
+                  );
+                  if (timingConstraints.maxWidth >= 560) {
+                    return Row(children: [Expanded(child: immediate), const SizedBox(width: 10), Expanded(child: scheduled)]);
+                  }
+                  return Column(children: [immediate, const SizedBox(height: 10), scheduled]);
+                }),
+                if (!_requestImmediately) ...[
+                  const SizedBox(height: 12),
+                  if (twoColumns)
+                    Row(
+                      children: [
+                        Expanded(child: _DateTile(date: _date, onTap: _pickDate)),
+                        const SizedBox(width: 12),
+                        Expanded(child: _TimeTile(time: _time, onTap: _pickTime)),
+                      ],
+                    )
+                  else ...[
+                    _DateTile(date: _date, onTap: _pickDate),
+                    const SizedBox(height: 10),
+                    _TimeTile(time: _time, onTap: _pickTime),
+                  ],
                 ],
                 const SizedBox(height: 14),
                 OutlinedButton.icon(
@@ -706,6 +748,56 @@ class _BookServiceScreenState extends ConsumerState<BookServiceScreen> {
 
   String? _required(String? value) =>
       value == null || value.trim().isEmpty ? 'Required' : null;
+}
+
+class _TimingChoice extends StatelessWidget {
+  const _TimingChoice({
+    required this.selected,
+    required this.icon,
+    required this.title,
+    required this.subtitle,
+    required this.onTap,
+  });
+
+  final bool selected;
+  final IconData icon;
+  final String title;
+  final String subtitle;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final color = selected ? AppTheme.primary : AppTheme.textSecondary;
+    return Material(
+      color: selected ? AppTheme.primary.withValues(alpha: 0.06) : Colors.white,
+      borderRadius: BorderRadius.circular(12),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(12),
+        child: Container(
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: selected ? AppTheme.primary : AppTheme.divider, width: selected ? 1.5 : 1),
+          ),
+          child: Row(children: [
+            Icon(selected ? Icons.radio_button_checked : Icons.radio_button_off, color: color),
+            const SizedBox(width: 10),
+            Icon(icon, color: color),
+            const SizedBox(width: 9),
+            Expanded(child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(title, style: TextStyle(fontWeight: FontWeight.w900, color: color)),
+                const SizedBox(height: 2),
+                Text(subtitle, style: const TextStyle(fontSize: 11, color: AppTheme.textSecondary)),
+              ],
+            )),
+          ]),
+        ),
+      ),
+    );
+  }
 }
 
 class _ServiceIntro extends StatelessWidget {

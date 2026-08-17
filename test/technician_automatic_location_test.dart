@@ -7,6 +7,7 @@ import 'package:fixnow/features/auth/data/auth_repository.dart';
 import 'package:fixnow/features/auth/domain/app_user.dart';
 import 'package:fixnow/features/bookings/domain/booking.dart';
 import 'package:fixnow/features/shared/domain/bill.dart';
+import 'package:fixnow/features/shared/domain/review.dart';
 import 'package:fixnow/features/technician/domain/attendance.dart';
 import 'package:fixnow/features/technician/domain/overtime_record.dart';
 import 'package:fixnow/features/technician/presentation/technician_dashboard_screen.dart';
@@ -69,6 +70,9 @@ void main() {
             technicianBillsProvider.overrideWith(
               (ref) => Stream.value(<Bill>[]),
             ),
+            currentTechnicianReviewsProvider.overrideWith(
+              (ref) => Stream.value(<Review>[]),
+            ),
             technicianAttendanceProvider.overrideWith(
               (ref) => Stream.value(attendance),
             ),
@@ -127,6 +131,13 @@ void main() {
       find.byTooltip('Location is automatically shared'),
       findsOneWidget,
     );
+    expect(find.byTooltip('My profile'), findsOneWidget);
+    await tester.tap(find.byTooltip('My profile'));
+    await tester.pumpAndSettle();
+    expect(find.text('My profile'), findsOneWidget);
+    expect(find.text(user.email), findsOneWidget);
+    expect(find.text('Current branch'), findsOneWidget);
+    expect(find.text('Performance summary'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 }

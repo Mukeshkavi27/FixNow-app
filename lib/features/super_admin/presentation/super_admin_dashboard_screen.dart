@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:geolocator/geolocator.dart';
 import 'package:intl/intl.dart';
 
 import '../../../app/theme/app_theme.dart';
@@ -9,6 +10,7 @@ import '../../../app/widgets/resilient_asset_image.dart';
 import '../../../core/branches/branch_info.dart';
 import '../../../core/branches/branch_repository.dart';
 import '../../../core/enums/booking_status.dart';
+import '../../../core/services/reverse_geocoding_service.dart';
 import '../../admin/data/admin_repository.dart';
 import '../../auth/data/auth_repository.dart';
 import '../../auth/domain/app_user.dart';
@@ -194,13 +196,15 @@ class SuperAdminDashboardScreen extends ConsumerWidget {
   }) async {
     final name = TextEditingController(text: branch?.name);
     final city = TextEditingController(text: branch?.city);
-    final latitude = TextEditingController(text: branch?.latitude.toString());
-    final longitude = TextEditingController(text: branch?.longitude.toString());
+    final officeLocation = TextEditingController();
+    double? latitude = branch?.hasCoordinates == true ? branch!.latitude : null;
+    double? longitude = branch?.hasCoordinates == true ? branch!.longitude : null;
     final radius =
         TextEditingController(text: branch?.radiusMeters.toStringAsFixed(0));
     final aliases = TextEditingController(text: branch?.aliases.join(', '));
     final formKey = GlobalKey<FormState>();
     var saving = false;
+    var locating = false;
     await showDialog<void>(
       context: context,
       builder: (dialogContext) => StatefulBuilder(
@@ -227,29 +231,106 @@ class SuperAdminDashboardScreen extends ConsumerWidget {
                       validator: _required,
                     ),
                     const SizedBox(height: 12),
-                    Row(
+                    TextFormField(
+                      controller: officeLocation,
+                      decoration: const InputDecoration(
+                        labelText: 'Office location',
+                        hintText: 'Enter the branch office address',
+                      ),
+                      validator: (value) {
+                        if (latitude != null && longitude != null) return null;
+                        if ((value ?? '').trim().isEmpty) {
+                          return 'Enter the office address or use your current location.';
+                        }
+                        return 'Tap Find location to confirm this address.';
+                      },
+                    ),
+                    const SizedBox(height: 8),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
                       children: [
-                        Expanded(
-                          child: TextFormField(
-                            controller: latitude,
-                            decoration:
-                                const InputDecoration(labelText: 'Latitude'),
-                            keyboardType: TextInputType.number,
-                            validator: _number,
-                          ),
+                        OutlinedButton.icon(
+                          onPressed: locating
+                              ? null
+                              : () async {
+                                  setState(() => locating = true);
+                                  try {
+                                    final result = await ref
+                                        .read(addressGeocodingServiceProvider)
+                                        .search(officeLocation.text.trim());
+                                    if (result == null) {
+                                      throw StateError('Location could not be found. Add a more complete address.');
+                                    }
+                                    latitude = result.latitude;
+                                    longitude = result.longitude;
+                                    officeLocation.text = result.displayAddress;
+                                  } catch (error) {
+                                    if (dialogContext.mounted) {
+                                      _showError(dialogContext, error);
+                                    }
+                                  } finally {
+                                    if (dialogContext.mounted) {
+                                      setState(() => locating = false);
+                                    }
+                                  }
+                                },
+                          icon: const Icon(Icons.search_outlined),
+                          label: const Text('Find location'),
                         ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: TextFormField(
-                            controller: longitude,
-                            decoration:
-                                const InputDecoration(labelText: 'Longitude'),
-                            keyboardType: TextInputType.number,
-                            validator: _number,
-                          ),
+                        OutlinedButton.icon(
+                          onPressed: locating
+                              ? null
+                              : () async {
+                                  setState(() => locating = true);
+                                  try {
+                                    var permission = await Geolocator.checkPermission();
+                                    if (permission == LocationPermission.denied) {
+                                      permission = await Geolocator.requestPermission();
+                                    }
+                                    if (permission == LocationPermission.denied ||
+                                        permission == LocationPermission.deniedForever) {
+                                      throw StateError('Location permission is required to use the current office location.');
+                                    }
+                                    final position = await Geolocator.getCurrentPosition();
+                                    latitude = position.latitude;
+                                    longitude = position.longitude;
+                                    final address = await ref
+                                        .read(reverseGeocodingServiceProvider)
+                                        .reverse(
+                                          latitude: position.latitude,
+                                          longitude: position.longitude,
+                                        );
+                                    officeLocation.text =
+                                        address?.address ?? 'Current office location';
+                                  } catch (error) {
+                                    if (dialogContext.mounted) {
+                                      _showError(dialogContext, error);
+                                    }
+                                  } finally {
+                                    if (dialogContext.mounted) {
+                                      setState(() => locating = false);
+                                    }
+                                  }
+                                },
+                          icon: const Icon(Icons.my_location_outlined),
+                          label: const Text('Use current location'),
                         ),
                       ],
                     ),
+                    if (latitude != null && longitude != null) ...[
+                      const SizedBox(height: 8),
+                      const Align(
+                        alignment: Alignment.centerLeft,
+                        child: Text(
+                          '✓ Office location confirmed',
+                          style: TextStyle(
+                            color: AppTheme.instantGreen,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ),
+                    ],
                     const SizedBox(height: 12),
                     TextFormField(
                       controller: radius,
@@ -286,8 +367,8 @@ class SuperAdminDashboardScreen extends ConsumerWidget {
                         id: branch?.id ?? '',
                         name: name.text.trim(),
                         city: city.text.trim(),
-                        latitude: double.parse(latitude.text),
-                        longitude: double.parse(longitude.text),
+                        latitude: latitude!,
+                        longitude: longitude!,
                         radiusMeters: double.parse(radius.text),
                         aliases: aliases.text
                             .split(',')
@@ -326,8 +407,7 @@ class SuperAdminDashboardScreen extends ConsumerWidget {
     );
     name.dispose();
     city.dispose();
-    latitude.dispose();
-    longitude.dispose();
+    officeLocation.dispose();
     radius.dispose();
     aliases.dispose();
   }
@@ -672,6 +752,7 @@ class SuperAdminDashboardScreen extends ConsumerWidget {
     }
     var branchId = destinations.first.id;
     var saving = false;
+    var futureRevenueStaysWithPreviousBranch = false;
     await showDialog<void>(
       context: context,
       builder: (dialogContext) => StatefulBuilder(
@@ -705,10 +786,38 @@ class SuperAdminDashboardScreen extends ConsumerWidget {
                 ),
                 const SizedBox(height: 14),
                 Text(
-                  'Revenue, salary and incentive reporting will remain with '
-                  '${technician.nativeBranchName ?? technician.branchName ?? 'the native branch'}. '
-                  'A technician with an active job cannot be transferred.',
-                  style: const TextStyle(color: AppTheme.textSecondary),
+                  'Revenue ownership for future bills',
+                  style: Theme.of(dialogContext).textTheme.titleSmall,
+                ),
+                RadioListTile<bool>(
+                  value: false,
+                  groupValue: futureRevenueStaysWithPreviousBranch,
+                  contentPadding: EdgeInsets.zero,
+                  title: const Text('Credit future bills to the new branch'),
+                  subtitle: const Text(
+                    'Recommended. Past bills and collections stay with the old branch.',
+                  ),
+                  onChanged: saving
+                      ? null
+                      : (value) => setState(() =>
+                          futureRevenueStaysWithPreviousBranch = value ?? false),
+                ),
+                RadioListTile<bool>(
+                  value: true,
+                  groupValue: futureRevenueStaysWithPreviousBranch,
+                  contentPadding: EdgeInsets.zero,
+                  title: const Text('Keep future bills with the old branch'),
+                  subtitle: const Text(
+                    'Use for a temporary operating transfer.',
+                  ),
+                  onChanged: saving
+                      ? null
+                      : (value) => setState(() =>
+                          futureRevenueStaysWithPreviousBranch = value ?? false),
+                ),
+                const Text(
+                  'A technician with an active job cannot be transferred. Already generated bills are never moved.',
+                  style: TextStyle(color: AppTheme.textSecondary),
                 ),
               ],
             ),
@@ -729,6 +838,8 @@ class SuperAdminDashboardScreen extends ConsumerWidget {
                             .transferTechnician(
                               uid: technician.uid,
                               branchId: branchId,
+                              futureRevenueStaysWithPreviousBranch:
+                                  futureRevenueStaysWithPreviousBranch,
                             );
                         if (dialogContext.mounted) {
                           Navigator.pop(dialogContext);
@@ -1623,6 +1734,26 @@ class _SuperAdminDashboardViewState extends State<SuperAdminDashboardView> {
               ? const _EmptyMessage('No administrative actions recorded')
               : Column(
                   children: widget.auditLogs.map((entry) {
+                    final usersById = {
+                      widget.currentUser.uid: widget.currentUser,
+                      for (final user in [
+                        ...widget.branchAdmins,
+                        ...widget.technicians,
+                        ...widget.customers,
+                      ])
+                        user.uid: user,
+                    };
+                    final actor = usersById[entry.actorId];
+                    final actorName = (actor?.name.trim().isNotEmpty ?? false)
+                        ? actor!.name.trim()
+                        : _auditActorRoleLabel(entry.actorRole);
+                    final branchName = entry.branchId == null
+                        ? null
+                        : widget.branches
+                            .where((branch) => branch.id == entry.branchId)
+                            .map((branch) => branch.name)
+                            .cast<String?>()
+                            .firstOrNull;
                     return ListTile(
                       contentPadding: EdgeInsets.zero,
                       leading: const CircleAvatar(
@@ -1631,11 +1762,12 @@ class _SuperAdminDashboardViewState extends State<SuperAdminDashboardView> {
                       ),
                       title: Text(entry.summary),
                       subtitle: Text(
+                        'By $actorName · ${_auditActorRoleLabel(entry.actorRole)}\n'
                         '${entry.action} · ${DateFormat('dd MMM yyyy, hh:mm a').format(entry.createdAt)}',
                       ),
-                      trailing: entry.branchId == null
+                      trailing: branchName == null
                           ? null
-                          : Text(entry.branchId!,
+                          : Text(branchName,
                               style: const TextStyle(
                                   color: AppTheme.textSecondary)),
                     );
@@ -1650,6 +1782,16 @@ class _SuperAdminDashboardViewState extends State<SuperAdminDashboardView> {
     minimumSize: const Size(0, 46),
     padding: const EdgeInsets.symmetric(horizontal: 18),
   );
+}
+
+String _auditActorRoleLabel(String role) {
+  return switch (role) {
+    'superAdmin' => 'Super Admin',
+    'branchAdmin' => 'Branch Admin',
+    'technician' => 'Technician',
+    'customer' => 'Customer',
+    _ => 'FixNow Admin',
+  };
 }
 
 class _Metric {

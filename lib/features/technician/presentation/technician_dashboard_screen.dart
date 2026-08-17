@@ -14,6 +14,7 @@ import 'package:uuid/uuid.dart';
 import '../../../app/theme/app_theme.dart';
 import '../../../core/data/app_config_repository.dart';
 import '../../../core/enums/booking_status.dart';
+import '../../../core/errors/user_facing_error.dart';
 import '../../../core/maps/google_static_map.dart';
 import '../../../core/maps/route_recalculation.dart';
 import '../../../core/providers/firebase_providers.dart';
@@ -22,11 +23,13 @@ import '../../../core/services/location_tracking_service.dart';
 import '../../../core/services/push_token_service.dart';
 import '../../../core/services/reverse_geocoding_service.dart';
 import '../../auth/data/auth_repository.dart';
+import '../../auth/domain/app_user.dart';
 import '../../bookings/data/booking_repository.dart';
 import '../../bookings/domain/booking.dart';
 import '../../estimates/data/estimate_repository.dart';
 import '../../estimates/domain/estimate.dart';
 import '../../shared/data/bill_repository.dart';
+import '../../shared/data/cloudinary_repository.dart';
 import '../../shared/data/review_repository.dart';
 import '../../shared/data/storage_repository.dart';
 import '../../shared/data/technician_incentive_repository.dart';
@@ -193,7 +196,14 @@ class _TechnicianDashboardScreenState
       return;
     }
     final service = ref.read(locationTrackingServiceProvider);
-    if (!force && service.isTracking && service.activeBookingId == bookingId) {
+    if (!force && service.isTracking) {
+      if (bookingId != null && service.activeBookingId != bookingId) {
+        await service.start(
+          technicianId: technicianId,
+          bookingId: bookingId,
+          branchId: normalizedBranchId,
+        );
+      }
       if (mounted) {
         setState(() => _locationState = _AutomaticLocationState.sharing);
       }
@@ -224,6 +234,57 @@ class _TechnicianDashboardScreenState
         ),
       );
     }
+  }
+
+  Future<void> _closeTodaysWork(String technicianId) async {
+    final firstConfirmation = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Close today\'s work?'),
+        content: const Text(
+          'Your Branch Admin and Super Admin will no longer receive your live location after you close today\'s work.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Keep tracking'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('Continue'),
+          ),
+        ],
+      ),
+    );
+    if (firstConfirmation != true || !mounted) return;
+    final finalConfirmation = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Final confirmation'),
+        content: const Text(
+          'This ends today\'s location recording. You can only restart it by marking attendance on a new workday.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('Close today\'s work'),
+          ),
+        ],
+      ),
+    );
+    if (finalConfirmation != true) return;
+    await ref.read(locationTrackingServiceProvider).stop();
+    if (!mounted) return;
+    setState(
+        () => _locationState = _AutomaticLocationState.waitingForAttendance);
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+          content: Text('Today\'s work closed. Location tracking stopped.')),
+    );
   }
 
   String get _locationTooltip => switch (_locationState) {
@@ -262,18 +323,31 @@ class _TechnicianDashboardScreenState
     final activeBooking = user == null || bookings == null
         ? null
         : findTechnicianActiveBooking(bookings, user.uid);
-    final checkedInToday = user != null &&
-        attendance != null &&
-        attendance.any(
-          (record) =>
-              record.technicianId == user.uid &&
-              _sameCalendarDay(record.timestamp, DateTime.now()) &&
-              (record.status == 'present' || record.status == 'late'),
-        );
+    final liveLocation = user == null
+        ? null
+        : ref.watch(technicianLiveLocationProvider(user.uid)).valueOrNull;
+    final todayAttendance = user == null || attendance == null
+        ? null
+        : attendance.cast<Attendance?>().firstWhere(
+              (record) =>
+                  record?.technicianId == user.uid &&
+                  _sameCalendarDay(record!.timestamp, DateTime.now()),
+              orElse: () => null,
+            );
+    final workingToday = todayAttendance?.status == 'present' ||
+        todayAttendance?.status == 'late';
+    final selfDeclaredLeave =
+        todayAttendance?.locationSource == 'leaveConfirmation';
+    // A legacy automatic-absence record must not prevent the technician from
+    // correcting it by completing late selfie + location attendance.
+    final checkedInToday = todayAttendance != null &&
+        (todayAttendance.status != 'absent' || selfDeclaredLeave);
+    final workClosedToday = liveLocation?.shiftClosedAt != null &&
+        _sameCalendarDay(liveLocation!.shiftClosedAt!, DateTime.now());
     if (user != null) {
       _schedulePushRegistration(user.uid);
     }
-    if (user != null && bookings != null && checkedInToday) {
+    if (user != null && bookings != null && workingToday && !workClosedToday) {
       _scheduleAutomaticLocation(
         technicianId: user.uid,
         branchId: user.branchId,
@@ -283,7 +357,17 @@ class _TechnicianDashboardScreenState
     return Scaffold(
       backgroundColor: AppTheme.background,
       appBar: AppBar(
-        title: const Text('FixNow Technician App'),
+        title: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+                'Hello, ${(user?.name ?? 'Technician').trim().split(' ').first}'),
+            const Text(
+              'FixNow Technician App',
+              style: TextStyle(fontSize: 12, fontWeight: FontWeight.w500),
+            ),
+          ],
+        ),
         actions: [
           _LocationStatusBadge(
             label: switch (_locationState) {
@@ -323,6 +407,17 @@ class _TechnicianDashboardScreenState
               onPressed: _showAttendanceHistory,
               icon: const Icon(Icons.fact_check_outlined),
             ),
+          if (workingToday && !workClosedToday)
+            IconButton(
+              tooltip: 'Close today\'s work',
+              onPressed: () => _closeTodaysWork(user!.uid),
+              icon: const Icon(Icons.stop_circle_outlined),
+            ),
+          IconButton(
+            tooltip: 'My profile',
+            onPressed: user == null ? null : () => _showProfile(user),
+            icon: const Icon(Icons.account_circle_outlined),
+          ),
           IconButton(
             tooltip: 'Sign out',
             onPressed: () async {
@@ -345,13 +440,35 @@ class _TechnicianDashboardScreenState
         child: user == null || attendance == null
             ? const Center(child: CircularProgressIndicator())
             : checkedInToday
-                ? IndexedStack(
-                    index: visibleTab,
-                    children: const [
-                      _JobsView(),
-                      _MonthlyScheduleView(),
-                      _EarningsView(),
-                      _TechnicianReviewsView(),
+                ? Column(
+                    children: [
+                      if (todayAttendance.status == 'absent')
+                        Container(
+                          width: double.infinity,
+                          padding: const EdgeInsets.all(12),
+                          color: Colors.red.shade50,
+                          child: Text(
+                            selfDeclaredLeave
+                                ? '✕ On Leave Today'
+                                : '✕ Attendance not marked by 9:45 AM',
+                            textAlign: TextAlign.center,
+                            style: const TextStyle(
+                              color: Colors.red,
+                              fontWeight: FontWeight.w900,
+                            ),
+                          ),
+                        ),
+                      Expanded(
+                        child: IndexedStack(
+                          index: visibleTab,
+                          children: const [
+                            _JobsView(),
+                            _JobHistoryView(),
+                            _EarningsView(),
+                            _TechnicianReviewsView(),
+                          ],
+                        ),
+                      ),
                     ],
                   )
                 : const _AttendanceGateView(),
@@ -367,9 +484,9 @@ class _TechnicianDashboardScreenState
                     selectedIcon: Icon(Icons.work),
                     label: 'Jobs'),
                 NavigationDestination(
-                    icon: Icon(Icons.calendar_month_outlined),
-                    selectedIcon: Icon(Icons.calendar_month),
-                    label: 'Schedule'),
+                    icon: Icon(Icons.history_outlined),
+                    selectedIcon: Icon(Icons.history),
+                    label: 'History'),
                 NavigationDestination(
                     icon: Icon(Icons.payments_outlined),
                     selectedIcon: Icon(Icons.payments),
@@ -422,6 +539,349 @@ class _TechnicianDashboardScreenState
             );
           },
         ),
+      ),
+    );
+  }
+
+  void _showProfile(AppUser user) {
+    showDialog<void>(
+      context: context,
+      builder: (context) => _TechnicianProfileDialog(user: user),
+    );
+  }
+}
+
+class _TechnicianProfileDialog extends ConsumerWidget {
+  const _TechnicianProfileDialog({required this.user});
+
+  final AppUser user;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final bookings =
+        ref.watch(technicianBookingsProvider).valueOrNull ?? const <Booking>[];
+    final bills =
+        ref.watch(technicianBillsProvider).valueOrNull ?? const <Bill>[];
+    final attendance = ref.watch(technicianAttendanceProvider).valueOrNull ??
+        const <Attendance>[];
+    final reviews = ref.watch(currentTechnicianReviewsProvider).valueOrNull ??
+        const <Review>[];
+    final liveLocation =
+        ref.watch(technicianLiveLocationProvider(user.uid)).valueOrNull;
+    final paidCollections = bills
+        .where((bill) => bill.isPaid)
+        .fold<double>(0, (sum, bill) => sum + bill.amount);
+    final averageRating = reviews.isEmpty
+        ? 0.0
+        : reviews.fold<int>(0, (sum, review) => sum + review.rating) /
+            reviews.length;
+    final presentDays = attendance
+        .where((item) => item.status == 'present' || item.status == 'late')
+        .length;
+    final lateDays = attendance.where((item) => item.status == 'late').length;
+    final leaveDays = attendance
+        .where((item) => item.locationSource == 'leaveConfirmation')
+        .length;
+    final completedJobs =
+        bookings.where((item) => item.status == BookingStatus.closed).length;
+    final activeJobs =
+        bookings.where((item) => isTechnicianBusyStatus(item.status)).length;
+    final initial = user.name.trim().isEmpty
+        ? 'T'
+        : user.name.trim().substring(0, 1).toUpperCase();
+
+    return AlertDialog(
+      title: const Text('My profile'),
+      content: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 680, maxHeight: 650),
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  _TechnicianProfileAvatar(
+                    photo: user.profilePhoto,
+                    initial: initial,
+                  ),
+                  const SizedBox(width: 14),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          user.name.trim().isEmpty ? 'Technician' : user.name,
+                          style: Theme.of(context)
+                              .textTheme
+                              .titleLarge
+                              ?.copyWith(fontWeight: FontWeight.w900),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          '${user.technicianCategory.label} technician',
+                          style: const TextStyle(color: AppTheme.textSecondary),
+                        ),
+                        const SizedBox(height: 4),
+                        _ProfileStatusPill(
+                          label: user.isActive ? 'Active' : 'Inactive',
+                          active: user.isActive,
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 20),
+              const _ProfileSectionTitle('Personal details'),
+              _ProfileDetailRow(
+                icon: Icons.email_outlined,
+                label: 'Email',
+                value: user.email.isEmpty ? 'Not provided' : user.email,
+              ),
+              _ProfileDetailRow(
+                icon: Icons.phone_outlined,
+                label: 'Phone',
+                value: user.phone.isEmpty ? 'Not provided' : user.phone,
+              ),
+              _ProfileDetailRow(
+                icon: Icons.verified_user_outlined,
+                label: 'Account status',
+                value: user.accountStatus.label,
+              ),
+              _ProfileDetailRow(
+                icon: Icons.calendar_today_outlined,
+                label: 'Joined',
+                value: DateFormat('dd MMM yyyy')
+                    .format(user.approvedAt ?? user.createdAt),
+              ),
+              const SizedBox(height: 14),
+              const _ProfileSectionTitle('Work details'),
+              _ProfileDetailRow(
+                icon: Icons.store_outlined,
+                label: 'Current branch',
+                value: user.branchName ?? 'Not assigned',
+              ),
+              _ProfileDetailRow(
+                icon: Icons.account_balance_outlined,
+                label: 'Native revenue branch',
+                value:
+                    user.nativeBranchName ?? user.branchName ?? 'Not assigned',
+              ),
+              _ProfileDetailRow(
+                icon: Icons.workspace_premium_outlined,
+                label: 'Category',
+                value: user.technicianCategory.label,
+              ),
+              _ProfileDetailRow(
+                icon: Icons.payments_outlined,
+                label: 'Monthly salary',
+                value: user.monthlySalary > 0
+                    ? 'Rs. ${user.monthlySalary.toStringAsFixed(0)}'
+                    : 'Not configured',
+              ),
+              _ProfileDetailRow(
+                icon: Icons.location_on_outlined,
+                label: 'Live location',
+                value: liveLocation == null
+                    ? 'Not currently available'
+                    : 'Updated ${DateFormat('dd MMM yyyy, hh:mm a').format(liveLocation.updatedAt)}',
+              ),
+              _ProfileDetailRow(
+                icon: Icons.face_outlined,
+                label: 'Face ID',
+                value: user.faceReferencePhoto?.trim().isNotEmpty == true
+                    ? 'Registered'
+                    : 'Not registered',
+              ),
+              if (user.transferredAt != null)
+                _ProfileDetailRow(
+                  icon: Icons.swap_horiz,
+                  label: 'Last branch transfer',
+                  value: DateFormat('dd MMM yyyy, hh:mm a')
+                      .format(user.transferredAt!),
+                ),
+              const SizedBox(height: 14),
+              const _ProfileSectionTitle('Performance summary'),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  _ProfileMetric(label: 'Active jobs', value: '$activeJobs'),
+                  _ProfileMetric(
+                      label: 'Completed jobs', value: '$completedJobs'),
+                  _ProfileMetric(
+                    label: 'Confirmed collections',
+                    value: 'Rs. ${paidCollections.toStringAsFixed(0)}',
+                  ),
+                  _ProfileMetric(
+                      label: 'Attendance days', value: '$presentDays'),
+                  _ProfileMetric(label: 'Late days', value: '$lateDays'),
+                  _ProfileMetric(label: 'Leave days', value: '$leaveDays'),
+                  _ProfileMetric(
+                    label: 'Rating',
+                    value: reviews.isEmpty
+                        ? 'No reviews'
+                        : '${averageRating.toStringAsFixed(1)} / 5 (${reviews.length})',
+                  ),
+                ],
+              ),
+              if (user.lastServiceAddress?.trim().isNotEmpty == true) ...[
+                const SizedBox(height: 14),
+                const _ProfileSectionTitle('Last service location'),
+                Text(user.lastServiceAddress!),
+              ],
+            ],
+          ),
+        ),
+      ),
+      actions: [
+        FilledButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Close'),
+        ),
+      ],
+    );
+  }
+}
+
+class _TechnicianProfileAvatar extends StatelessWidget {
+  const _TechnicianProfileAvatar({required this.photo, required this.initial});
+
+  final String? photo;
+  final String initial;
+
+  @override
+  Widget build(BuildContext context) {
+    final value = photo?.trim() ?? '';
+    Widget child = Text(
+      initial,
+      style: const TextStyle(fontSize: 26, fontWeight: FontWeight.w900),
+    );
+    if (value.startsWith('data:image') && value.contains(',')) {
+      try {
+        child = ClipOval(
+          child: Image.memory(
+            base64Decode(value.substring(value.indexOf(',') + 1)),
+            width: 68,
+            height: 68,
+            fit: BoxFit.cover,
+          ),
+        );
+      } catch (_) {}
+    } else if (value.startsWith('http://') || value.startsWith('https://')) {
+      child = ClipOval(
+        child: Image.network(
+          value,
+          width: 68,
+          height: 68,
+          fit: BoxFit.cover,
+          errorBuilder: (_, __, ___) => Center(child: Text(initial)),
+        ),
+      );
+    }
+    return CircleAvatar(
+      radius: 34,
+      backgroundColor: AppTheme.primary.withValues(alpha: 0.12),
+      foregroundColor: AppTheme.primary,
+      child: child,
+    );
+  }
+}
+
+class _ProfileSectionTitle extends StatelessWidget {
+  const _ProfileSectionTitle(this.title);
+
+  final String title;
+
+  @override
+  Widget build(BuildContext context) => Padding(
+        padding: const EdgeInsets.only(bottom: 6),
+        child: Text(title, style: const TextStyle(fontWeight: FontWeight.w900)),
+      );
+}
+
+class _ProfileDetailRow extends StatelessWidget {
+  const _ProfileDetailRow({
+    required this.icon,
+    required this.label,
+    required this.value,
+  });
+
+  final IconData icon;
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) => Padding(
+        padding: const EdgeInsets.symmetric(vertical: 5),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Icon(icon, size: 18, color: AppTheme.textSecondary),
+            const SizedBox(width: 9),
+            SizedBox(
+              width: 145,
+              child: Text(
+                label,
+                style: const TextStyle(color: AppTheme.textSecondary),
+              ),
+            ),
+            Expanded(
+              child: Text(value,
+                  style: const TextStyle(fontWeight: FontWeight.w700)),
+            ),
+          ],
+        ),
+      );
+}
+
+class _ProfileMetric extends StatelessWidget {
+  const _ProfileMetric({required this.label, required this.value});
+
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) => Container(
+        width: 190,
+        padding: const EdgeInsets.all(11),
+        decoration: BoxDecoration(
+          color: AppTheme.background,
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: AppTheme.divider),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(value, style: const TextStyle(fontWeight: FontWeight.w900)),
+            const SizedBox(height: 2),
+            Text(label, style: const TextStyle(color: AppTheme.textSecondary)),
+          ],
+        ),
+      );
+}
+
+class _ProfileStatusPill extends StatelessWidget {
+  const _ProfileStatusPill({required this.label, required this.active});
+
+  final String label;
+  final bool active;
+
+  @override
+  Widget build(BuildContext context) {
+    final color = active ? const Color(0xFF138A52) : const Color(0xFFD95C2A);
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.1),
+        borderRadius: BorderRadius.circular(20),
+      ),
+      child: Text(
+        label,
+        style:
+            TextStyle(color: color, fontWeight: FontWeight.w800, fontSize: 12),
       ),
     );
   }
@@ -512,6 +972,7 @@ class _JobsView extends ConsumerWidget {
     final bills = ref.watch(technicianBillsProvider).valueOrNull ?? const [];
     final overtime =
         ref.watch(technicianOvertimeProvider).valueOrNull ?? const [];
+    final technician = ref.watch(currentUserProvider).valueOrNull;
     return bookings.when(
       data: (items) {
         final active =
@@ -524,74 +985,170 @@ class _JobsView extends ConsumerWidget {
                 b.status == BookingStatus.serviceCompleted ||
                 b.status == BookingStatus.billGenerated)
             .toList();
-        final done = billing.length;
-        return DefaultTabController(
-          length: 3,
-          child: Column(
-            children: [
-              Container(
-                margin: const EdgeInsets.fromLTRB(16, 16, 16, 0),
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(8),
-                  border: Border.all(color: AppTheme.divider),
-                ),
-                child: TabBar(
-                  isScrollable: true,
-                  labelColor: AppTheme.primary,
-                  unselectedLabelColor: AppTheme.textSecondary,
-                  indicatorColor: AppTheme.primary,
-                  indicatorWeight: 3,
-                  tabs: [
-                    Tab(text: 'Assigned (${active.length})'),
-                    Tab(text: 'Completed (${billing.length})'),
-                    Tab(text: 'On hold (${held.length})'),
-                  ],
-                ),
-              ),
-              Padding(
-                padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
-                child: _HeroPanel(active: active.length, done: done),
-              ),
-              if (overtime.isNotEmpty)
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
-                  child: OvertimeSummaryPanel(
-                    records: overtime,
-                    bookings: items,
-                    bills: bills,
-                    title: 'Your overtime',
+        final completed =
+            items.where((b) => b.status == BookingStatus.closed).toList();
+        final done = completed.length;
+        final paidBills = bills.where((bill) => bill.isPaid).toList();
+        double totalFor(bool Function(DateTime date) matches) => paidBills
+            .where((bill) => matches(bill.revenueDate))
+            .fold<double>(0, (sum, bill) => sum + bill.amount);
+        final now = DateTime.now();
+        final todayTotal = totalFor((date) =>
+            date.year == now.year &&
+            date.month == now.month &&
+            date.day == now.day);
+        final monthlyTotal = totalFor(
+            (date) => date.year == now.year && date.month == now.month);
+        final yearlyTotal = totalFor((date) => date.year == now.year);
+        return LayoutBuilder(
+          builder: (context, constraints) {
+            final contentWidth =
+                constraints.maxWidth >= 1280 ? 1120.0 : constraints.maxWidth;
+            return Center(
+              child: SizedBox(
+                width: contentWidth,
+                height: constraints.maxHeight,
+                child: DefaultTabController(
+                  length: 3,
+                  child: Column(
+                    children: [
+                      Container(
+                        margin: const EdgeInsets.fromLTRB(16, 16, 16, 0),
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(color: AppTheme.divider),
+                        ),
+                        child: TabBar(
+                          isScrollable: true,
+                          labelColor: AppTheme.primary,
+                          unselectedLabelColor: AppTheme.textSecondary,
+                          indicatorColor: AppTheme.primary,
+                          indicatorWeight: 3,
+                          tabs: [
+                            Tab(text: 'Assigned (${active.length})'),
+                            Tab(text: 'Completed (${billing.length})'),
+                            Tab(text: 'On hold (${held.length})'),
+                          ],
+                        ),
+                      ),
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+                        child: _HeroPanel(
+                          active: active.length,
+                          done: done,
+                          technicianName: technician?.name ?? 'Technician',
+                          nextAction: active.isEmpty
+                              ? 'No active job right now'
+                              : _technicianNextAction(active.first.status),
+                        ),
+                      ),
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+                        child: LayoutBuilder(
+                          builder: (context, metricConstraints) {
+                            final compact = metricConstraints.maxWidth < 600;
+                            final width = compact
+                                ? (metricConstraints.maxWidth - 10) / 2
+                                : 190.0;
+                            return Wrap(
+                              spacing: 10,
+                              runSpacing: 10,
+                              children: [
+                                SizedBox(
+                                  width: width,
+                                  child: _MetricCard(
+                                    label: 'Today earnings',
+                                    value:
+                                        'Rs. ${todayTotal.toStringAsFixed(0)}',
+                                    width: double.infinity,
+                                  ),
+                                ),
+                                SizedBox(
+                                  width: width,
+                                  child: _MetricCard(
+                                    label: 'Monthly earnings',
+                                    value:
+                                        'Rs. ${monthlyTotal.toStringAsFixed(0)}',
+                                    width: double.infinity,
+                                  ),
+                                ),
+                                SizedBox(
+                                  width: width,
+                                  child: _MetricCard(
+                                    label: 'Yearly earnings',
+                                    value:
+                                        'Rs. ${yearlyTotal.toStringAsFixed(0)}',
+                                    width: double.infinity,
+                                  ),
+                                ),
+                              ],
+                            );
+                          },
+                        ),
+                      ),
+                      if (overtime.isNotEmpty)
+                        Padding(
+                          padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
+                          child: OvertimeSummaryPanel(
+                            records: overtime,
+                            bookings: items,
+                            bills: bills,
+                            title: 'Your overtime',
+                          ),
+                        ),
+                      Expanded(
+                        child: TabBarView(
+                          children: [
+                            _JobTabList(
+                              bookings: active,
+                              emptyTitle: 'No assigned jobs',
+                              emptyMessage:
+                                  'New assigned and active jobs will appear here.',
+                            ),
+                            _JobTabList(
+                              bookings: billing,
+                              emptyTitle: 'No completed jobs',
+                              emptyMessage:
+                                  'Customer confirmation and final bill collection will appear here.',
+                            ),
+                            _JobTabList(
+                              bookings: held,
+                              emptyTitle: 'No jobs on hold',
+                              emptyMessage:
+                                  'Jobs you place on hold will appear here. Your branch admin is notified automatically.',
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
                   ),
                 ),
-              Expanded(
-                child: TabBarView(
-                  children: [
-                    _JobTabList(
-                      bookings: active,
-                      emptyTitle: 'No assigned jobs',
-                      emptyMessage:
-                          'New assigned and active jobs will appear here.',
-                    ),
-                    _JobTabList(
-                      bookings: billing,
-                      emptyTitle: 'No completed jobs',
-                      emptyMessage:
-                          'Completed jobs and final bill collection will appear here.',
-                    ),
-                    _JobTabList(
-                      bookings: held,
-                      emptyTitle: 'No jobs on hold',
-                      emptyMessage: 'Jobs paused by admin will appear here.',
-                    ),
-                  ],
-                ),
               ),
-            ],
-          ),
+            );
+          },
         );
       },
       loading: () => const Center(child: CircularProgressIndicator()),
       error: (error, stackTrace) => Center(child: Text(error.toString())),
+    );
+  }
+}
+
+class _JobHistoryView extends ConsumerWidget {
+  const _JobHistoryView();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final bookings =
+        ref.watch(technicianBookingsProvider).valueOrNull ?? const <Booking>[];
+    final completed = bookings
+        .where((booking) => booking.status == BookingStatus.closed)
+        .toList();
+    return _JobTabList(
+      bookings: completed,
+      emptyTitle: 'No job history yet',
+      emptyMessage: 'Paid and closed service jobs will appear here.',
     );
   }
 }
@@ -632,10 +1189,17 @@ class _JobTabList extends StatelessWidget {
 }
 
 class _HeroPanel extends StatelessWidget {
-  const _HeroPanel({required this.active, required this.done});
+  const _HeroPanel({
+    required this.active,
+    required this.done,
+    required this.technicianName,
+    required this.nextAction,
+  });
 
   final int active;
   final int done;
+  final String technicianName;
+  final String nextAction;
 
   @override
   Widget build(BuildContext context) {
@@ -648,14 +1212,19 @@ class _HeroPanel extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text('Today route',
+          Text('Good morning, ${technicianName.split(' ').first}',
               style: TextStyle(color: Colors.white70, fontSize: 13)),
           const SizedBox(height: 6),
-          const Text('Accept, travel, estimate, repair',
+          const Text('Today’s work',
               style: TextStyle(
                   color: Colors.white,
                   fontSize: 22,
                   fontWeight: FontWeight.w900)),
+          const SizedBox(height: 6),
+          Text(
+            'Next: $nextAction',
+            style: const TextStyle(color: Colors.white, fontSize: 14),
+          ),
           const SizedBox(height: 16),
           Row(
             children: [
@@ -672,6 +1241,35 @@ class _HeroPanel extends StatelessWidget {
   }
 }
 
+String _technicianNextAction(BookingStatus status) {
+  return switch (status) {
+    BookingStatus.technicianAssigned => 'Review and accept the assignment',
+    BookingStatus.accepted => 'Review the issue and send an estimate',
+    BookingStatus.estimateSent => 'Wait for customer estimate approval',
+    BookingStatus.estimateApproved => 'Start your journey',
+    BookingStatus.onTheWay => 'Confirm when you meet the customer',
+    BookingStatus.arrived => 'Wait for customer meeting confirmation',
+    BookingStatus.customerConfirmedArrival => 'Start the service work',
+    BookingStatus.serviceStarted => 'Complete the service work',
+    BookingStatus.workCompletedPendingCustomer =>
+      'Wait for customer work confirmation',
+    BookingStatus.serviceCompleted => 'Create the final bill',
+    BookingStatus.billGenerated => 'Collect and confirm payment',
+    BookingStatus.onHold => 'This job is on hold',
+    BookingStatus.booked => 'Waiting for Branch Admin assignment',
+    BookingStatus.estimateRejected => 'Update the estimate',
+    BookingStatus.closed => 'No action needed',
+  };
+}
+
+bool _canTechnicianPlaceOnHold(BookingStatus status) {
+  return status != BookingStatus.booked &&
+      status != BookingStatus.onHold &&
+      status != BookingStatus.serviceCompleted &&
+      status != BookingStatus.billGenerated &&
+      status != BookingStatus.closed;
+}
+
 class _TechnicianJobCard extends ConsumerWidget {
   const _TechnicianJobCard({required this.booking});
 
@@ -679,9 +1277,95 @@ class _TechnicianJobCard extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final user = ref.watch(currentUserProvider).valueOrNull;
     BookingRepository bookingRepository() =>
         ref.read(bookingRepositoryProvider);
-    final user = ref.watch(currentUserProvider).valueOrNull;
+    Future<bool> confirmAction(
+      String title,
+      String message,
+      String action,
+    ) async {
+      return await showDialog<bool>(
+            context: context,
+            builder: (dialogContext) => AlertDialog(
+              title: Text(title),
+              content: Text(message),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(dialogContext, false),
+                  child: const Text('Cancel'),
+                ),
+                FilledButton(
+                  onPressed: () => Navigator.pop(dialogContext, true),
+                  child: Text(action),
+                ),
+              ],
+            ),
+          ) ??
+          false;
+    }
+
+    Future<void> placeOnHold() async {
+      final reason = TextEditingController();
+      try {
+        final submitted = await showDialog<bool>(
+          context: context,
+          builder: (dialogContext) => AlertDialog(
+            title: const Text('Put job on hold'),
+            content: TextField(
+              controller: reason,
+              minLines: 2,
+              maxLines: 4,
+              autofocus: true,
+              decoration: const InputDecoration(
+                labelText: 'Reason for hold',
+                hintText: 'Example: Part needs to be collected',
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(dialogContext, false),
+                child: const Text('Cancel'),
+              ),
+              FilledButton.icon(
+                onPressed: () {
+                  if (reason.text.trim().isEmpty) return;
+                  Navigator.pop(dialogContext, true);
+                },
+                icon: const Icon(Icons.pause_circle_outline),
+                label: const Text('Put on hold'),
+              ),
+            ],
+          ),
+        );
+        if (submitted != true || user == null) return;
+        await bookingRepository().placeOnHold(
+          bookingId: booking.id,
+          actingTechnicianId: user.uid,
+          reason: reason.text,
+        );
+        await ref.read(locationTrackingServiceProvider).finishBooking();
+        if (!context.mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Job placed on hold. The customer and branch admin were notified.',
+            ),
+          ),
+        );
+      } catch (error) {
+        if (!context.mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(userFacingOperationError(error)),
+            backgroundColor: Colors.red.shade700,
+          ),
+        );
+      } finally {
+        reason.dispose();
+      }
+    }
+
     final estimate =
         ref.watch(technicianEstimateProvider(booking.id)).valueOrNull;
     final bill =
@@ -770,29 +1454,29 @@ class _TechnicianJobCard extends ConsumerWidget {
                 );
               },
             ),
-            const SizedBox(height: 12),
-            _StatusRail(status: booking.status),
-            const SizedBox(height: 12),
-            _InfoRow(
-                icon: Icons.place_outlined,
-                text: booking.address,
-                actionLabel: 'Directions',
-                onAction: () => _openDirections(context, booking)),
-            _InfoRow(
-                icon: Icons.phone_outlined,
-                text: booking.phone,
-                actionLabel: 'WhatsApp',
-                onAction: () => _openWhatsApp(context, booking)),
-            _InfoRow(
-                icon: Icons.schedule,
-                text: 'Preferred time: ${booking.preferredTime}'),
-            const SizedBox(height: 12),
-            _TechnicianJobMap(
-              booking: booking,
-              technicianLocation: technicianLocation,
-              onDirections: () => _openDirections(context, booking),
+            const SizedBox(height: 10),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              decoration: BoxDecoration(
+                color: AppTheme.surface,
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Row(
+                children: [
+                  const Icon(Icons.arrow_forward_rounded,
+                      size: 18, color: AppTheme.primary),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      'Next: ${_technicianNextAction(booking.status)}',
+                      style: const TextStyle(fontWeight: FontWeight.w800),
+                    ),
+                  ),
+                ],
+              ),
             ),
-            const SizedBox(height: 12),
+            const SizedBox(height: 10),
             Wrap(
               spacing: 8,
               runSpacing: 8,
@@ -832,33 +1516,44 @@ class _TechnicianJobCard extends ConsumerWidget {
                 ],
                 if (booking.status == BookingStatus.accepted)
                   FilledButton.icon(
-                    onPressed: () async {
-                      if (user == null) return;
-                      await bookingRepository().transitionStatus(
-                        bookingId: booking.id,
-                        technicianId: user.uid,
-                        expected: BookingStatus.accepted,
-                        next: BookingStatus.onTheWay,
-                      );
-                      await ref.read(locationTrackingServiceProvider).start(
-                            technicianId: user.uid,
-                            bookingId: booking.id,
-                            branchId: user.branchId,
-                          );
-                    },
-                    icon: const Icon(Icons.navigation),
-                    label: const Text('Start journey'),
+                    onPressed: () => _showEstimateDialog(context, ref),
+                    icon: const Icon(Icons.request_quote_outlined),
+                    label: const Text('Review issue & create estimate'),
                   ),
                 if (booking.status == BookingStatus.onTheWay &&
                     !trackingThisBooking)
                   FilledButton.tonalIcon(
                     onPressed: user == null
                         ? null
-                        : () => ref.read(locationTrackingServiceProvider).start(
-                              technicianId: user.uid,
-                              bookingId: booking.id,
-                              branchId: user.branchId,
-                            ),
+                        : () async {
+                            try {
+                              await ref
+                                  .read(locationTrackingServiceProvider)
+                                  .start(
+                                    technicianId: user.uid,
+                                    bookingId: booking.id,
+                                    branchId: user.branchId,
+                                  );
+                              if (context.mounted) {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  const SnackBar(
+                                    content: Text(
+                                      'Live tracking resumed. Confirm arrival only when you reach the customer.',
+                                    ),
+                                  ),
+                                );
+                              }
+                            } catch (error) {
+                              if (!context.mounted) return;
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(
+                                  content:
+                                      Text(userFacingOperationError(error)),
+                                  backgroundColor: Colors.red.shade700,
+                                ),
+                              );
+                            }
+                          },
                     icon: const Icon(Icons.my_location_outlined),
                     label: const Text('Resume tracking'),
                   ),
@@ -867,6 +1562,13 @@ class _TechnicianJobCard extends ConsumerWidget {
                     onPressed: user == null
                         ? null
                         : () async {
+                            if (!await confirmAction(
+                              'Confirm arrival',
+                              "Confirm that you have reached the customer's location.",
+                              'I reached the customer',
+                            )) {
+                              return;
+                            }
                             try {
                               final position =
                                   await _bestAvailableTechnicianPosition();
@@ -890,9 +1592,6 @@ class _TechnicianJobCard extends ConsumerWidget {
                                     distanceMeters > 150 ||
                                     !trackingThisBooking,
                               );
-                              await ref
-                                  .read(locationTrackingServiceProvider)
-                                  .finishBooking();
                               if (context.mounted) {
                                 ScaffoldMessenger.of(context).showSnackBar(
                                   const SnackBar(
@@ -906,7 +1605,8 @@ class _TechnicianJobCard extends ConsumerWidget {
                               if (context.mounted) {
                                 ScaffoldMessenger.of(context).showSnackBar(
                                   SnackBar(
-                                    content: Text(error.toString()),
+                                    content:
+                                        Text(userFacingOperationError(error)),
                                     backgroundColor: Colors.red.shade700,
                                   ),
                                 );
@@ -916,8 +1616,8 @@ class _TechnicianJobCard extends ConsumerWidget {
                     icon: const Icon(Icons.person_pin_circle_outlined),
                     label: Text(
                       trackingThisBooking && customerDistanceMeters != null
-                          ? 'I met the customer (${_formatRouteDistance(customerDistanceMeters)})'
-                          : 'I met the customer',
+                          ? 'I reached the customer (${_formatRouteDistance(customerDistanceMeters)})'
+                          : 'I reached the customer',
                     ),
                   ),
                 if (booking.status == BookingStatus.arrived)
@@ -928,9 +1628,28 @@ class _TechnicianJobCard extends ConsumerWidget {
                   ),
                 if (booking.status == BookingStatus.customerConfirmedArrival)
                   FilledButton.icon(
-                    onPressed: () => _showEstimateDialog(context, ref),
-                    icon: const Icon(Icons.request_quote_outlined),
-                    label: const Text('Create estimate'),
+                    onPressed: user == null
+                        ? null
+                        : () async {
+                            if (!await confirmAction(
+                              'Start Work?',
+                              'Both you and the customer confirmed the meeting. Start service now?',
+                              'Start Work',
+                            )) {
+                              return;
+                            }
+                            await bookingRepository().transitionStatus(
+                              bookingId: booking.id,
+                              technicianId: user.uid,
+                              expected: BookingStatus.customerConfirmedArrival,
+                              next: BookingStatus.serviceStarted,
+                            );
+                            await ref
+                                .read(locationTrackingServiceProvider)
+                                .finishBooking();
+                          },
+                    icon: const Icon(Icons.build_outlined),
+                    label: const Text('Start work'),
                   ),
                 if (booking.status == BookingStatus.estimateSent)
                   OutlinedButton.icon(
@@ -948,33 +1667,68 @@ class _TechnicianJobCard extends ConsumerWidget {
                   FilledButton.icon(
                     onPressed: user == null
                         ? null
-                        : () => bookingRepository().transitionStatus(
+                        : () async {
+                            if (!await confirmAction(
+                              'Start Journey?',
+                              'Your location will now be tracked while travelling to the customer.',
+                              'Start Journey',
+                            )) {
+                              return;
+                            }
+                            await bookingRepository().transitionStatus(
                               bookingId: booking.id,
                               technicianId: user.uid,
                               expected: BookingStatus.estimateApproved,
-                              next: BookingStatus.serviceStarted,
-                            ),
-                    icon: const Icon(Icons.build_outlined),
-                    label: const Text('Start work'),
+                              next: BookingStatus.onTheWay,
+                            );
+                            await ref
+                                .read(locationTrackingServiceProvider)
+                                .start(
+                                  technicianId: user.uid,
+                                  bookingId: booking.id,
+                                  branchId: user.branchId,
+                                );
+                          },
+                    icon: const Icon(Icons.navigation),
+                    label: const Text('Start journey'),
                   ),
                 if (booking.status == BookingStatus.serviceStarted)
                   FilledButton.icon(
                     onPressed: () async {
                       if (user == null) return;
-                      await bookingRepository().requestWorkCompletion(
-                        bookingId: booking.id,
-                        technicianId: user.uid,
-                      );
-                      await ref.read(locationTrackingServiceProvider).stop();
-                      await ref
-                          .read(technicianRepositoryProvider)
-                          .stopSharingLocation(user.uid);
-                      if (context.mounted) {
+                      if (!await confirmAction(
+                        'Work Completed?',
+                        'Confirm that the service work is completed. The customer must confirm next.',
+                        'Confirm Work Completed',
+                      )) {
+                        return;
+                      }
+                      try {
+                        await bookingRepository().requestWorkCompletion(
+                          bookingId: booking.id,
+                          technicianId: user.uid,
+                        );
+                        // Workday tracking stays active after a job finishes.
+                        // Customer visibility ends with this booking, while
+                        // Branch and Super Admin history continues until the
+                        // technician explicitly closes today's work.
+                        await ref
+                            .read(locationTrackingServiceProvider)
+                            .finishBooking();
+                        if (!context.mounted) return;
                         ScaffoldMessenger.of(context).showSnackBar(
                           const SnackBar(
                             content: Text(
-                              'Your completion is confirmed. Waiting for customer confirmation.',
+                              'Completion sent to the customer for confirmation.',
                             ),
+                          ),
+                        );
+                      } catch (error) {
+                        if (!context.mounted) return;
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(
+                            content: Text(userFacingOperationError(error)),
+                            backgroundColor: Colors.red.shade700,
                           ),
                         );
                       }
@@ -988,16 +1742,26 @@ class _TechnicianJobCard extends ConsumerWidget {
                     onPressed: user == null
                         ? null
                         : () async {
-                            await bookingRepository().requestWorkCompletion(
-                              bookingId: booking.id,
-                              technicianId: user.uid,
-                            );
-                            if (context.mounted) {
+                            try {
+                              await bookingRepository().requestWorkCompletion(
+                                bookingId: booking.id,
+                                technicianId: user.uid,
+                              );
+                              if (!context.mounted) return;
                               ScaffoldMessenger.of(context).showSnackBar(
                                 const SnackBar(
                                   content: Text(
-                                    'Your completion is confirmed. Waiting for customer confirmation.',
+                                    'Completion sent to the customer for confirmation.',
                                   ),
+                                ),
+                              );
+                            } catch (error) {
+                              if (!context.mounted) return;
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(
+                                  content:
+                                      Text(userFacingOperationError(error)),
+                                  backgroundColor: Colors.red.shade700,
                                 ),
                               );
                             }
@@ -1013,26 +1777,69 @@ class _TechnicianJobCard extends ConsumerWidget {
                     label:
                         const Text('Technician confirmed - waiting customer'),
                   ),
-                if (booking.status == BookingStatus.onHold)
+                if (booking.status == BookingStatus.onHold) ...[
                   OutlinedButton.icon(
                     onPressed: null,
                     icon: const Icon(Icons.pause_circle_outline),
                     label: Text(
                       booking.holdReason == null || booking.holdReason!.isEmpty
-                          ? 'On hold by admin'
+                          ? 'On hold'
                           : 'On hold: ${booking.holdReason}',
                     ),
+                  ),
+                  FilledButton.icon(
+                    onPressed: user == null
+                        ? null
+                        : () async {
+                            if (!await confirmAction(
+                              'Resume this job?',
+                              'The customer will be notified that the service has resumed.',
+                              'Resume job',
+                            )) {
+                              return;
+                            }
+                            try {
+                              await bookingRepository().resumeFromHold(
+                                bookingId: booking.id,
+                                actingTechnicianId: user.uid,
+                              );
+                              if (!context.mounted) return;
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(
+                                  content:
+                                      Text('Job resumed. Customer notified.'),
+                                ),
+                              );
+                            } catch (error) {
+                              if (!context.mounted) return;
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(
+                                  content:
+                                      Text(userFacingOperationError(error)),
+                                  backgroundColor: Colors.red.shade700,
+                                ),
+                              );
+                            }
+                          },
+                    icon: const Icon(Icons.play_circle_outline),
+                    label: const Text('Resume job'),
+                  ),
+                ] else if (_canTechnicianPlaceOnHold(booking.status))
+                  OutlinedButton.icon(
+                    onPressed: user == null ? null : placeOnHold,
+                    icon: const Icon(Icons.pause_circle_outline),
+                    label: const Text('Put job on hold'),
                   ),
                 if (booking.status == BookingStatus.serviceCompleted &&
                     booking.customerConfirmedWorkCompletedAt != null)
                   FilledButton.icon(
                     onPressed: user == null || estimate == null
                         ? null
-                        : () => ref.read(billRepositoryProvider).generateBill(
-                              bookingId: booking.id,
-                              customerId: booking.customerId,
-                              technicianId: user.uid,
-                              amount: estimate.total,
+                        : () => _showFinalBillDialog(
+                              context,
+                              ref,
+                              booking,
+                              estimate,
                             ),
                     icon: const Icon(Icons.receipt_long),
                     label: const Text('Generate bill'),
@@ -1047,19 +1854,11 @@ class _TechnicianJobCard extends ConsumerWidget {
                           Text('Payment confirmed - ${bill.paymentModeLabel}'),
                     )
                   else if (bill.hasPaymentForApproval)
-                    FilledButton.icon(
-                      onPressed: user == null
-                          ? null
-                          : () => ref
-                              .read(billRepositoryProvider)
-                              .confirmCollectedPayment(
-                                bookingId: booking.id,
-                                technicianId: user.uid,
-                                paymentMode: bill.paymentMode ?? 'other',
-                              ),
-                      icon: const Icon(Icons.verified_outlined),
+                    OutlinedButton.icon(
+                      onPressed: null,
+                      icon: const Icon(Icons.hourglass_top),
                       label: Text(
-                        'Confirm ${bill.paymentModeLabel} payment',
+                        'Receipt recorded - waiting for customer',
                       ),
                     )
                   else
@@ -1071,40 +1870,342 @@ class _TechnicianJobCard extends ConsumerWidget {
                                 ref: ref,
                                 booking: booking,
                                 technicianId: user.uid,
+                                bill: bill,
                               ),
                       icon: const Icon(Icons.payments_outlined),
                       label: Text('Confirm payment ${_formatBillAmount(bill)}'),
                     ),
                 ],
-                OutlinedButton.icon(
-                    onPressed:
-                        booking.status == BookingStatus.customerConfirmedArrival
-                            ? () => _uploadServicePhoto(context, ref, 'before')
-                            : null,
-                    icon: const Icon(Icons.camera_alt_outlined),
-                    label: const Text('Before')),
-                OutlinedButton.icon(
-                    onPressed: booking.status == BookingStatus.serviceStarted
-                        ? () => _uploadServicePhoto(context, ref, 'during')
-                        : null,
-                    icon: const Icon(Icons.camera_outlined),
-                    label: const Text('During')),
-                OutlinedButton.icon(
-                    onPressed: booking.status == BookingStatus.serviceStarted
-                        ? () => _uploadServicePhoto(context, ref, 'after')
-                        : null,
-                    icon: const Icon(Icons.camera_enhance_outlined),
-                    label: const Text('After')),
-                TextButton.icon(
-                    onPressed: () => context.push('/booking/${booking.id}'),
-                    icon: const Icon(Icons.receipt_long_outlined),
-                    label: const Text('Details')),
+              ],
+            ),
+            const SizedBox(height: 8),
+            if ((booking.imageUrl ?? '').trim().isNotEmpty) ...[
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: AppTheme.surface,
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: AppTheme.divider),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Row(
+                      children: [
+                        Icon(Icons.photo_outlined, size: 18),
+                        SizedBox(width: 7),
+                        Text(
+                          'Customer appliance photo',
+                          style: TextStyle(fontWeight: FontWeight.w800),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(10),
+                      child: Image.network(
+                        booking.imageUrl!,
+                        width: double.infinity,
+                        height: 180,
+                        fit: BoxFit.cover,
+                        errorBuilder: (_, __, ___) => const SizedBox(
+                          height: 100,
+                          child: Center(
+                            child: Text(
+                              'Photo could not be loaded. Check access rules and try again.',
+                              textAlign: TextAlign.center,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 8),
+            ],
+            SizedBox(
+              width: double.infinity,
+              child: (booking.imageUrl ?? '').trim().isNotEmpty
+                  ? FilledButton.tonalIcon(
+                      onPressed: () => context.push('/booking/${booking.id}'),
+                      icon: const Icon(Icons.photo_outlined),
+                      label: const Text('View customer photo'),
+                    )
+                  : OutlinedButton.icon(
+                      onPressed: null,
+                      icon: const Icon(Icons.no_photography_outlined),
+                      label: const Text('No customer photo attached'),
+                    ),
+            ),
+            const SizedBox(height: 8),
+            ExpansionTile(
+              tilePadding: EdgeInsets.zero,
+              childrenPadding: const EdgeInsets.only(bottom: 4),
+              leading: const Icon(Icons.route_outlined),
+              title: const Text('Trip, contact and service details'),
+              children: [
+                _InfoRow(
+                  icon: Icons.place_outlined,
+                  text: booking.address,
+                  actionLabel: 'Directions',
+                  onAction: () => _openDirections(context, booking),
+                ),
+                _InfoRow(
+                  icon: Icons.phone_outlined,
+                  text: booking.phone,
+                  actionLabel: 'WhatsApp',
+                  onAction: () => _openWhatsApp(context, booking),
+                ),
+                _InfoRow(
+                  icon: Icons.schedule,
+                  text: 'Preferred time: ${booking.preferredTime}',
+                ),
+                const SizedBox(height: 8),
+                _TechnicianJobMap(
+                  booking: booking,
+                  technicianLocation: technicianLocation,
+                  onDirections: () => _openDirections(context, booking),
+                ),
+                const SizedBox(height: 8),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    if ((booking.imageUrl ?? '').trim().isNotEmpty)
+                      FilledButton.tonalIcon(
+                        onPressed: () => showDialog<void>(
+                          context: context,
+                          builder: (dialogContext) => Dialog(
+                            child: ConstrainedBox(
+                              constraints: const BoxConstraints(maxWidth: 720),
+                              child: Column(
+                                mainAxisSize: MainAxisSize.min,
+                                crossAxisAlignment: CrossAxisAlignment.stretch,
+                                children: [
+                                  Padding(
+                                    padding: const EdgeInsets.fromLTRB(
+                                      16,
+                                      12,
+                                      8,
+                                      8,
+                                    ),
+                                    child: Row(
+                                      children: [
+                                        const Expanded(
+                                          child: Text(
+                                            'Customer appliance photo',
+                                            style: TextStyle(
+                                              fontSize: 16,
+                                              fontWeight: FontWeight.w800,
+                                            ),
+                                          ),
+                                        ),
+                                        IconButton(
+                                          onPressed: () =>
+                                              Navigator.of(dialogContext).pop(),
+                                          icon: const Icon(Icons.close),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                  SizedBox(
+                                    height: 420,
+                                    child: InteractiveViewer(
+                                      child: Image.network(
+                                        booking.imageUrl!,
+                                        fit: BoxFit.contain,
+                                        errorBuilder: (_, __, ___) =>
+                                            const SizedBox(
+                                          height: 180,
+                                          child: Center(
+                                            child: Text(
+                                              'Customer photo could not be loaded.',
+                                            ),
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ),
+                        icon: const Icon(Icons.photo_outlined),
+                        label: const Text('View customer photo'),
+                      )
+                    else
+                      OutlinedButton.icon(
+                        onPressed: null,
+                        icon: const Icon(Icons.no_photography_outlined),
+                        label: const Text('No customer photo attached'),
+                      ),
+                    if (booking.status ==
+                        BookingStatus.customerConfirmedArrival)
+                      OutlinedButton.icon(
+                        onPressed: () =>
+                            _uploadServicePhoto(context, ref, 'before'),
+                        icon: const Icon(Icons.camera_alt_outlined),
+                        label: const Text('Before photo'),
+                      ),
+                    if (booking.status == BookingStatus.serviceStarted) ...[
+                      OutlinedButton.icon(
+                        onPressed: () =>
+                            _uploadServicePhoto(context, ref, 'during'),
+                        icon: const Icon(Icons.camera_outlined),
+                        label: const Text('During photo'),
+                      ),
+                      OutlinedButton.icon(
+                        onPressed: () =>
+                            _uploadServicePhoto(context, ref, 'after'),
+                        icon: const Icon(Icons.camera_enhance_outlined),
+                        label: const Text('After photo'),
+                      ),
+                    ],
+                    TextButton.icon(
+                      onPressed: () => context.push('/booking/${booking.id}'),
+                      icon: const Icon(Icons.receipt_long_outlined),
+                      label: const Text('Full booking details'),
+                    ),
+                  ],
+                ),
               ],
             ),
           ],
         ),
       ),
     );
+  }
+
+  Future<void> _showFinalBillDialog(
+    BuildContext context,
+    WidgetRef ref,
+    Booking booking,
+    Estimate estimate,
+  ) async {
+    final labour = TextEditingController(
+      text: estimate.labourCharge.toStringAsFixed(0),
+    );
+    final parts = TextEditingController(
+      text: estimate.partsCharge.toStringAsFixed(0),
+    );
+    final reason = TextEditingController();
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Create final bill'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Approved estimate: ₹${estimate.total.toStringAsFixed(0)}',
+              style: const TextStyle(fontWeight: FontWeight.w700),
+            ),
+            const SizedBox(height: 8),
+            const Text(
+              'Enter the actual on-site charges. GST is added separately at 9% CGST + 9% SGST.',
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: labour,
+              keyboardType: const TextInputType.numberWithOptions(
+                decimal: true,
+              ),
+              decoration:
+                  const InputDecoration(labelText: 'Actual labour charge'),
+            ),
+            const SizedBox(height: 10),
+            TextField(
+              controller: parts,
+              keyboardType: const TextInputType.numberWithOptions(
+                decimal: true,
+              ),
+              decoration:
+                  const InputDecoration(labelText: 'Actual parts charge'),
+            ),
+            const SizedBox(height: 10),
+            TextField(
+              controller: reason,
+              maxLines: 2,
+              decoration: const InputDecoration(
+                labelText: 'Reason for any change from estimate',
+                hintText: 'Required if final charges differ',
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () async {
+              final labourValue = double.tryParse(labour.text.trim());
+              final partsValue = double.tryParse(parts.text.trim());
+              final total = (labourValue ?? 0) + (partsValue ?? 0);
+              final differsFromEstimate =
+                  (total - estimate.total).abs() > 0.009;
+              if (labourValue == null ||
+                  partsValue == null ||
+                  labourValue < 0 ||
+                  partsValue < 0 ||
+                  total <= 0) {
+                ScaffoldMessenger.of(dialogContext).showSnackBar(
+                  const SnackBar(content: Text('Enter valid final charges.')),
+                );
+                return;
+              }
+              if (differsFromEstimate && reason.text.trim().isEmpty) {
+                ScaffoldMessenger.of(dialogContext).showSnackBar(
+                  const SnackBar(
+                    content: Text('Explain why the final charges changed.'),
+                  ),
+                );
+                return;
+              }
+              final user = ref.read(currentUserProvider).valueOrNull;
+              if (user == null) return;
+              try {
+                await ref.read(billRepositoryProvider).generateBill(
+                      bookingId: booking.id,
+                      customerId: booking.customerId,
+                      technicianId: user.uid,
+                      labourCharge: labourValue,
+                      partsCharge: partsValue,
+                      adjustmentReason:
+                          differsFromEstimate ? reason.text.trim() : null,
+                    );
+                if (dialogContext.mounted) Navigator.pop(dialogContext);
+                if (!context.mounted) return;
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text(
+                      'Final bill generated. You can now confirm payment.',
+                    ),
+                  ),
+                );
+              } catch (error) {
+                if (!dialogContext.mounted) return;
+                ScaffoldMessenger.of(dialogContext).showSnackBar(
+                  SnackBar(
+                    content: Text(userFacingOperationError(error)),
+                    backgroundColor: Colors.red.shade700,
+                  ),
+                );
+              }
+            },
+            child: const Text('Generate final bill'),
+          ),
+        ],
+      ),
+    );
+    labour.dispose();
+    parts.dispose();
+    reason.dispose();
   }
 
   Future<void> _showEstimateDialog(BuildContext context, WidgetRef ref) async {
@@ -1189,8 +2290,11 @@ class _TechnicianJobCard extends ConsumerWidget {
     required WidgetRef ref,
     required Booking booking,
     required String technicianId,
+    required Bill bill,
   }) async {
     var selectedMode = 'cash';
+    final amount = TextEditingController(text: bill.amount.toStringAsFixed(0));
+    XFile? proof;
     await showDialog<void>(
       context: context,
       builder: (dialogContext) => StatefulBuilder(
@@ -1198,27 +2302,55 @@ class _TechnicianJobCard extends ConsumerWidget {
           title: const Text('Confirm customer payment'),
           content: SizedBox(
             width: 360,
-            child: DropdownButtonFormField<String>(
-              initialValue: selectedMode,
-              decoration: const InputDecoration(
-                labelText: 'Mode of payment',
-                prefixIcon: Icon(Icons.payments_outlined),
+            child: Column(mainAxisSize: MainAxisSize.min, children: [
+              TextField(
+                controller: amount,
+                keyboardType:
+                    const TextInputType.numberWithOptions(decimal: true),
+                decoration: const InputDecoration(labelText: 'Amount received'),
               ),
-              items: const [
-                DropdownMenuItem(value: 'cash', child: Text('Cash')),
-                DropdownMenuItem(value: 'upi', child: Text('UPI')),
-                DropdownMenuItem(value: 'card', child: Text('Card')),
-                DropdownMenuItem(
-                  value: 'bankTransfer',
-                  child: Text('Bank transfer'),
+              const SizedBox(height: 12),
+              DropdownButtonFormField<String>(
+                initialValue: selectedMode,
+                decoration: const InputDecoration(
+                  labelText: 'Mode of payment',
+                  prefixIcon: Icon(Icons.payments_outlined),
                 ),
-                DropdownMenuItem(value: 'other', child: Text('Other')),
+                items: const [
+                  DropdownMenuItem(value: 'cash', child: Text('Cash')),
+                  DropdownMenuItem(value: 'upi', child: Text('UPI')),
+                  DropdownMenuItem(value: 'card', child: Text('Card')),
+                  DropdownMenuItem(
+                    value: 'bankTransfer',
+                    child: Text('Bank transfer'),
+                  ),
+                  DropdownMenuItem(value: 'other', child: Text('Other')),
+                ],
+                onChanged: (value) {
+                  if (value == null) return;
+                  setDialogState(() {
+                    selectedMode = value;
+                    if (value == 'cash') proof = null;
+                  });
+                },
+              ),
+              if (selectedMode != 'cash') ...[
+                const SizedBox(height: 12),
+                OutlinedButton.icon(
+                  onPressed: () async {
+                    final image = await ImagePicker().pickImage(
+                      source: ImageSource.gallery,
+                      imageQuality: 80,
+                    );
+                    if (image != null) setDialogState(() => proof = image);
+                  },
+                  icon: const Icon(Icons.upload_file_outlined),
+                  label: Text(proof == null
+                      ? 'Upload payment screenshot'
+                      : 'Screenshot selected'),
+                ),
               ],
-              onChanged: (value) {
-                if (value == null) return;
-                setDialogState(() => selectedMode = value);
-              },
-            ),
+            ]),
           ),
           actions: [
             TextButton(
@@ -1227,22 +2359,49 @@ class _TechnicianJobCard extends ConsumerWidget {
             ),
             FilledButton.icon(
               onPressed: () async {
+                final received = double.tryParse(amount.text.trim());
+                if (received == null || received <= 0) {
+                  ScaffoldMessenger.of(dialogContext).showSnackBar(
+                    const SnackBar(
+                        content: Text('Enter a valid amount received.')),
+                  );
+                  return;
+                }
+                if (selectedMode != 'cash' && proof == null) {
+                  ScaffoldMessenger.of(dialogContext).showSnackBar(
+                    const SnackBar(
+                        content: Text('Upload the online payment screenshot.')),
+                  );
+                  return;
+                }
+                String? proofUrl;
+                if (proof != null) {
+                  proofUrl = await ref
+                      .read(cloudinaryRepositoryProvider)
+                      .uploadPaymentProof(
+                        file: proof!,
+                        bookingId: booking.id,
+                      );
+                }
                 await ref.read(billRepositoryProvider).confirmCollectedPayment(
                       bookingId: booking.id,
                       technicianId: technicianId,
                       paymentMode: selectedMode,
+                      amountReceived: received,
+                      paymentProofUrl: proofUrl,
                     );
                 if (dialogContext.mounted) Navigator.pop(dialogContext);
                 if (context.mounted) {
                   ScaffoldMessenger.of(context).showSnackBar(
                     const SnackBar(
-                      content: Text('Payment confirmed and job closed.'),
+                      content: Text(
+                          'Payment received recorded. Waiting for customer confirmation.'),
                     ),
                   );
                 }
               },
               icon: const Icon(Icons.verified_outlined),
-              label: const Text('Confirm payment'),
+              label: const Text('Confirm payment received'),
             ),
           ],
         ),
@@ -2312,10 +3471,261 @@ class _AttendanceViewState extends ConsumerState<_AttendanceView> {
   bool _marked = false;
   String? _result;
   bool _usingLocalTestPosition = false;
+  bool _attendanceStarted = false;
+  int _attendanceStep = 1;
+  XFile? _attendanceSelfie;
+  Uint8List? _attendanceSelfieBytes;
+  Position? _attendanceLocation;
+  FaceMatchResult? _attendanceFaceMatch;
 
   void _setViewState(VoidCallback update) {
     if (!mounted) return;
     setState(update);
+  }
+
+  Future<void> _startPresentFlow() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Confirm Attendance'),
+        content: const Text(
+          'You are marking yourself as Present for today.\n\nComplete selfie and location verification next. Your location will be shared with FixNow after final confirmation.\n\nAre you sure?',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('Confirm & Continue'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed == true && mounted) {
+      _setViewState(() {
+        _attendanceStarted = true;
+        _result = 'Take a selfie to begin verification.';
+      });
+    }
+  }
+
+  Future<void> _captureAttendanceSelfie() async {
+    final user = ref.read(currentUserProvider).valueOrNull;
+    final referenceSignature = user?.faceReferenceSignature?.trim() ?? '';
+    if (referenceSignature.isEmpty) {
+      _setViewState(() => _result =
+          'Register your Face ID reference before taking attendance.');
+      return;
+    }
+    _setViewState(() {
+      _loading = true;
+      _result = 'Opening camera...';
+    });
+    try {
+      final image = await ImagePicker().pickImage(
+        source: ImageSource.camera,
+        preferredCameraDevice: CameraDevice.front,
+        imageQuality: 45,
+        maxWidth: 640,
+        maxHeight: 640,
+      );
+      if (image == null) {
+        _setViewState(() => _result = 'Selfie capture cancelled.');
+        return;
+      }
+      final bytes = await image.readAsBytes().timeout(
+            const Duration(seconds: 12),
+          );
+      final faceService = const FaceMatchService();
+      final signature = await faceService.createSignature(bytes);
+      final match = faceService.compare(
+        referenceSignature: referenceSignature,
+        selfieSignature: signature,
+      );
+      if (!match.passed) {
+        _setViewState(() {
+          _attendanceSelfie = null;
+          _attendanceSelfieBytes = null;
+          _attendanceFaceMatch = null;
+          _result =
+              'Face could not be verified. Position your face clearly and retake the selfie.';
+        });
+        return;
+      }
+      _setViewState(() {
+        _attendanceSelfie = image;
+        _attendanceSelfieBytes = bytes;
+        _attendanceFaceMatch = match;
+        _attendanceStep = 2;
+        _result = 'Selfie verified. Continue to location verification.';
+      });
+    } catch (error) {
+      _setViewState(() => _result = _selfieFailureMessage(
+            error,
+            fallback: 'Selfie verification failed. Please retake it.',
+          ));
+    } finally {
+      _setViewState(() => _loading = false);
+    }
+  }
+
+  Future<void> _verifyAttendanceLocation() async {
+    final config = ref.read(operationsConfigProvider).valueOrNull;
+    if (config == null) {
+      _setViewState(() => _result = 'Attendance settings are still loading.');
+      return;
+    }
+    _setViewState(() {
+      _loading = true;
+      _result = 'Detecting current location...';
+    });
+    try {
+      final position = await _attendancePosition(config);
+      if (position == null) {
+        _setViewState(() => _result =
+            'Location could not be obtained. Enable precise location permission and retry.');
+        return;
+      }
+      _setViewState(() {
+        _attendanceLocation = position;
+        _attendanceStep = 3;
+        _result = 'Location detected. Review and confirm attendance.';
+      });
+    } finally {
+      _setViewState(() => _loading = false);
+    }
+  }
+
+  Future<void> _confirmStagedAttendance() async {
+    final user = ref.read(currentUserProvider).valueOrNull;
+    final config = ref.read(operationsConfigProvider).valueOrNull;
+    final image = _attendanceSelfie;
+    final bytes = _attendanceSelfieBytes;
+    final position = _attendanceLocation;
+    final match = _attendanceFaceMatch;
+    if (user == null ||
+        config == null ||
+        image == null ||
+        bytes == null ||
+        position == null ||
+        match == null ||
+        !match.passed) {
+      _setViewState(() => _result =
+          'Complete selfie and location verification before confirming.');
+      return;
+    }
+    _setViewState(() {
+      _loading = true;
+      _result = 'Recording attendance...';
+    });
+    try {
+      final now = DateTime.now();
+      final status = now.isAfter(config.endFor(now)) ? 'late' : 'present';
+      final distance = Geolocator.distanceBetween(
+        config.branchLatitude,
+        config.branchLongitude,
+        position.latitude,
+        position.longitude,
+      );
+      final selfieUrl = await _uploadAttendanceSelfie(
+        image: image,
+        bytes: bytes,
+        userId: user.uid,
+        dayKey: _attendanceStorageDayKey(now),
+      );
+      await ref.read(technicianRepositoryProvider).markAttendance(
+            Attendance(
+              id: '',
+              technicianId: user.uid,
+              selfieUrl: selfieUrl,
+              latitude: position.latitude,
+              longitude: position.longitude,
+              timestamp: now,
+              status: status,
+              faceMatchPassed: true,
+              geofencePassed: distance <= config.geofenceRadiusMeters,
+              faceMatchScore: match.score,
+              branchId: user.branchId,
+              locationSource:
+                  _usingLocalTestPosition ? 'localTestFallback' : 'deviceGps',
+            ),
+          );
+      try {
+        final activeBooking = findTechnicianActiveBooking(
+          ref.read(technicianBookingsProvider).valueOrNull ?? const <Booking>[],
+          user.uid,
+        );
+        await ref.read(locationTrackingServiceProvider).startShift(
+              technicianId: user.uid,
+              branchId: user.branchId ?? '',
+              bookingId: activeBooking?.id,
+            );
+      } catch (_) {}
+      _setViewState(() {
+        _marked = true;
+        _result = 'Attendance recorded successfully.';
+      });
+    } catch (error) {
+      _setViewState(() => _result = _selfieFailureMessage(
+            error,
+            fallback: 'Attendance could not be recorded. Please retry.',
+          ));
+    } finally {
+      _setViewState(() => _loading = false);
+    }
+  }
+
+  Future<void> _confirmLeave() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Confirm Leave'),
+        content: const Text(
+          'You are marking yourself as absent for today.\n\nThis will be recorded and visible to your Branch Admin.\n\nAre you sure?',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('Confirm Leave'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    final user = ref.read(currentUserProvider).valueOrNull;
+    if (user == null) return;
+    _setViewState(() => _loading = true);
+    try {
+      await ref.read(technicianRepositoryProvider).markAttendance(
+            Attendance(
+              id: '',
+              technicianId: user.uid,
+              selfieUrl: '',
+              latitude: 0,
+              longitude: 0,
+              timestamp: DateTime.now(),
+              status: 'absent',
+              faceMatchPassed: false,
+              geofencePassed: false,
+              branchId: user.branchId,
+              locationSource: 'leaveConfirmation',
+            ),
+          );
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Leave Recorded Successfully')),
+      );
+    } catch (error) {
+      _setViewState(() => _result = userFacingOperationError(error));
+    } finally {
+      _setViewState(() => _loading = false);
+    }
   }
 
   Future<void> _enrollFace() async {
@@ -2373,6 +3783,8 @@ class _AttendanceViewState extends ConsumerState<_AttendanceView> {
     }
   }
 
+  // Retained temporarily for backward-compatible attendance recovery records.
+  // ignore: unused_element
   Future<void> _markAttendance() async {
     _setViewState(() {
       _loading = true;
@@ -2722,20 +4134,178 @@ class _AttendanceViewState extends ConsumerState<_AttendanceView> {
             padding: const EdgeInsets.all(16),
             child: Column(
               children: [
-                Icon(_marked ? Icons.verified : Icons.face_retouching_natural,
-                    size: 54,
-                    color: _marked ? AppTheme.accent : AppTheme.primary),
-                const SizedBox(height: 10),
-                Text(_marked ? 'Attendance marked' : 'Mark attendance',
+                Text("TODAY'S ATTENDANCE",
                     style: Theme.of(context)
                         .textTheme
                         .titleLarge
                         ?.copyWith(fontWeight: FontWeight.w800)),
                 const SizedBox(height: 6),
                 Text(
-                    _result ??
-                        'Mark attendance with your registered Face ID selfie.',
-                    textAlign: TextAlign.center),
+                  'Good Morning, ${user?.name.split(' ').first ?? 'Technician'}',
+                  style: const TextStyle(
+                    color: AppTheme.textSecondary,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                if (!_attendanceStarted) ...[
+                  const SizedBox(height: 16),
+                  const Text(
+                    'What is your status today?',
+                    style: TextStyle(
+                      fontSize: 17,
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  SizedBox(
+                    width: double.infinity,
+                    child: FilledButton.icon(
+                      onPressed: _loading ? null : _startPresentFlow,
+                      icon: const Icon(Icons.check_circle_outline),
+                      label: const Text("I'm Present"),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  SizedBox(
+                    width: double.infinity,
+                    child: OutlinedButton.icon(
+                      onPressed: _loading ? null : _confirmLeave,
+                      icon: const Icon(Icons.event_busy_outlined),
+                      label: const Text("I'm on Leave"),
+                    ),
+                  ),
+                ],
+                const SizedBox(height: 16),
+                Row(
+                  children: [
+                    _AttendanceStepIndicator(
+                      number: 1,
+                      label: 'Selfie',
+                      complete: _attendanceStep > 1,
+                      active: _attendanceStep == 1,
+                    ),
+                    const Expanded(child: Divider()),
+                    _AttendanceStepIndicator(
+                      number: 2,
+                      label: 'Location',
+                      complete: _attendanceStep > 2,
+                      active: _attendanceStep == 2,
+                    ),
+                    const Expanded(child: Divider()),
+                    _AttendanceStepIndicator(
+                      number: 3,
+                      label: 'Confirm',
+                      complete: _marked,
+                      active: _attendanceStep == 3,
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 18),
+                if (_attendanceStep == 1) ...[
+                  const Icon(Icons.camera_front_outlined,
+                      size: 48, color: AppTheme.primary),
+                  const SizedBox(height: 8),
+                  const Text(
+                    'Step 1 — Selfie Verification',
+                    style: TextStyle(fontWeight: FontWeight.w900),
+                  ),
+                  const SizedBox(height: 4),
+                  const Text(
+                    'Take a selfie to verify your attendance',
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 10),
+                  Container(
+                    height: 180,
+                    width: 240,
+                    decoration: BoxDecoration(
+                      color: AppTheme.background,
+                      borderRadius: BorderRadius.circular(18),
+                      border: Border.all(color: AppTheme.divider),
+                    ),
+                    child: const Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(Icons.face_retouching_natural, size: 70),
+                        SizedBox(height: 8),
+                        Text('Center your face inside the frame'),
+                      ],
+                    ),
+                  ),
+                ] else if (_attendanceStep == 2) ...[
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(18),
+                    child: Image.memory(
+                      _attendanceSelfieBytes!,
+                      height: 180,
+                      width: 240,
+                      fit: BoxFit.cover,
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  const Text(
+                    '✓ Selfie verified',
+                    style: TextStyle(
+                      color: Colors.green,
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  const Text(
+                    'Step 2 — Location Verification',
+                    style: TextStyle(fontWeight: FontWeight.w900),
+                  ),
+                  const Text('📍 Current Location'),
+                ] else ...[
+                  const Icon(Icons.verified_outlined,
+                      size: 48, color: Colors.green),
+                  const SizedBox(height: 8),
+                  const Text(
+                    'Confirm Attendance',
+                    style: TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  _AttendanceConfirmationRow(
+                    label: 'Selfie',
+                    value: '✓ Verified',
+                  ),
+                  _AttendanceConfirmationRow(
+                    label: 'Location',
+                    value: '✓ Detected',
+                  ),
+                  _AttendanceConfirmationRow(
+                    label: 'Date',
+                    value: DateFormat('MMMM d, yyyy').format(now),
+                  ),
+                  _AttendanceConfirmationRow(
+                    label: 'Attendance time',
+                    value: 'Recorded when you confirm',
+                  ),
+                  _AttendanceConfirmationRow(
+                    label: 'Curfew',
+                    value: config == null
+                        ? '9:45 AM'
+                        : _formatAttendanceTime(config.endFor(now)),
+                  ),
+                  _AttendanceConfirmationRow(
+                    label: 'Status',
+                    value: config != null && now.isAfter(config.endFor(now))
+                        ? 'Late (after ${_formatAttendanceTime(config.endFor(now))})'
+                        : 'Present',
+                  ),
+                  const SizedBox(height: 8),
+                  const Text(
+                    'Your attendance will now be recorded and your location tracking will begin.',
+                    textAlign: TextAlign.center,
+                  ),
+                ],
+                if (_result != null) ...[
+                  const SizedBox(height: 12),
+                  Text(_result!, textAlign: TextAlign.center),
+                ],
                 const SizedBox(height: 16),
                 OutlinedButton.icon(
                   onPressed: _enrolling || _loading ? null : _enrollFace,
@@ -2754,18 +4324,57 @@ class _AttendanceViewState extends ConsumerState<_AttendanceView> {
                 ),
                 const SizedBox(height: 10),
                 FilledButton.icon(
-                  onPressed: _loading || _enrolling ? null : _markAttendance,
+                  onPressed: _loading || _enrolling || !_attendanceStarted
+                      ? null
+                      : _attendanceStep == 1
+                          ? _captureAttendanceSelfie
+                          : _attendanceStep == 2
+                              ? _verifyAttendanceLocation
+                              : _confirmStagedAttendance,
                   icon: _loading
                       ? const SizedBox.square(
                           dimension: 18,
                           child: CircularProgressIndicator(strokeWidth: 2))
-                      : Icon(kIsWeb ? Icons.upload_file : Icons.photo_camera),
+                      : Icon(_attendanceStep == 1
+                          ? Icons.photo_camera
+                          : _attendanceStep == 2
+                              ? Icons.location_on
+                              : Icons.verified),
                   label: Text(_loading
-                      ? 'Submitting...'
-                      : kIsWeb
-                          ? 'Upload selfie photo'
-                          : 'Take selfie'),
+                      ? 'Please wait...'
+                      : _attendanceStep == 1
+                          ? "✓ I'm Present — Take Selfie"
+                          : _attendanceStep == 2
+                              ? 'Verify Location'
+                              : 'Confirm Attendance'),
                 ),
+                if (_attendanceSelfie != null && !_marked) ...[
+                  const SizedBox(height: 8),
+                  TextButton.icon(
+                    onPressed: _loading
+                        ? null
+                        : () => _setViewState(() {
+                              _attendanceStep = 1;
+                              _attendanceSelfie = null;
+                              _attendanceSelfieBytes = null;
+                              _attendanceLocation = null;
+                              _attendanceFaceMatch = null;
+                              _result = null;
+                            }),
+                    icon: const Icon(Icons.refresh),
+                    label: Text(_attendanceStep == 3
+                        ? 'Cancel attendance'
+                        : 'Retake selfie'),
+                  ),
+                ],
+                if (_attendanceStarted && _attendanceStep == 1 && !_marked) ...[
+                  const Divider(height: 28),
+                  OutlinedButton.icon(
+                    onPressed: _loading ? null : _confirmLeave,
+                    icon: const Icon(Icons.close),
+                    label: const Text("I'm on Leave"),
+                  ),
+                ],
               ],
             ),
           ),
@@ -2773,6 +4382,67 @@ class _AttendanceViewState extends ConsumerState<_AttendanceView> {
         const SizedBox(height: 16),
         _TechnicianAttendanceHistory(attendanceAsync: attendanceAsync),
       ],
+    );
+  }
+}
+
+class _AttendanceStepIndicator extends StatelessWidget {
+  const _AttendanceStepIndicator({
+    required this.number,
+    required this.label,
+    required this.complete,
+    required this.active,
+  });
+
+  final int number;
+  final String label;
+  final bool complete;
+  final bool active;
+
+  @override
+  Widget build(BuildContext context) {
+    final color = complete || active ? AppTheme.primary : AppTheme.divider;
+    return Column(
+      children: [
+        CircleAvatar(
+          radius: 16,
+          backgroundColor: color,
+          foregroundColor: Colors.white,
+          child: complete
+              ? const Icon(Icons.check, size: 18)
+              : Text('$number',
+                  style: const TextStyle(fontWeight: FontWeight.w900)),
+        ),
+        const SizedBox(height: 4),
+        Text(label,
+            style: TextStyle(
+              fontSize: 11,
+              fontWeight: FontWeight.w800,
+              color: active || complete
+                  ? AppTheme.textPrimary
+                  : AppTheme.textSecondary,
+            )),
+      ],
+    );
+  }
+}
+
+class _AttendanceConfirmationRow extends StatelessWidget {
+  const _AttendanceConfirmationRow({required this.label, required this.value});
+
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 3),
+      child: Row(
+        children: [
+          Expanded(child: Text('$label:')),
+          Text(value, style: const TextStyle(fontWeight: FontWeight.w800)),
+        ],
+      ),
     );
   }
 }
@@ -3232,15 +4902,18 @@ class _EarningsView extends ConsumerWidget {
             const <TechnicianIncentive>[];
     final range = ref.watch(_earningsRangeProvider);
     final now = DateTime.now();
+    final employmentStart = technician?.approvedAt ?? technician?.createdAt;
     final paidBills = bills.where((bill) => bill.isPaid).toList();
     final daily = _sumBillsForDay(paidBills, now);
     final monthly = paidBills
         .where((bill) =>
-            bill.createdAt.year == now.year &&
-            bill.createdAt.month == now.month)
+            bill.revenueDate.year == now.year &&
+            bill.revenueDate.month == now.month)
         .fold<double>(0, (sum, bill) => sum + bill.amount);
-    final pending = bills
-        .where((bill) => !bill.isPaid)
+    final lifetimeCollection = paidBills
+        .where((bill) =>
+            employmentStart == null ||
+            !bill.revenueDate.isBefore(employmentStart))
         .fold<double>(0, (sum, bill) => sum + bill.amount);
     final monthDates = _datesForRange(_EarningsRange.month, now);
     final targetIncentive = monthDates.fold<double>(
@@ -3254,6 +4927,7 @@ class _EarningsView extends ConsumerWidget {
             item.awardedAt.month == now.month)
         .fold<double>(0, (sum, item) => sum + item.amount);
     final monthlyIncentive = targetIncentive + adminIncentive;
+    final totalMonthlyEarnings = monthlySalary + monthlyIncentive;
     final chartPoints = _earningPointsForRange(
       range: range,
       now: now,
@@ -3279,6 +4953,10 @@ class _EarningsView extends ConsumerWidget {
               value: 'Rs. ${daily.toStringAsFixed(0)}',
             ),
             _MetricCard(
+              label: 'Lifetime confirmed collection',
+              value: 'Rs. ${lifetimeCollection.toStringAsFixed(0)}',
+            ),
+            _MetricCard(
               label: 'Monthly base salary',
               value: 'Rs. ${monthlySalary.toStringAsFixed(0)}',
             ),
@@ -3291,8 +4969,8 @@ class _EarningsView extends ConsumerWidget {
               value: 'Rs. ${adminIncentive.toStringAsFixed(0)}',
             ),
             _MetricCard(
-              label: 'Pending release',
-              value: 'Rs. ${pending.toStringAsFixed(0)}',
+              label: 'Total earnings',
+              value: 'Rs. ${totalMonthlyEarnings.toStringAsFixed(0)}',
             ),
           ],
         ),
@@ -3403,14 +5081,15 @@ class _EarningsView extends ConsumerWidget {
                 ),
                 _PayoutRow(
                   label: 'Total earnings this month',
-                  value:
-                      'Rs. ${(monthly + monthlySalary + monthlyIncentive).toStringAsFixed(0)}',
-                ),
-                _PayoutRow(
-                  label: 'Pending release',
-                  value: 'Rs. ${pending.toStringAsFixed(0)}',
+                  value: 'Rs. ${totalMonthlyEarnings.toStringAsFixed(0)}',
                 ),
                 const Divider(height: 24),
+                _PayoutRow(
+                  label: employmentStart == null
+                      ? 'Career confirmed collection'
+                      : 'Career collection since ${DateFormat('dd MMM yyyy').format(employmentStart)}',
+                  value: 'Rs. ${lifetimeCollection.toStringAsFixed(0)}',
+                ),
                 _PayoutRow(label: 'Recorded bills', value: '${bills.length}'),
                 const SizedBox(height: 8),
                 const Text(
@@ -3497,9 +5176,9 @@ List<_EarningPoint> _earningPointsForRange({
 double _sumBillsForDay(List<Bill> bills, DateTime date) {
   return bills
       .where((bill) =>
-          bill.createdAt.year == date.year &&
-          bill.createdAt.month == date.month &&
-          bill.createdAt.day == date.day)
+          bill.revenueDate.year == date.year &&
+          bill.revenueDate.month == date.month &&
+          bill.revenueDate.day == date.day)
       .fold<double>(0, (sum, bill) => sum + bill.amount);
 }
 
@@ -3653,45 +5332,6 @@ class _MiniEarningChip extends StatelessWidget {
   }
 }
 
-class _StatusRail extends StatelessWidget {
-  const _StatusRail({required this.status});
-
-  final BookingStatus status;
-
-  @override
-  Widget build(BuildContext context) {
-    const steps = [
-      BookingStatus.technicianAssigned,
-      BookingStatus.accepted,
-      BookingStatus.onTheWay,
-      BookingStatus.arrived,
-      BookingStatus.customerConfirmedArrival,
-      BookingStatus.estimateSent,
-      BookingStatus.estimateRejected,
-      BookingStatus.estimateApproved,
-      BookingStatus.serviceStarted,
-      BookingStatus.workCompletedPendingCustomer,
-      BookingStatus.onHold,
-      BookingStatus.serviceCompleted,
-    ];
-    final index = steps.indexOf(status);
-    return Row(
-      children: List.generate(steps.length, (i) {
-        final passed = index >= i;
-        return Expanded(
-          child: Container(
-            height: 5,
-            margin: EdgeInsets.only(right: i == steps.length - 1 ? 0 : 4),
-            decoration: BoxDecoration(
-                color: passed ? AppTheme.accent : AppTheme.divider,
-                borderRadius: BorderRadius.circular(20)),
-          ),
-        );
-      }),
-    );
-  }
-}
-
 class _InfoRow extends StatelessWidget {
   const _InfoRow(
       {required this.icon,
@@ -3724,15 +5364,20 @@ class _InfoRow extends StatelessWidget {
 }
 
 class _MetricCard extends StatelessWidget {
-  const _MetricCard({required this.label, required this.value});
+  const _MetricCard({
+    required this.label,
+    required this.value,
+    this.width = 180,
+  });
 
   final String label;
   final String value;
+  final double width;
 
   @override
   Widget build(BuildContext context) {
     return SizedBox(
-      width: 180,
+      width: width,
       child: Card(
         child: Padding(
           padding: const EdgeInsets.all(16),

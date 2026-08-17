@@ -12,8 +12,10 @@ class PushTokenService {
   bool _foregroundListenerAttached = false;
   final Set<String> _registeredUsers = <String>{};
 
-  Future<void> registerTechnician({
+  Future<void> registerUser({
     required String userId,
+    required String role,
+    String? branchId,
     required FirebaseFirestore firestore,
   }) async {
     if (_registeredUsers.contains(userId)) return;
@@ -24,6 +26,8 @@ class PushTokenService {
     await _saveToken(
       firestore: firestore,
       userId: userId,
+      role: role,
+      branchId: branchId,
       token: token,
     );
     _registeredUsers.add(userId);
@@ -31,6 +35,8 @@ class PushTokenService {
       _saveToken(
         firestore: firestore,
         userId: userId,
+        role: role,
+        branchId: branchId,
         token: newToken,
       );
     });
@@ -40,16 +46,29 @@ class PushTokenService {
   Future<void> _saveToken({
     required FirebaseFirestore firestore,
     required String userId,
+    required String role,
+    String? branchId,
     required String token,
   }) {
     return firestore.collection('device_tokens').doc(userId).set({
       'userId': userId,
       'token': token,
       'platform': defaultTargetPlatform.name,
-      'role': 'technician',
+      'role': role,
+      'branchId': branchId,
       'updatedAt': FieldValue.serverTimestamp(),
     }, SetOptions(merge: true));
   }
+
+  Future<void> registerTechnician({
+    required String userId,
+    required FirebaseFirestore firestore,
+  }) => registerUser(
+        userId: userId,
+        role: 'technician',
+        branchId: null,
+        firestore: firestore,
+      );
 
   void _attachForegroundListener() {
     if (_foregroundListenerAttached) return;

@@ -9,6 +9,12 @@ class Bill {
     required this.amount,
     required this.createdAt,
     required this.isPaid,
+    this.serviceAmount,
+    this.labourCharge,
+    this.partsCharge,
+    this.adjustmentReason,
+    this.cgstAmount,
+    this.sgstAmount,
     this.branchId,
     this.revenueBranchId,
     this.applianceType,
@@ -19,6 +25,8 @@ class Bill {
     this.technicianCompletedWorkAt,
     this.customerConfirmedWorkCompletedAt,
     this.paymentMode,
+    this.amountReceived,
+    this.paymentProofUrl,
     this.paymentSubmittedAt,
     this.paymentConfirmedAt,
     this.paymentConfirmedBy,
@@ -34,6 +42,14 @@ class Bill {
   final double amount;
   final DateTime createdAt;
   final bool isPaid;
+  /// Pre-tax service charge. Legacy bills use [amount] as their total.
+  final double? serviceAmount;
+  /// Actual on-site charges entered by the technician for the final invoice.
+  final double? labourCharge;
+  final double? partsCharge;
+  final String? adjustmentReason;
+  final double? cgstAmount;
+  final double? sgstAmount;
   final String? branchId;
   final String? revenueBranchId;
   final String? applianceType;
@@ -44,6 +60,8 @@ class Bill {
   final DateTime? technicianCompletedWorkAt;
   final DateTime? customerConfirmedWorkCompletedAt;
   final String? paymentMode;
+  final double? amountReceived;
+  final String? paymentProofUrl;
   final DateTime? paymentSubmittedAt;
   final DateTime? paymentConfirmedAt;
   final String? paymentConfirmedBy;
@@ -53,6 +71,11 @@ class Bill {
 
   DateTime get revenueDate =>
       paidAt ?? paymentApprovedAt ?? paymentConfirmedAt ?? createdAt;
+
+  double get taxableAmount => serviceAmount ?? amount;
+  double get cgst => cgstAmount ?? 0;
+  double get sgst => sgstAmount ?? 0;
+  double get totalTax => cgst + sgst;
 
   bool get hasPaymentForApproval =>
       !isPaid && (paymentMode ?? '').trim().isNotEmpty;
@@ -70,7 +93,7 @@ class Bill {
 
   String get paymentStatusLabel {
     if (isPaid) return 'Payment confirmed';
-    if (hasPaymentForApproval) return 'Awaiting technician confirmation';
+    if (hasPaymentForApproval) return 'Awaiting customer confirmation';
     return 'Payment due';
   }
 
@@ -84,6 +107,12 @@ class Bill {
       amount: (data['amount'] as num?)?.toDouble() ?? 0,
       createdAt: (data['createdAt'] as Timestamp?)?.toDate() ?? DateTime.now(),
       isPaid: data['isPaid'] as bool? ?? false,
+      serviceAmount: (data['serviceAmount'] as num?)?.toDouble(),
+      labourCharge: (data['labourCharge'] as num?)?.toDouble(),
+      partsCharge: (data['partsCharge'] as num?)?.toDouble(),
+      adjustmentReason: data['adjustmentReason'] as String?,
+      cgstAmount: (data['cgstAmount'] as num?)?.toDouble(),
+      sgstAmount: (data['sgstAmount'] as num?)?.toDouble(),
       branchId: data['branchId'] as String?,
       revenueBranchId: data['revenueBranchId'] as String?,
       applianceType: data['applianceType'] as String?,
@@ -96,6 +125,8 @@ class Bill {
       customerConfirmedWorkCompletedAt:
           (data['customerConfirmedWorkCompletedAt'] as Timestamp?)?.toDate(),
       paymentMode: data['paymentMode'] as String?,
+      amountReceived: (data['amountReceived'] as num?)?.toDouble(),
+      paymentProofUrl: data['paymentProofUrl'] as String?,
       paymentSubmittedAt: (data['paymentSubmittedAt'] as Timestamp?)?.toDate(),
       paymentConfirmedAt: (data['paymentConfirmedAt'] as Timestamp?)?.toDate(),
       paymentConfirmedBy: data['paymentConfirmedBy'] as String?,

@@ -79,3 +79,38 @@ test('GPS persistence updates latest point and appends immutable history', async
   assert.equal(writes[1].data.activeBookingId, 'booking-1');
   assert.equal(writes[1].data.branchId, 'branch-a');
 });
+
+test('GPS replay history is limited to one point per technician per minute', async () => {
+  const writes = [];
+  const technicianRef = {
+    path: 'technician_locations/tech-minute',
+    collection() {
+      return { doc: () => ({ path: 'technician_locations/tech-minute/history/point' }) };
+    },
+  };
+  const firestore = {
+    collection() { return { doc: () => technicianRef }; },
+    batch() {
+      return {
+        set(ref, data, options) { writes.push({ ref, data, options }); },
+        async commit() {},
+      };
+    },
+  };
+  const update = normalizeGpsPayload({
+    technicianId: 'tech-minute', jobId: 'booking-1',
+    latitude: 13.0827, longitude: 80.2707,
+  });
+
+  await persistGpsUpdate(update, firestore);
+  await persistGpsUpdate(update, firestore);
+
+  assert.equal(
+    writes.filter((write) => write.ref.path.includes('/history/')).length,
+    1,
+  );
+  assert.equal(
+    writes.filter((write) => write.ref.path === 'technician_locations/tech-minute').length,
+    2,
+  );
+});

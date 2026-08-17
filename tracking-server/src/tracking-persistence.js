@@ -1,5 +1,10 @@
 import { FieldValue } from 'firebase-admin/firestore';
 
+// Live map telemetry can arrive every few seconds. Keep the current location
+// fresh, but retain one immutable replay point per technician per minute.
+const lastHistoryWriteAtByTechnician = new Map();
+const historyIntervalMs = 60 * 1000;
+
 export function normalizeGpsPayload(payload) {
   const required = ['technicianId', 'jobId', 'latitude', 'longitude'];
   for (const key of required) {
@@ -36,13 +41,21 @@ export function normalizeGpsPayload(payload) {
 export async function persistGpsUpdate(update, firestore) {
   const technicianRef = firestore.collection('technician_locations')
     .doc(update.technicianId);
-  const historyRef = technicianRef.collection('history').doc();
+  const receivedAt = new Date();
+  const previousHistoryWriteAt = lastHistoryWriteAtByTechnician
+    .get(update.technicianId);
+  const recordHistory = previousHistoryWriteAt === undefined ||
+    receivedAt.getTime() - previousHistoryWriteAt >= historyIntervalMs;
+  const historyRef = recordHistory
+    ? technicianRef.collection('history').doc()
+    : null;
   const data = {
     technicianId: update.technicianId,
     latitude: update.latitude,
     longitude: update.longitude,
     updatedAt: FieldValue.serverTimestamp(),
-    capturedAt: new Date(update.updatedAt),
+    // Use server receipt time for a trustworthy, ordered replay timeline.
+    capturedAt: receivedAt,
     activeBookingId: update.jobId,
     branchId: update.adminBranchId,
     heading: update.heading,
@@ -53,8 +66,11 @@ export async function persistGpsUpdate(update, firestore) {
   };
   const batch = firestore.batch();
   batch.set(technicianRef, data, { merge: true });
-  batch.set(historyRef, data);
+  if (historyRef) batch.set(historyRef, data);
   await batch.commit();
+  if (recordHistory) {
+    lastHistoryWriteAtByTechnician.set(update.technicianId, receivedAt.getTime());
+  }
 }
 
 function numberOrNull(value) {

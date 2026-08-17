@@ -76,8 +76,17 @@ service firebase.storage {
     match /bookings/{bookingId}/{stage}/{fileName} {
       allow read: if canReadBooking(bookingId);
       allow write: if signedIn()
+        && ((booking(bookingId).technicianId == request.auth.uid
+            && stage in ['before', 'during', 'after'])
+          || (booking(bookingId).customerId == request.auth.uid
+            && stage == 'customer'))
+        && isImageUpload();
+    }
+
+    match /payment_proofs/{bookingId}/{fileName} {
+      allow read: if canReadBooking(bookingId);
+      allow write: if signedIn()
         && booking(bookingId).technicianId == request.auth.uid
-        && stage in ['before', 'during', 'after']
         && isImageUpload();
     }
 

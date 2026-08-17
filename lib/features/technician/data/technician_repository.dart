@@ -81,7 +81,10 @@ class TechnicianRepository {
     });
   }
 
-  Future<void> updateLocation(TechnicianLocation location) async {
+  Future<void> updateLocation(
+    TechnicianLocation location, {
+    required bool recordHistory,
+  }) async {
     final technicianRef = _firestore
         .collection('technician_locations')
         .doc(location.technicianId);
@@ -92,12 +95,13 @@ class TechnicianRepository {
         location: location,
         technicianRef: technicianRef,
         historyRef: historyRef,
+        recordHistory: recordHistory,
       );
       return;
     }
     final batch = _firestore.batch();
     batch.set(technicianRef, location.toJson(), SetOptions(merge: true));
-    batch.set(historyRef, location.toJson());
+    if (recordHistory) batch.set(historyRef, location.toJson());
     await batch.commit();
   }
 
@@ -105,6 +109,7 @@ class TechnicianRepository {
     required TechnicianLocation location,
     required DocumentReference<Map<String, dynamic>> technicianRef,
     required DocumentReference<Map<String, dynamic>> historyRef,
+    required bool recordHistory,
   }) async {
     final dateKey = overtimeDayKey(location.updatedAt);
     final overtimeRef = _firestore
@@ -114,7 +119,7 @@ class TechnicianRepository {
       final existing = await transaction.get(overtimeRef);
       transaction.set(
           technicianRef, location.toJson(), SetOptions(merge: true));
-      transaction.set(historyRef, location.toJson());
+      if (recordHistory) transaction.set(historyRef, location.toJson());
       transaction.set(
           overtimeRef,
           {
@@ -200,7 +205,26 @@ class TechnicianRepository {
     return _firestore.collection('technician_locations').doc(technicianId).set({
       'activeBookingId': FieldValue.delete(),
       'isOnline': false,
+      'isOnDuty': false,
+      'shiftClosedAt': FieldValue.serverTimestamp(),
       'speed': 0,
+      'updatedAt': FieldValue.serverTimestamp(),
+    }, SetOptions(merge: true));
+  }
+
+  Future<void> beginWorkdayTracking({
+    required String technicianId,
+    required String branchId,
+    required String attendanceId,
+  }) {
+    return _firestore.collection('technician_locations').doc(technicianId).set({
+      'technicianId': technicianId,
+      'branchId': branchId,
+      'attendanceId': attendanceId,
+      'isOnline': true,
+      'isOnDuty': true,
+      'shiftStartedAt': FieldValue.serverTimestamp(),
+      'shiftClosedAt': FieldValue.delete(),
       'updatedAt': FieldValue.serverTimestamp(),
     }, SetOptions(merge: true));
   }

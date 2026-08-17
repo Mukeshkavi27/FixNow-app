@@ -1,4 +1,5 @@
-import { applicationDefault, getApps, initializeApp } from 'firebase-admin/app';
+import { readFileSync } from 'node:fs';
+import { applicationDefault, cert, getApps, initializeApp } from 'firebase-admin/app';
 import { getAuth } from 'firebase-admin/auth';
 import { getFirestore } from 'firebase-admin/firestore';
 import { getMessaging } from 'firebase-admin/messaging';
@@ -10,8 +11,13 @@ const projectId = process.env.FIREBASE_PROJECT_ID
   ?? 'fixnow-a6515';
 
 if (getApps().length === 0) {
+  const serviceAccountPath = process.env.GOOGLE_APPLICATION_CREDENTIALS;
   initializeApp({
-    credential: applicationDefault(),
+    // A local service-account key signs custom login tokens directly. This
+    // avoids a runtime dependency on the IAM Credentials API.
+    credential: serviceAccountPath
+        ? cert(JSON.parse(readFileSync(serviceAccountPath, 'utf8')))
+        : applicationDefault(),
     projectId,
   });
 }

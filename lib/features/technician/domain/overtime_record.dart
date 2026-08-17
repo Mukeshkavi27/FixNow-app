@@ -9,7 +9,7 @@ DateTime technicianOvertimeStart(DateTime day) =>
     DateTime(day.year, day.month, day.day, technicianOvertimeStartHour);
 
 DateTime technicianTrackingDayEnd(DateTime day) =>
-    DateTime(day.year, day.month, day.day + 1);
+    DateTime(day.year, day.month, day.day, technicianOvertimeStartHour);
 
 bool isTechnicianOvertime(DateTime timestamp) =>
     !timestamp.isBefore(technicianOvertimeStart(timestamp)) &&

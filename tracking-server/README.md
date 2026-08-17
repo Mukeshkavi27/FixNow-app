@@ -42,6 +42,24 @@ PORT=8088
 CORS_ORIGIN=http://localhost:5200,https://your-app.web.app
 ROUTE_CACHE_METERS=120
 ROUTE_DEVIATION_METERS=90
+FIREBASE_WEB_API_KEY=your_web_api_key
+```
+
+## Mobile number + password login
+
+The app supports a no-SMS login using the registered mobile number and the
+existing Firebase password. The tracking server resolves a normalized phone
+number privately, verifies the password with Firebase Authentication, and
+returns a short-lived Firebase custom token. The Flutter app never receives an
+email lookup or Firebase project key.
+
+Set `FIREBASE_WEB_API_KEY` on the tracking server (the Firebase Web API key in
+`lib/firebase_options.dart`) and deploy/restart the server. Backfill existing
+profiles first; the command is a dry run unless `--apply` is supplied:
+
+```bash
+npm run migrate:phone-login
+npm run migrate:phone-login -- --apply
 ```
 
 The Flutter Super Admin console calls this service through
@@ -62,6 +80,10 @@ the assigned branch, and the immutable `audit_logs` collection.
 - `tracking:join-admin` joins the global admin room.
 - `tracking:gps` accepts technician telemetry and broadcasts `tracking:update`.
 - `tracking:stop` marks the technician offline for that active job.
+
+The live location document is refreshed as GPS telemetry arrives. For replay,
+the server stores one immutable location point per technician per minute in
+`technician_locations/{technicianId}/history`, using the server receipt time.
 
 ## RBAC migration
 

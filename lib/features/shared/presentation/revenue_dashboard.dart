@@ -6,6 +6,7 @@ import '../../../app/widgets/fixnow_admin_shell.dart';
 import '../../../core/branches/branch_info.dart';
 import '../../auth/domain/app_user.dart';
 import '../../bookings/domain/booking.dart';
+import '../../technician/domain/attendance.dart';
 import '../domain/bill.dart';
 import '../domain/revenue_analytics.dart';
 import '../domain/technician_compensation.dart';
@@ -20,6 +21,7 @@ class RevenueDashboard extends StatefulWidget {
     required this.technicians,
     required this.now,
     this.incentives = const [],
+    this.attendance = const [],
     this.lockedBranchId,
     this.title = 'Revenue and analytics',
     this.subtitle = 'Paid collection performance and reports',
@@ -31,6 +33,7 @@ class RevenueDashboard extends StatefulWidget {
   final List<AppUser> technicians;
   final DateTime now;
   final List<TechnicianIncentive> incentives;
+  final List<Attendance> attendance;
   final String? lockedBranchId;
   final String title;
   final String subtitle;
@@ -90,10 +93,6 @@ class _RevenueDashboardState extends State<RevenueDashboard> {
         .toList()
       ..sort(
           (left, right) => right.monthlySalary.compareTo(left.monthlySalary));
-    final monthlyPayroll = salariedTechnicians.fold<double>(
-      0,
-      (sum, technician) => sum + technician.monthlySalary,
-    );
     final highestSalary = salariedTechnicians.isEmpty
         ? 0.0
         : salariedTechnicians.first.monthlySalary;
@@ -153,16 +152,19 @@ class _RevenueDashboardState extends State<RevenueDashboard> {
       }
     }
     compensationRows.sort((left, right) => right.total.compareTo(left.total));
-    final automaticIncentive = compensationRows.fold<double>(
-      0,
-      (sum, row) => sum + row.ruleIncentive,
-    );
-    final additionalIncentive = compensationRows.fold<double>(
-      0,
-      (sum, row) => sum + row.additionalIncentive,
-    );
     final showFilter =
         widget.lockedBranchId == null && widget.branches.isNotEmpty;
+    final todayAttendance = widget.attendance.where((record) {
+      final sameDay = record.timestamp.year == widget.now.year &&
+          record.timestamp.month == widget.now.month &&
+          record.timestamp.day == widget.now.day;
+      return sameDay &&
+          (selectedBranch == null || record.branchId == selectedBranch);
+    }).toList();
+    final absentToday =
+        todayAttendance.where((record) => record.status == 'absent').length;
+    final lateToday =
+        todayAttendance.where((record) => record.status == 'late').length;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -221,9 +223,11 @@ class _RevenueDashboardState extends State<RevenueDashboard> {
         const SizedBox(height: 20),
         _MetricGrid(
           analytics: analytics,
-          monthlyPayroll: monthlyPayroll,
-          automaticIncentive: automaticIncentive,
-          additionalIncentive: additionalIncentive,
+        ),
+        const SizedBox(height: 12),
+        _TodayAttendanceOverview(
+          absent: absentToday,
+          late: lateToday,
         ),
         const SizedBox(height: 18),
         LayoutBuilder(
@@ -366,17 +370,85 @@ class _RevenueDashboardState extends State<RevenueDashboard> {
   }
 }
 
+class _TodayAttendanceOverview extends StatelessWidget {
+  const _TodayAttendanceOverview({required this.absent, required this.late});
+
+  final int absent;
+  final int late;
+
+  @override
+  Widget build(BuildContext context) {
+    Widget metric({
+      required String label,
+      required int value,
+      required IconData icon,
+      required Color color,
+    }) {
+      return Container(
+        width: 250,
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: color.withValues(alpha: 0.35)),
+        ),
+        child: Row(
+          children: [
+            Container(
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: color.withValues(alpha: 0.12),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Icon(icon, color: color),
+            ),
+            const SizedBox(width: 12),
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(label, style: const TextStyle(color: AppTheme.textSecondary)),
+                const SizedBox(height: 3),
+                Text(
+                  '$value',
+                  style: TextStyle(
+                    color: color,
+                    fontSize: 24,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      );
+    }
+
+    return Wrap(
+      spacing: 12,
+      runSpacing: 12,
+      children: [
+        metric(
+          label: 'Today absent',
+          value: absent,
+          icon: Icons.person_off_outlined,
+          color: const Color(0xFFD95C2A),
+        ),
+        metric(
+          label: 'Today late',
+          value: late,
+          icon: Icons.schedule_outlined,
+          color: const Color(0xFFF08C00),
+        ),
+      ],
+    );
+  }
+}
+
 class _MetricGrid extends StatelessWidget {
   const _MetricGrid({
     required this.analytics,
-    required this.monthlyPayroll,
-    required this.automaticIncentive,
-    required this.additionalIncentive,
   });
   final RevenueAnalytics analytics;
-  final double monthlyPayroll;
-  final double automaticIncentive;
-  final double additionalIncentive;
 
   @override
   Widget build(BuildContext context) {
@@ -410,30 +482,6 @@ class _MetricGrid extends StatelessWidget {
         analytics.allTime,
         Icons.account_balance_wallet_outlined,
         const Color(0xFF0F766E)
-      ),
-      (
-        'Monthly base salary',
-        monthlyPayroll,
-        Icons.payments_outlined,
-        const Color(0xFF7B61FF)
-      ),
-      (
-        'Automatic incentive',
-        automaticIncentive,
-        Icons.auto_graph_outlined,
-        AppTheme.instantGreen
-      ),
-      (
-        'Admin-added incentive',
-        additionalIncentive,
-        Icons.card_giftcard_outlined,
-        AppTheme.accent
-      ),
-      (
-        'Total technician payout',
-        monthlyPayroll + automaticIncentive + additionalIncentive,
-        Icons.account_balance_wallet_outlined,
-        const Color(0xFF7B61FF)
       ),
     ];
     return LayoutBuilder(

@@ -1,4 +1,4 @@
-import { FieldValue, Timestamp } from 'firebase-admin/firestore';
+import { FieldValue } from 'firebase-admin/firestore';
 
 const istOffsetMinutes = 330;
 
@@ -6,7 +6,9 @@ export function attendanceActionAt(now = new Date()) {
   const ist = new Date(now.getTime() + istOffsetMinutes * 60_000);
   const minutes = ist.getUTCHours() * 60 + ist.getUTCMinutes();
   const dayKey = `${ist.getUTCFullYear()}-${String(ist.getUTCMonth() + 1).padStart(2, '0')}-${String(ist.getUTCDate()).padStart(2, '0')}`;
-  if (minutes >= 585) return { action: 'absent', dayKey, slot: '09:45' };
+  // 09:45 is the late threshold, not an automatic absence. Technicians must
+  // still be able to complete selfie + location attendance after the cut-off.
+  if (minutes >= 585) return { action: null, dayKey };
   if (minutes < 540 || minutes > 580 || minutes % 10 !== 0) return { action: null, dayKey };
   return { action: 'reminder', dayKey, slot: `${String(Math.floor(minutes / 60)).padStart(2, '0')}:${String(minutes % 60).padStart(2, '0')}` };
 }
@@ -81,16 +83,6 @@ export async function runAttendanceAutomation(
             }).catch(() => {});
         }
       }
-    } else {
-      await attendanceRef.create({
-        technicianId: technician.id,
-        branchId: data.branchId ?? null,
-        selfieUrl: '', latitude: 0, longitude: 0,
-        timestamp: Timestamp.fromDate(now), status: 'absent',
-        absentReason: 'Not Marked', markedBy: 'system',
-        faceMatchPassed: false, geofencePassed: false,
-        locationSource: 'none', createdAt: FieldValue.serverTimestamp(),
-      }).catch((error) => { if (error.code !== 6 && error.code !== 'already-exists') throw error; });
     }
     processed += 1;
   }));

@@ -20,6 +20,7 @@ class TechnicianPerformance {
     required this.technician,
     required this.dailyEarnings,
     required this.monthlyEarnings,
+    required this.lifetimeCollections,
     required this.completedJobs,
     required this.pendingCollections,
     required this.activeBookings,
@@ -31,6 +32,9 @@ class TechnicianPerformance {
   final AppUser technician;
   final double dailyEarnings;
   final double monthlyEarnings;
+
+  /// Confirmed customer collections from the technician's approved/join date.
+  final double lifetimeCollections;
   final int completedJobs;
   final double pendingCollections;
   final int activeBookings;
@@ -93,15 +97,21 @@ List<TechnicianPerformance> buildTechnicianPerformance({
   return technicians.map((technician) {
     final technicianBills =
         bills.where((bill) => bill.technicianId == technician.uid).toList();
+    final employmentStart = technician.approvedAt ?? technician.createdAt;
+    final paidSinceJoining = technicianBills.where(
+      (bill) => bill.isPaid && !bill.revenueDate.isBefore(employmentStart),
+    );
     final dailyEarnings = technicianBills
-        .where((bill) => bill.isPaid && isSameDay(bill.createdAt, now))
+        .where((bill) => bill.isPaid && isSameDay(bill.revenueDate, now))
         .fold<double>(0, (sum, bill) => sum + bill.amount);
     final monthlyEarnings = technicianBills
         .where((bill) =>
             bill.isPaid &&
-            bill.createdAt.year == now.year &&
-            bill.createdAt.month == now.month)
+            bill.revenueDate.year == now.year &&
+            bill.revenueDate.month == now.month)
         .fold<double>(0, (sum, bill) => sum + bill.amount);
+    final lifetimeCollections =
+        paidSinceJoining.fold<double>(0, (sum, bill) => sum + bill.amount);
     final pendingCollections = technicianBills
         .where((bill) => !bill.isPaid)
         .fold<double>(0, (sum, bill) => sum + bill.amount);
@@ -126,6 +136,7 @@ List<TechnicianPerformance> buildTechnicianPerformance({
       technician: technician,
       dailyEarnings: dailyEarnings,
       monthlyEarnings: monthlyEarnings,
+      lifetimeCollections: lifetimeCollections,
       completedJobs: completedJobs,
       pendingCollections: pendingCollections,
       activeBookings: activeBookings,

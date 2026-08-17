@@ -175,7 +175,20 @@ class FixNowAdminShell extends StatelessWidget {
                             selectedId: selectedId,
                             onSelected: onDestinationSelected,
                           ),
-                        Expanded(child: RepaintBoundary(child: body)),
+                        Expanded(
+                          child: Align(
+                            alignment: Alignment.topCenter,
+                            child: ConstrainedBox(
+                              constraints: const BoxConstraints(maxWidth: 1500),
+                              child: Padding(
+                                padding: EdgeInsets.symmetric(
+                                  horizontal: desktop ? 24 : 12,
+                                ),
+                                child: RepaintBoundary(child: body),
+                              ),
+                            ),
+                          ),
+                        ),
                       ],
                     ),
                   ),
@@ -609,7 +622,7 @@ class _AdminTopBar extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  title,
+                  'Hello, ${userName.trim().isEmpty ? roleLabel : userName.trim().split(' ').first}',
                   style: const TextStyle(
                     color: AppTheme.textPrimary,
                     fontSize: 18,
@@ -618,7 +631,7 @@ class _AdminTopBar extends StatelessWidget {
                 ),
                 const SizedBox(height: 2),
                 Text(
-                  contextLabel,
+                  '$title · $contextLabel',
                   style: const TextStyle(
                     color: AppTheme.textSecondary,
                     fontSize: 12,

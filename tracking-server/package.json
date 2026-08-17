@@ -9,7 +9,12 @@
     "test": "node --test",
     "migrate:rbac": "node scripts/migrate-rbac.js",
     "migrate:booking-branches": "node scripts/migrate-booking-branches.js",
-    "migrate:review-branches": "node scripts/migrate-review-branches.js"
+    "migrate:review-branches": "node scripts/migrate-review-branches.js",
+    "migrate:phone-login": "node scripts/backfill-phone-normalized.js",
+    "migrate:legacy-gst-bills": "node scripts/reissue-legacy-unpaid-bills-with-gst.js",
+    "audit:booking-data": "node scripts/audit-booking-data.js",
+    "clear:booking-data": "node scripts/clear-booking-data.js",
+    "test:scale": "node scripts/scale-automation-test.js"
   },
   "dependencies": {
     "@googlemaps/google-maps-services-js": "^3.4.0",

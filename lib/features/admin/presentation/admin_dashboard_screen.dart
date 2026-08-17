@@ -22,11 +22,13 @@ import '../../../core/enums/booking_status.dart';
 import '../../../core/enums/user_role.dart';
 import '../../../core/enums/technician_category.dart';
 import '../../../core/maps/google_static_map.dart';
+import '../../../core/services/reverse_geocoding_service.dart';
 import '../../auth/data/auth_repository.dart';
 import '../../auth/domain/app_user.dart';
 import '../../bookings/data/booking_repository.dart';
 import '../../bookings/domain/booking.dart';
 import '../../shared/data/bill_repository.dart';
+import '../../shared/data/attendance_pdf_service.dart';
 import '../../shared/data/notification_repository.dart';
 import '../../shared/data/review_repository.dart';
 import '../../shared/data/technician_incentive_repository.dart';
@@ -52,6 +54,15 @@ final allBookingsProvider = StreamProvider.autoDispose<List<Booking>>((ref) {
   return ref
       .watch(bookingRepositoryProvider)
       .watchAllBookings(branchId: branchId);
+});
+
+final visitedLocationAddressProvider = FutureProvider.autoDispose
+    .family<ReverseGeocodingResult?, ({double latitude, double longitude})>(
+        (ref, coordinates) {
+  return ref.watch(reverseGeocodingServiceProvider).reverse(
+        latitude: coordinates.latitude,
+        longitude: coordinates.longitude,
+      );
 });
 
 final techniciansProvider = StreamProvider.autoDispose<List<AppUser>>((ref) {
@@ -154,6 +165,13 @@ final branchApprovalNotificationsProvider =
       .watchBranchApprovalNotifications(branchId);
 });
 
+final branchAlertsProvider =
+    StreamProvider.autoDispose<List<AppNotification>>((ref) {
+  final branchId = ref.watch(currentUserProvider).valueOrNull?.branchId;
+  if (branchId == null || branchId.isEmpty) return Stream.value(const []);
+  return ref.watch(notificationRepositoryProvider).watchBranchAlerts(branchId);
+});
+
 const _idleTechnicianThreshold = Duration(minutes: 15);
 
 String _registeredTechnicianName(AppUser technician) {
@@ -169,9 +187,11 @@ enum _AdminTab {
   overview('Overview', Icons.dashboard_outlined),
   bookings('Bookings', Icons.assignment_outlined),
   attendance('Technicians', Icons.engineering_outlined),
+  pastTechnicians('Past technicians', Icons.person_off_outlined),
   performance('Performance', Icons.leaderboard_outlined),
   revenue('Revenue & reports', Icons.assessment_outlined),
-  monitoring('Monitoring', Icons.location_searching_outlined);
+  monitoring('Monitoring', Icons.location_searching_outlined),
+  locationHistory('Location history', Icons.route_outlined);
 
   const _AdminTab(this.label, this.icon);
   final String label;
@@ -453,6 +473,8 @@ class _AdminDashboardScreenState extends ConsumerState<AdminDashboardScreen> {
                           jobsAtRisk:
                               overdueBookings.length + idleTechnicians.length,
                           idleTechnicians: idleTechnicians.length,
+                          pendingRequests: pendingRequests,
+                          branches: branches,
                           onReview: () {
                             setState(() {
                               _selectedAdminTab = _AdminTab.bookings;
@@ -500,12 +522,19 @@ class _AdminDashboardScreenState extends ConsumerState<AdminDashboardScreen> {
                           },
                         ),
                       _AdminTab.attendance => _TechnicianWorkspaceSection(
-                          performance: performance,
+                          performance: performance
+                              .where((item) => item.technician.isActive)
+                              .toList(),
                           bookings: branchBookings,
                           locations: locations,
                           attendance: attendanceProviderValue,
                           attendanceLoading: attendanceAsync.isLoading,
                           now: now,
+                        ),
+                      _AdminTab.pastTechnicians => _PastTechniciansSection(
+                          technicians: branchTechnicians
+                              .where((technician) => !technician.isActive)
+                              .toList(),
                         ),
                       _AdminTab.performance => TechnicianPerformanceDashboard(
                           technicians: branchTechnicians,
@@ -522,6 +551,7 @@ class _AdminDashboardScreenState extends ConsumerState<AdminDashboardScreen> {
                           bills: bills,
                           bookings: branchBookings,
                           technicians: branchRevenueTechnicians,
+                          attendance: attendanceProviderValue,
                           incentives: incentivesAsync.valueOrNull ?? const [],
                           branch: effectiveBranch,
                           now: now,
@@ -544,6 +574,14 @@ class _AdminDashboardScreenState extends ConsumerState<AdminDashboardScreen> {
                               overtimeAsync.valueOrNull ?? const [],
                           bills: bills,
                         ),
+                      _AdminTab.locationHistory => _LocationHistorySection(
+                          technicians: branchTechnicians,
+                          selectedTechnicianId: _selectedTechnicianId,
+                          onTechnicianSelected: (technicianId) => setState(
+                            () => _selectedTechnicianId = technicianId,
+                          ),
+                          travelHistory: travelHistoryAsync,
+                        ),
                     };
                     return RefreshIndicator(
                       onRefresh: () async {
@@ -563,8 +601,20 @@ class _AdminDashboardScreenState extends ConsumerState<AdminDashboardScreen> {
                             currentAdmin?.role == UserRole.superAdmin,
                         onSignOut: () =>
                             ref.read(authRepositoryProvider).signOut(),
-                        onTabSelected: (tab) =>
-                            setState(() => _selectedAdminTab = tab),
+                        onTabSelected: (tab) {
+                          setState(() {
+                            _selectedAdminTab = tab;
+                            if (tab == _AdminTab.bookings &&
+                                unassignedBookings.isNotEmpty) {
+                              _selectedBookingSegment =
+                                  _BookingSegment.unassigned;
+                              _selectedStatus = null;
+                              _selectedTechnicianId = null;
+                              _selectedRange = AdminRangeFilter.all;
+                              _searchController.clear();
+                            }
+                          });
+                        },
                         onBranchSelected: (branch) =>
                             setState(() => _selectedBranchId = branch.id),
                         onAddBranch: () => _openBranchDialog(context, ref),
@@ -1467,6 +1517,8 @@ class _OverviewAdminTab extends StatelessWidget {
     required this.overdueBookings,
     required this.jobsAtRisk,
     required this.idleTechnicians,
+    required this.pendingRequests,
+    required this.branches,
     required this.onReview,
   });
 
@@ -1475,6 +1527,8 @@ class _OverviewAdminTab extends StatelessWidget {
   final int overdueBookings;
   final int jobsAtRisk;
   final int idleTechnicians;
+  final List<AppUser> pendingRequests;
+  final List<BranchInfo> branches;
   final VoidCallback onReview;
 
   @override
@@ -1522,7 +1576,67 @@ class _OverviewAdminTab extends StatelessWidget {
             onReview: onReview,
           ),
         ],
+        const _BranchJobAlertsSection(),
+        if (pendingRequests.isNotEmpty) ...[
+          const SizedBox(height: 20),
+          _PendingTechnicianSection(
+            requests: pendingRequests,
+            branches: branches,
+          ),
+        ],
       ],
+    );
+  }
+}
+
+class _BranchJobAlertsSection extends ConsumerWidget {
+  const _BranchJobAlertsSection();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final alerts = (ref.watch(branchAlertsProvider).valueOrNull ??
+            const <AppNotification>[])
+        .where((item) => item.type == 'bookingOnHold' && !item.isRead)
+        .toList();
+    if (alerts.isEmpty) return const SizedBox.shrink();
+    return Padding(
+      padding: const EdgeInsets.only(top: 20),
+      child: _SectionCard(
+        title: 'Technician job alerts',
+        subtitle:
+            '${alerts.length} job${alerts.length == 1 ? '' : 's'} placed on hold by a technician.',
+        child: Column(
+          children: [
+            for (var index = 0; index < alerts.length; index++) ...[
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                leading: const CircleAvatar(
+                  backgroundColor: Color(0xFFFFEEE4),
+                  foregroundColor: Color(0xFFD95C2A),
+                  child: Icon(Icons.pause_circle_outline),
+                ),
+                title: Text(
+                  alerts[index].title,
+                  style: const TextStyle(fontWeight: FontWeight.w900),
+                ),
+                subtitle: Text(alerts[index].body),
+                trailing: TextButton(
+                  onPressed: () async {
+                    await ref
+                        .read(notificationRepositoryProvider)
+                        .markRead(alerts[index].id);
+                    if (context.mounted && alerts[index].bookingId != null) {
+                      context.push('/booking/${alerts[index].bookingId}');
+                    }
+                  },
+                  child: const Text('Review'),
+                ),
+              ),
+              if (index != alerts.length - 1) const Divider(height: 1),
+            ],
+          ],
+        ),
+      ),
     );
   }
 }
@@ -1818,6 +1932,75 @@ class _AdminEmptyBranches extends StatelessWidget {
           ),
         ),
       ),
+    );
+  }
+}
+
+class _PastTechniciansSection extends StatelessWidget {
+  const _PastTechniciansSection({required this.technicians});
+
+  final List<AppUser> technicians;
+
+  @override
+  Widget build(BuildContext context) {
+    return _SectionCard(
+      title: 'Past technicians',
+      subtitle:
+          'Inactive technicians are retained here so their service and attendance history remains traceable.',
+      child: technicians.isEmpty
+          ? const _InlineEmptyState(
+              icon: Icons.person_off_outlined,
+              message: 'No inactive technicians.',
+            )
+          : Column(
+              children: [
+                for (var index = 0; index < technicians.length; index++) ...[
+                  _PastTechnicianTile(technician: technicians[index]),
+                  if (index != technicians.length - 1)
+                    const Divider(height: 22),
+                ],
+              ],
+            ),
+    );
+  }
+}
+
+class _PastTechnicianTile extends StatelessWidget {
+  const _PastTechnicianTile({required this.technician});
+
+  final AppUser technician;
+
+  @override
+  Widget build(BuildContext context) {
+    final name = _registeredTechnicianName(technician);
+    return Row(
+      children: [
+        CircleAvatar(
+          backgroundColor: const Color(0xFFFFEEE4),
+          foregroundColor: AppTheme.accent,
+          child: Text(name.substring(0, 1).toUpperCase()),
+        ),
+        const SizedBox(width: 12),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(name, style: const TextStyle(fontWeight: FontWeight.w800)),
+              const SizedBox(height: 3),
+              Text(
+                technician.inactivationReason?.trim().isNotEmpty == true
+                    ? 'Inactive: ${technician.inactivationReason}'
+                    : 'Inactive technician',
+                style: const TextStyle(
+                  color: AppTheme.textSecondary,
+                  fontSize: 12,
+                ),
+              ),
+            ],
+          ),
+        ),
+        const _StatusPill(label: 'Inactive', color: Color(0xFFD95C2A)),
+      ],
     );
   }
 }
@@ -2447,13 +2630,6 @@ class _BookingsAdminTab extends StatelessWidget {
           onRangeChanged: onRangeChanged,
           onClear: onClear,
         ),
-        if (pendingRequests.isNotEmpty) ...[
-          const SizedBox(height: 18),
-          _PendingTechnicianSection(
-            requests: pendingRequests,
-            branches: branches,
-          ),
-        ],
         const SizedBox(height: 18),
         _SectionCard(
           title: 'Booking control',
@@ -2678,6 +2854,7 @@ class _RevenueAdminTab extends StatelessWidget {
     required this.bills,
     required this.bookings,
     required this.technicians,
+    required this.attendance,
     required this.incentives,
     required this.branch,
     required this.now,
@@ -2686,6 +2863,7 @@ class _RevenueAdminTab extends StatelessWidget {
   final List<Bill> bills;
   final List<Booking> bookings;
   final List<AppUser> technicians;
+  final List<Attendance> attendance;
   final List<TechnicianIncentive> incentives;
   final BranchInfo branch;
   final DateTime now;
@@ -2697,6 +2875,7 @@ class _RevenueAdminTab extends StatelessWidget {
       bookings: bookings,
       branches: [branch],
       technicians: technicians,
+      attendance: attendance,
       incentives: incentives,
       now: now,
       lockedBranchId: branch.id,
@@ -3079,6 +3258,132 @@ class _LiveMonitoringSection extends StatelessWidget {
   }
 }
 
+class _AbsenteeCalendarCard extends StatefulWidget {
+  const _AbsenteeCalendarCard({
+    required this.attendance,
+    required this.technicians,
+    required this.initialDate,
+  });
+
+  final List<Attendance> attendance;
+  final List<AppUser> technicians;
+  final DateTime initialDate;
+
+  @override
+  State<_AbsenteeCalendarCard> createState() => _AbsenteeCalendarCardState();
+}
+
+class _AbsenteeCalendarCardState extends State<_AbsenteeCalendarCard> {
+  late DateTime _selectedDate = widget.initialDate;
+
+  @override
+  Widget build(BuildContext context) {
+    final absentRecords = widget.attendance.where((record) {
+      return record.status == 'absent' &&
+          record.timestamp.year == _selectedDate.year &&
+          record.timestamp.month == _selectedDate.month &&
+          record.timestamp.day == _selectedDate.day;
+    }).toList();
+    final recordsForSelectedDate = <String, Attendance>{
+      for (final record in widget.attendance)
+        if (DateUtils.isSameDay(record.timestamp, _selectedDate))
+          record.technicianId: record,
+    };
+    final automaticAbsentees = _isAutomaticAbsenceTime(_selectedDate)
+        ? widget.technicians
+            .where((technician) =>
+                !recordsForSelectedDate.containsKey(technician.uid))
+            .toList()
+        : const <AppUser>[];
+    final technicianById = {
+      for (final technician in widget.technicians) technician.uid: technician,
+    };
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFFF4F2),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: const Color(0xFFFFC9C2)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.event_busy_outlined, color: Color(0xFFD95C2A)),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  'Absentees — ${DateFormat('dd MMM yyyy').format(_selectedDate)}',
+                  style: const TextStyle(
+                    fontWeight: FontWeight.w900,
+                    color: AppTheme.textPrimary,
+                  ),
+                ),
+              ),
+              OutlinedButton.icon(
+                onPressed: () async {
+                  final picked = await showDatePicker(
+                    context: context,
+                    initialDate: _selectedDate,
+                    firstDate: DateTime(2024),
+                    lastDate: DateTime.now().add(const Duration(days: 365)),
+                  );
+                  if (picked != null) setState(() => _selectedDate = picked);
+                },
+                icon: const Icon(Icons.calendar_month_outlined, size: 17),
+                label: const Text('Select date'),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          if (absentRecords.isEmpty && automaticAbsentees.isEmpty)
+            const Text('No absentees for this date.')
+          else ...[
+            for (final record in absentRecords)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 6),
+                child: Row(
+                  children: [
+                    const Icon(Icons.person_off_outlined,
+                        size: 18, color: Color(0xFFD95C2A)),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        '${technicianById[record.technicianId]?.name ?? 'Technician'} — ${record.locationSource == 'leaveConfirmation' ? 'On Leave' : 'Attendance not marked'}',
+                        style: const TextStyle(fontWeight: FontWeight.w800),
+                      ),
+                    ),
+                    Text(DateFormat('hh:mm a').format(record.timestamp)),
+                  ],
+                ),
+              ),
+            for (final technician in automaticAbsentees)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 6),
+                child: Row(
+                  children: [
+                    const Icon(Icons.person_off_outlined,
+                        size: 18, color: Color(0xFFD95C2A)),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        '${technician.name} — Attendance not marked by 10:30 AM',
+                        style: const TextStyle(fontWeight: FontWeight.w800),
+                      ),
+                    ),
+                    const Text('10:30 AM'),
+                  ],
+                ),
+              ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
 class _TravelHistorySection extends StatelessWidget {
   const _TravelHistorySection({
     required this.technician,
@@ -3103,6 +3408,64 @@ class _TravelHistorySection extends StatelessWidget {
         technician: technician,
         history: points,
       ),
+    );
+  }
+}
+
+class _LocationHistorySection extends StatelessWidget {
+  const _LocationHistorySection({
+    required this.technicians,
+    required this.selectedTechnicianId,
+    required this.onTechnicianSelected,
+    required this.travelHistory,
+  });
+
+  final List<AppUser> technicians;
+  final String? selectedTechnicianId;
+  final ValueChanged<String?> onTechnicianSelected;
+  final AsyncValue<List<TechnicianLocation>> travelHistory;
+
+  @override
+  Widget build(BuildContext context) {
+    final selectedTechnician = technicians
+        .where((technician) => technician.uid == selectedTechnicianId)
+        .cast<AppUser?>()
+        .firstOrNull;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        _SectionCard(
+          title: 'Day-wise location history',
+          subtitle:
+              'Choose a technician, then select a recorded day and replay their route.',
+          child: DropdownButtonFormField<String>(
+            initialValue: selectedTechnicianId,
+            decoration: const InputDecoration(
+              labelText: 'Technician',
+              prefixIcon: Icon(Icons.engineering_outlined),
+            ),
+            items: [
+              for (final technician in technicians)
+                DropdownMenuItem(
+                  value: technician.uid,
+                  child: Text(_registeredTechnicianName(technician)),
+                ),
+            ],
+            onChanged: onTechnicianSelected,
+          ),
+        ),
+        const SizedBox(height: 16),
+        if (selectedTechnicianId == null)
+          const _InlineEmptyState(
+            icon: Icons.route_outlined,
+            message: 'Select a technician to view day-wise location history.',
+          )
+        else
+          _TravelHistorySection(
+            technician: selectedTechnician,
+            history: travelHistory,
+          ),
+      ],
     );
   }
 }
@@ -3206,6 +3569,7 @@ class _TechnicianTravelReplayPanelState
     final displayed = history.take(safeIndex + 1).toList();
     final current = displayed.last;
     final visited = technicianVisitedLocations(history);
+    final idlePeriods = technicianIdlePeriods(history);
     final distance = technicianTravelDistanceMeters(history);
     final route = displayed
         .map((point) => LatLng(point.latitude, point.longitude))
@@ -3272,6 +3636,7 @@ class _TechnicianTravelReplayPanelState
                     : '${(distance / 1000).toStringAsFixed(2)} km',
               ),
               _MiniStat(label: 'Visited locations', value: '${visited.length}'),
+              _MiniStat(label: 'Idle stops', value: '${idlePeriods.length}'),
               _MiniStat(
                 label: 'Timeline',
                 value:
@@ -3339,6 +3704,29 @@ class _TechnicianTravelReplayPanelState
               );
             },
           ),
+          if (idlePeriods.isNotEmpty) ...[
+            const SizedBox(height: 14),
+            _TravelListCard(
+              title: 'Idle periods (5+ minutes)',
+              child: Column(
+                children: [
+                  for (final period in idlePeriods.reversed.take(20))
+                    ListTile(
+                      dense: true,
+                      contentPadding: EdgeInsets.zero,
+                      leading: const Icon(Icons.pause_circle_outline,
+                          color: Color(0xFFF38A1F)),
+                      title: Text(
+                        '${DateFormat.jm().format(period.startedAt)} - ${DateFormat.jm().format(period.endedAt)}',
+                      ),
+                      subtitle: Text(
+                        '${period.duration.inMinutes} min near ${period.latitude.toStringAsFixed(5)}, ${period.longitude.toStringAsFixed(5)}',
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          ],
         ],
       ),
     );
@@ -3388,21 +3776,43 @@ class _VisitedLocations extends StatelessWidget {
       child: Column(
         children: [
           for (var index = 0; index < points.length; index++)
-            ListTile(
-              dense: true,
-              contentPadding: EdgeInsets.zero,
-              leading: CircleAvatar(
-                radius: 15,
-                child: Text('${index + 1}'),
-              ),
-              title: Text(
-                '${points[index].latitude.toStringAsFixed(5)}, '
-                '${points[index].longitude.toStringAsFixed(5)}',
-              ),
-              subtitle: Text(DateFormat.jm().format(points[index].updatedAt)),
+            _VisitedLocationTile(
+              number: index + 1,
+              point: points[index],
             ),
         ],
       ),
+    );
+  }
+}
+
+class _VisitedLocationTile extends ConsumerWidget {
+  const _VisitedLocationTile({required this.number, required this.point});
+
+  final int number;
+  final TechnicianLocation point;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final coordinates = (
+      latitude: point.latitude,
+      longitude: point.longitude,
+    );
+    final address = ref.watch(visitedLocationAddressProvider(coordinates));
+    return ListTile(
+      dense: true,
+      contentPadding: EdgeInsets.zero,
+      leading: CircleAvatar(radius: 15, child: Text('$number')),
+      title: address.when(
+        loading: () => const Text('Finding location name...'),
+        error: (_, __) => const Text('Location unavailable'),
+        data: (result) => Text(
+          result?.address ?? 'Location unavailable',
+          maxLines: 2,
+          overflow: TextOverflow.ellipsis,
+        ),
+      ),
+      subtitle: Text(DateFormat.jm().format(point.updatedAt)),
     );
   }
 }
@@ -3773,12 +4183,24 @@ class _TechnicianWorkspaceSection extends StatelessWidget {
         monthAttendance.where((record) => !record.faceMatchPassed).length;
 
     return _SectionCard(
-      title: 'Attendance report',
+      title: 'Technician operations',
       subtitle:
-          'Monthly technician sheets with punch-in time, selfie, availability, and Face ID status.',
+          'Search technicians, review attendance exceptions, and manage field availability.',
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          _DailyAttendanceBreakdownCard(
+            attendance: attendance,
+            technicians: performance.map((item) => item.technician).toList(),
+            initialDate: now,
+          ),
+          const SizedBox(height: 14),
+          _AbsenteeCalendarCard(
+            attendance: attendance,
+            technicians: performance.map((item) => item.technician).toList(),
+            initialDate: now,
+          ),
+          const SizedBox(height: 14),
           Wrap(
             spacing: 10,
             runSpacing: 10,
@@ -3808,39 +4230,389 @@ class _TechnicianWorkspaceSection extends StatelessWidget {
               message: 'No technicians are approved for this branch yet.',
             )
           else
-            LayoutBuilder(
-              builder: (context, constraints) {
-                final columns = constraints.maxWidth >= 1120
-                    ? 3
-                    : constraints.maxWidth >= 720
-                        ? 2
-                        : 1;
-                final spacing = 12.0;
-                final cardWidth =
-                    (constraints.maxWidth - spacing * (columns - 1)) / columns;
-                return Wrap(
-                  spacing: spacing,
-                  runSpacing: spacing,
-                  children: [
-                    for (final item in performance)
-                      SizedBox(
-                        width: cardWidth,
-                        child: _AttendanceTechnicianCard(
-                          item: item,
-                          records:
-                              attendanceByTechnician[item.technician.uid] ??
-                                  const [],
-                          location: locationByTechnician[item.technician.uid],
-                          activeBookings:
-                              activeBookingsByTechnician[item.technician.uid] ??
-                                  const [],
-                          now: now,
-                        ),
-                      ),
-                  ],
-                );
-              },
+            _TechnicianDirectoryGrid(
+              performance: performance,
+              attendanceByTechnician: attendanceByTechnician,
+              locationByTechnician: locationByTechnician,
+              activeBookingsByTechnician: activeBookingsByTechnician,
+              now: now,
             ),
+        ],
+      ),
+    );
+  }
+}
+
+class _TechnicianDirectoryGrid extends StatefulWidget {
+  const _TechnicianDirectoryGrid({
+    required this.performance,
+    required this.attendanceByTechnician,
+    required this.locationByTechnician,
+    required this.activeBookingsByTechnician,
+    required this.now,
+  });
+
+  final List<TechnicianPerformance> performance;
+  final Map<String, List<Attendance>> attendanceByTechnician;
+  final Map<String, TechnicianLocation> locationByTechnician;
+  final Map<String, List<Booking>> activeBookingsByTechnician;
+  final DateTime now;
+
+  @override
+  State<_TechnicianDirectoryGrid> createState() =>
+      _TechnicianDirectoryGridState();
+}
+
+class _TechnicianDirectoryGridState extends State<_TechnicianDirectoryGrid> {
+  static const _pageSize = 18;
+  String _query = '';
+  String _attendanceFilter = 'all';
+  int _page = 0;
+
+  String _statusForToday(String technicianId) {
+    for (final record in widget.attendanceByTechnician[technicianId] ??
+        const <Attendance>[]) {
+      if (DateUtils.isSameDay(record.timestamp, widget.now)) {
+        return record.status;
+      }
+    }
+    return _isAutomaticAbsenceTime(widget.now) ? 'absent' : 'notMarked';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final query = _query.trim().toLowerCase();
+    final filtered = widget.performance.where((item) {
+      final technician = item.technician;
+      final matchesSearch = query.isEmpty ||
+          technician.name.toLowerCase().contains(query) ||
+          technician.phone.replaceAll(' ', '').contains(query);
+      return matchesSearch &&
+          (_attendanceFilter == 'all' ||
+              _statusForToday(technician.uid) == _attendanceFilter);
+    }).toList();
+    final maxPage = filtered.isEmpty ? 0 : (filtered.length - 1) ~/ _pageSize;
+    final page = _page.clamp(0, maxPage).toInt();
+    final start = page * _pageSize;
+    final visible = filtered.skip(start).take(_pageSize).toList();
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text('Technician directory',
+            style: TextStyle(fontSize: 17, fontWeight: FontWeight.w900)),
+        const SizedBox(height: 10),
+        LayoutBuilder(builder: (context, constraints) {
+          final search = TextField(
+            onChanged: (value) => setState(() {
+              _query = value;
+              _page = 0;
+            }),
+            decoration: const InputDecoration(
+              prefixIcon: Icon(Icons.search),
+              hintText: 'Search name or mobile number',
+              border: OutlineInputBorder(),
+              isDense: true,
+            ),
+          );
+          final filter = DropdownButtonFormField<String>(
+            isExpanded: true,
+            initialValue: _attendanceFilter,
+            decoration: const InputDecoration(
+                labelText: 'Today',
+                border: OutlineInputBorder(),
+                isDense: true),
+            items: const [
+              DropdownMenuItem(value: 'all', child: Text('All statuses')),
+              DropdownMenuItem(value: 'present', child: Text('Present')),
+              DropdownMenuItem(value: 'late', child: Text('Late')),
+              DropdownMenuItem(value: 'absent', child: Text('Absent')),
+              DropdownMenuItem(value: 'notMarked', child: Text('Not marked')),
+            ],
+            onChanged: (value) => setState(() {
+              _attendanceFilter = value ?? 'all';
+              _page = 0;
+            }),
+          );
+          if (constraints.maxWidth < 620) {
+            return Column(
+                children: [search, const SizedBox(height: 10), filter]);
+          }
+          return Row(children: [
+            Expanded(child: search),
+            const SizedBox(width: 12),
+            SizedBox(width: 180, child: filter),
+          ]);
+        }),
+        const SizedBox(height: 10),
+        Row(children: [
+          Expanded(
+            child: Text(
+              'Showing ${filtered.isEmpty ? 0 : start + 1}-${start + visible.length} of ${filtered.length}',
+              style: const TextStyle(
+                  color: AppTheme.textSecondary, fontWeight: FontWeight.w700),
+            ),
+          ),
+          IconButton(
+              onPressed:
+                  page > 0 ? () => setState(() => _page = page - 1) : null,
+              icon: const Icon(Icons.chevron_left)),
+          Text('${page + 1} / ${maxPage + 1}'),
+          IconButton(
+              onPressed: page < maxPage
+                  ? () => setState(() => _page = page + 1)
+                  : null,
+              icon: const Icon(Icons.chevron_right)),
+        ]),
+        const SizedBox(height: 8),
+        if (visible.isEmpty)
+          const _InlineEmptyState(
+              icon: Icons.search_off_outlined,
+              message: 'No technicians match this filter.')
+        else
+          LayoutBuilder(builder: (context, constraints) {
+            final columns = constraints.maxWidth >= 1120
+                ? 3
+                : constraints.maxWidth >= 720
+                    ? 2
+                    : 1;
+            const gap = 12.0;
+            final width =
+                (constraints.maxWidth - gap * (columns - 1)) / columns;
+            return Wrap(spacing: gap, runSpacing: gap, children: [
+              for (final item in visible)
+                SizedBox(
+                  width: width,
+                  child: _AttendanceTechnicianCard(
+                    item: item,
+                    records:
+                        widget.attendanceByTechnician[item.technician.uid] ??
+                            const [],
+                    location: widget.locationByTechnician[item.technician.uid],
+                    activeBookings: widget
+                            .activeBookingsByTechnician[item.technician.uid] ??
+                        const [],
+                    now: widget.now,
+                  ),
+                ),
+            ]);
+          }),
+      ],
+    );
+  }
+}
+
+class _DailyAttendanceBreakdownCard extends StatefulWidget {
+  const _DailyAttendanceBreakdownCard({
+    required this.attendance,
+    required this.technicians,
+    required this.initialDate,
+  });
+
+  final List<Attendance> attendance;
+  final List<AppUser> technicians;
+  final DateTime initialDate;
+
+  @override
+  State<_DailyAttendanceBreakdownCard> createState() =>
+      _DailyAttendanceBreakdownCardState();
+}
+
+class _DailyAttendanceBreakdownCardState
+    extends State<_DailyAttendanceBreakdownCard> {
+  late DateTime _selectedDate = widget.initialDate;
+
+  @override
+  Widget build(BuildContext context) {
+    final recordsByTechnician = <String, Attendance>{
+      for (final record in widget.attendance)
+        if (DateUtils.isSameDay(record.timestamp, _selectedDate))
+          record.technicianId: record,
+    };
+    final present = <AppUser>[];
+    final late = <AppUser>[];
+    final absent = <AppUser>[];
+    final automaticAbsenceApplies = _isAutomaticAbsenceTime(_selectedDate);
+    for (final technician in widget.technicians) {
+      switch (recordsByTechnician[technician.uid]?.status) {
+        case 'present':
+          present.add(technician);
+        case 'late':
+          late.add(technician);
+        case 'absent':
+          absent.add(technician);
+        case null:
+          if (automaticAbsenceApplies) absent.add(technician);
+      }
+    }
+    final notMarked = widget.technicians.length -
+        present.length -
+        late.length -
+        absent.length;
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF8FAFF),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: const Color(0xFFDDE7F8)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.fact_check_outlined, color: AppTheme.primary),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  "Today's attendance — ${DateFormat('dd MMM yyyy').format(_selectedDate)}",
+                  style: const TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w900,
+                    color: AppTheme.textPrimary,
+                  ),
+                ),
+              ),
+              OutlinedButton.icon(
+                onPressed: () async {
+                  final picked = await showDatePicker(
+                    context: context,
+                    initialDate: _selectedDate,
+                    firstDate: DateTime(2024),
+                    lastDate: DateTime.now().add(const Duration(days: 365)),
+                  );
+                  if (picked != null) setState(() => _selectedDate = picked);
+                },
+                icon: const Icon(Icons.calendar_month_outlined, size: 17),
+                label: const Text('Date'),
+              ),
+            ],
+          ),
+          const SizedBox(height: 14),
+          LayoutBuilder(
+            builder: (context, constraints) {
+              final width = constraints.maxWidth >= 900
+                  ? (constraints.maxWidth - 24) / 3
+                  : constraints.maxWidth;
+              return Wrap(
+                spacing: 12,
+                runSpacing: 12,
+                children: [
+                  SizedBox(
+                    width: width,
+                    child: _AttendanceStatusList(
+                      title: 'Present',
+                      count: present.length,
+                      color: const Color(0xFF138A52),
+                      icon: Icons.check_circle_outline,
+                      technicians: present,
+                      records: recordsByTechnician,
+                    ),
+                  ),
+                  SizedBox(
+                    width: width,
+                    child: _AttendanceStatusList(
+                      title: 'Late',
+                      count: late.length,
+                      color: const Color(0xFFF08C00),
+                      icon: Icons.schedule_outlined,
+                      technicians: late,
+                      records: recordsByTechnician,
+                    ),
+                  ),
+                  SizedBox(
+                    width: width,
+                    child: _AttendanceStatusList(
+                      title: 'Absent',
+                      count: absent.length,
+                      color: const Color(0xFFD95C2A),
+                      icon: Icons.person_off_outlined,
+                      technicians: absent,
+                      records: recordsByTechnician,
+                    ),
+                  ),
+                ],
+              );
+            },
+          ),
+          const SizedBox(height: 10),
+          Text(
+            automaticAbsenceApplies
+                ? 'Unmarked technicians are automatically shown as absent after 10:30 AM. A later punch-in replaces that status with Late.'
+                : 'Not marked: $notMarked. Unmarked technicians move to Absent at 10:30 AM.',
+            style: const TextStyle(color: AppTheme.textSecondary, fontSize: 12),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _AttendanceStatusList extends StatelessWidget {
+  const _AttendanceStatusList({
+    required this.title,
+    required this.count,
+    required this.color,
+    required this.icon,
+    required this.technicians,
+    required this.records,
+  });
+
+  final String title;
+  final int count;
+  final Color color;
+  final IconData icon;
+  final List<AppUser> technicians;
+  final Map<String, Attendance> records;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      constraints: const BoxConstraints(minHeight: 122),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: color.withValues(alpha: 0.3)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(icon, color: color, size: 20),
+              const SizedBox(width: 7),
+              Text(title,
+                  style: TextStyle(color: color, fontWeight: FontWeight.w900)),
+              const Spacer(),
+              Text('$count',
+                  style: TextStyle(
+                      color: color, fontSize: 18, fontWeight: FontWeight.w900)),
+            ],
+          ),
+          const SizedBox(height: 8),
+          if (technicians.isEmpty)
+            const Text('None', style: TextStyle(color: AppTheme.textSecondary))
+          else ...[
+            for (final technician in technicians.take(4))
+              Padding(
+                padding: const EdgeInsets.only(bottom: 4),
+                child: Text(
+                  records[technician.uid] == null
+                      ? '${technician.name} · Not marked by 10:30 AM'
+                      : '${technician.name} · ${DateFormat.jm().format(records[technician.uid]!.timestamp)}',
+                  style: const TextStyle(
+                      fontSize: 12, fontWeight: FontWeight.w700),
+                ),
+              ),
+            if (technicians.length > 4)
+              Text(
+                '+ ${technicians.length - 4} more - use the directory filter below',
+                style: TextStyle(
+                    fontSize: 12, color: color, fontWeight: FontWeight.w800),
+              ),
+          ],
         ],
       ),
     );
@@ -3878,16 +4650,8 @@ class _AttendanceTechnicianCard extends ConsumerWidget {
             technicianReviews.length;
     final sortedRecords = [...records]
       ..sort((left, right) => right.timestamp.compareTo(left.timestamp));
-    final latest = sortedRecords.isEmpty ? null : sortedRecords.first;
     final todayRecord = _attendanceForDay(sortedRecords, now);
     final todayStatus = todayRecord?.status ?? 'not_marked';
-    final monthRecords = sortedRecords
-        .where((record) =>
-            record.timestamp.year == now.year &&
-            record.timestamp.month == now.month)
-        .toList();
-    final faceIssueCount =
-        monthRecords.where((record) => !record.faceMatchPassed).length;
     final availabilityColor =
         technician.isActive ? AppTheme.accent : const Color(0xFFD95C2A);
     final locationText = location == null
@@ -3904,6 +4668,10 @@ class _AttendanceTechnicianCard extends ConsumerWidget {
             technician: technician,
             records: sortedRecords,
             activeBookings: activeBookings,
+            location: location,
+            lifetimeCollections: item.lifetimeCollections,
+            averageRating: averageRating,
+            reviewCount: technicianReviews.length,
             now: now,
           ),
         ),
@@ -3954,23 +4722,8 @@ class _AttendanceTechnicianCard extends ConsumerWidget {
                       ],
                     ),
                   ),
-                  Tooltip(
-                    message: technician.isActive
-                        ? 'Inactivate technician'
-                        : 'Reactivate technician',
-                    child: Switch(
-                      value: technician.isActive,
-                      onChanged:
-                          technician.accountStatus == AccountStatus.approved
-                              ? (value) => _changeActiveStatus(
-                                    context: context,
-                                    ref: ref,
-                                    technician: technician,
-                                    isActive: value,
-                                  )
-                              : null,
-                    ),
-                  ),
+                  const Icon(Icons.chevron_right,
+                      color: AppTheme.textSecondary),
                 ],
               ),
               const SizedBox(height: 12),
@@ -3979,103 +4732,19 @@ class _AttendanceTechnicianCard extends ConsumerWidget {
                 runSpacing: 8,
                 children: [
                   _StatusPill(
-                    label: technician.accountStatus.label,
-                    color: switch (technician.accountStatus) {
-                      AccountStatus.approved => AppTheme.accent,
-                      AccountStatus.pendingApproval => const Color(0xFFF38A1F),
-                      AccountStatus.rejected => const Color(0xFFD95C2A),
-                    },
-                  ),
-                  _StatusPill(
-                    label: technician.technicianCategory.label,
-                    color: AppTheme.primary,
-                  ),
-                  _StatusPill(
-                    label: technician.monthlySalary > 0
-                        ? 'Salary Rs. ${technician.monthlySalary.toStringAsFixed(0)}/month'
-                        : 'Salary not set',
-                    color: technician.monthlySalary > 0
-                        ? AppTheme.instantGreen
-                        : AppTheme.textSecondary,
-                  ),
-                  _StatusPill(
-                    label: technicianReviews.isEmpty
-                        ? 'No reviews yet'
-                        : '${averageRating.toStringAsFixed(1)} ★ · ${technicianReviews.length} reviews',
-                    color: AppTheme.starColor,
-                  ),
-                  _StatusPill(
-                    label: technician.isActive ? 'Available' : 'Inactive',
-                    color: availabilityColor,
-                  ),
-                  _StatusPill(
-                    label: '${activeBookings.length} active job(s)',
-                    color: AppTheme.primary,
-                  ),
-                  _StatusPill(
-                    label: '${monthRecords.length} this month',
-                    color: AppTheme.accent,
-                  ),
-                  _StatusPill(
-                    label: '$faceIssueCount Face ID issue(s)',
-                    color: faceIssueCount > 0
-                        ? const Color(0xFFD95C2A)
-                        : AppTheme.accent,
-                  ),
+                      label: technician.isActive ? 'Available' : 'Inactive',
+                      color: availabilityColor),
                   _StatusPill(
                     label: 'Today ${_adminAttendanceStatusLabel(todayStatus)}',
                     color: _adminAttendanceStatusColor(todayStatus),
                   ),
                   _StatusPill(
-                    label: latest == null
-                        ? 'No punch-in yet'
-                        : 'Latest ${DateFormat('dd MMM, hh:mm a').format(latest.timestamp)}',
-                    color: latest == null
-                        ? const Color(0xFFD95C2A)
-                        : AppTheme.textSecondary,
+                    label: '${activeBookings.length} active job(s)',
+                    color: AppTheme.primary,
                   ),
-                  _StatusPill(
-                    label: latest?.selfieUrl.trim().isNotEmpty == true
-                        ? 'Selfie received'
-                        : 'Selfie missing',
-                    color: latest?.selfieUrl.trim().isNotEmpty == true
-                        ? AppTheme.primary
-                        : const Color(0xFFD95C2A),
-                  ),
-                  _StatusPill(
-                    label: locationText,
-                    color: item.highlightRisk
-                        ? const Color(0xFFD95C2A)
-                        : AppTheme.textSecondary,
-                  ),
-                  if (technician.approvedAt != null)
+                  if (item.highlightRisk)
                     _StatusPill(
-                      label:
-                          'Approved ${DateFormat('dd MMM yyyy').format(technician.approvedAt!)}',
-                      color: AppTheme.accent,
-                    ),
-                  if ((technician.approvedBy ?? '').trim().isNotEmpty)
-                    _StatusPill(
-                      label: 'Approved by ${technician.approvedBy}',
-                      color: AppTheme.primary,
-                    ),
-                  if ((technician.rejectionReason ?? '').trim().isNotEmpty)
-                    _StatusPill(
-                      label: 'Reason: ${technician.rejectionReason}',
-                      color: const Color(0xFFD95C2A),
-                    ),
-                  if (!technician.isActive &&
-                      (technician.inactivationReason ?? '').trim().isNotEmpty)
-                    _StatusPill(
-                      label: 'Inactive: ${technician.inactivationReason}',
-                      color: const Color(0xFFD95C2A),
-                    ),
-                  if (!technician.isActive && technician.inactivatedAt != null)
-                    _StatusPill(
-                      label:
-                          'Since ${DateFormat('dd MMM yyyy, hh:mm a').format(technician.inactivatedAt!)}',
-                      color: AppTheme.textSecondary,
-                    ),
+                        label: locationText, color: const Color(0xFFD95C2A)),
                 ],
               ),
               const SizedBox(height: 12),
@@ -4085,38 +4754,104 @@ class _AttendanceTechnicianCard extends ConsumerWidget {
                 runSpacing: 8,
                 children: [
                   OutlinedButton.icon(
-                    onPressed: () => _editCategory(context, ref, technician),
-                    icon: const Icon(Icons.badge_outlined, size: 17),
-                    label: const Text('Edit category'),
-                  ),
-                  OutlinedButton.icon(
-                    onPressed: () => _addReview(context, ref, technician),
-                    icon: const Icon(Icons.star_outline, size: 17),
-                    label: const Text('Add review'),
-                  ),
-                  OutlinedButton.icon(
-                    onPressed: () => _editSalary(context, ref, technician),
-                    icon: const Icon(Icons.payments_outlined, size: 17),
-                    label: Text(
-                      technician.monthlySalary > 0
-                          ? 'Edit salary'
-                          : 'Set salary',
-                    ),
-                  ),
-                  FilledButton.icon(
-                    onPressed: () => _addIncentive(context, ref, technician),
-                    icon: const Icon(Icons.card_giftcard, size: 17),
-                    label: const Text('Add incentive'),
-                  ),
-                  const Padding(
-                    padding: EdgeInsets.symmetric(vertical: 10),
-                    child: Text(
-                      'Open monthly sheet',
-                      style: TextStyle(
-                        color: AppTheme.primary,
-                        fontWeight: FontWeight.w800,
+                    onPressed: () => showDialog<void>(
+                      context: context,
+                      builder: (dialogContext) => AlertDialog(
+                        title: Text(
+                            'Manage ${_registeredTechnicianName(technician)}'),
+                        content: SizedBox(
+                          width: 360,
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              const Text('Choose what you want to update.'),
+                              const SizedBox(height: 16),
+                              OutlinedButton.icon(
+                                onPressed: () {
+                                  Navigator.pop(dialogContext);
+                                  _editCategory(context, ref, technician);
+                                },
+                                icon: const Icon(Icons.badge_outlined),
+                                label: const Text('Update category'),
+                              ),
+                              const SizedBox(height: 8),
+                              OutlinedButton.icon(
+                                onPressed: () {
+                                  Navigator.pop(dialogContext);
+                                  _editSalary(context, ref, technician);
+                                },
+                                icon: const Icon(Icons.payments_outlined),
+                                label: const Text('Set monthly salary'),
+                              ),
+                              const SizedBox(height: 8),
+                              OutlinedButton.icon(
+                                onPressed: () {
+                                  Navigator.pop(dialogContext);
+                                  _addReview(context, ref, technician);
+                                },
+                                icon: const Icon(Icons.star_outline),
+                                label: const Text('Add performance review'),
+                              ),
+                              const SizedBox(height: 8),
+                              FilledButton.icon(
+                                onPressed: () {
+                                  Navigator.pop(dialogContext);
+                                  _addIncentive(context, ref, technician);
+                                },
+                                icon: const Icon(Icons.card_giftcard),
+                                label: const Text('Add incentive'),
+                              ),
+                              const SizedBox(height: 8),
+                              OutlinedButton.icon(
+                                style: OutlinedButton.styleFrom(
+                                  foregroundColor: const Color(0xFFD95C2A),
+                                  side: const BorderSide(
+                                    color: Color(0xFFD95C2A),
+                                  ),
+                                ),
+                                onPressed: () {
+                                  Navigator.pop(dialogContext);
+                                  _changeActiveStatus(
+                                    context: context,
+                                    ref: ref,
+                                    technician: technician,
+                                    isActive: false,
+                                  );
+                                },
+                                icon: const Icon(Icons.person_off_outlined),
+                                label: const Text('Inactivate technician'),
+                              ),
+                            ],
+                          ),
+                        ),
+                        actions: [
+                          TextButton(
+                            onPressed: () => Navigator.pop(dialogContext),
+                            child: const Text('Close'),
+                          ),
+                        ],
                       ),
                     ),
+                    icon: const Icon(Icons.tune_outlined, size: 17),
+                    label: const Text('Manage'),
+                  ),
+                  TextButton.icon(
+                    onPressed: () => showDialog<void>(
+                      context: context,
+                      builder: (context) => _AttendanceDetailDialog(
+                        technician: technician,
+                        records: sortedRecords,
+                        activeBookings: activeBookings,
+                        location: location,
+                        lifetimeCollections: item.lifetimeCollections,
+                        averageRating: averageRating,
+                        reviewCount: technicianReviews.length,
+                        now: now,
+                      ),
+                    ),
+                    icon: const Icon(Icons.person_outline, size: 17),
+                    label: const Text('View profile'),
                   ),
                 ],
               ),
@@ -4426,15 +5161,19 @@ class _AttendanceTechnicianCard extends ConsumerWidget {
     required AppUser technician,
     required bool isActive,
   }) async {
+    // The technician card is removed from the active directory as soon as the
+    // Firestore update arrives. Keep the messenger itself instead of looking it
+    // up through that card's BuildContext after the asynchronous update.
+    final messenger = ScaffoldMessenger.maybeOf(context);
     final branchAdmin = ref.read(currentUserProvider).valueOrNull;
     final branchId = branchAdmin?.branchId;
     if (branchAdmin == null || branchId == null) return;
 
     if (!isActive && activeBookings.isNotEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
+      messenger?.showSnackBar(
         const SnackBar(
           content: Text(
-            'Reassign or place active bookings on hold before inactivation.',
+            'This technician still has an active job. Complete it, or ask the technician to place it on hold, before inactivation.',
           ),
         ),
       );
@@ -4477,8 +5216,7 @@ class _AttendanceTechnicianCard extends ConsumerWidget {
             branchId: branchId,
             reason: reason,
           );
-      if (!context.mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
+      messenger?.showSnackBar(
         SnackBar(
           content: Text(
             isActive
@@ -4488,8 +5226,7 @@ class _AttendanceTechnicianCard extends ConsumerWidget {
         ),
       );
     } catch (error) {
-      if (!context.mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
+      messenger?.showSnackBar(
         SnackBar(
           content: Text(error.toString()),
           backgroundColor: Colors.red.shade700,
@@ -4570,87 +5307,249 @@ class _AttendanceDetailDialog extends ConsumerWidget {
     required this.technician,
     required this.records,
     required this.activeBookings,
+    required this.location,
+    required this.lifetimeCollections,
+    required this.averageRating,
+    required this.reviewCount,
     required this.now,
   });
 
   final AppUser technician;
   final List<Attendance> records;
   final List<Booking> activeBookings;
+  final TechnicianLocation? location;
+  final double lifetimeCollections;
+  final double averageRating;
+  final int reviewCount;
   final DateTime now;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final monthEntries = _monthAttendanceEntries(records, now);
-    final monthRecords = monthEntries
-        .where((entry) => entry.record != null)
-        .map((entry) => entry.record!)
-        .toList();
-    final notMarked =
-        monthEntries.where((entry) => entry.record == null).length;
-
-    return AlertDialog(
-      title: Text('${_registeredTechnicianName(technician)} attendance'),
-      content: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 760, maxHeight: 620),
-        child: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Wrap(
-                spacing: 8,
-                runSpacing: 8,
+    final employmentStart = technician.approvedAt ?? technician.createdAt;
+    var selectedFrom = DateTime(now.year, now.month, 1);
+    if (selectedFrom.isBefore(DateTime(
+      employmentStart.year,
+      employmentStart.month,
+      employmentStart.day,
+    ))) {
+      selectedFrom = DateTime(
+        employmentStart.year,
+        employmentStart.month,
+        employmentStart.day,
+      );
+    }
+    var selectedTo = DateTime(now.year, now.month, now.day);
+    return StatefulBuilder(
+      builder: (context, setDialogState) {
+        final rangeEntries = _attendanceEntriesForRange(
+          records,
+          selectedFrom,
+          selectedTo,
+          employmentStart,
+        );
+        final rangeRecords = rangeEntries
+            .where((entry) => entry.record != null)
+            .map((entry) => entry.record!)
+            .toList();
+        final notMarked =
+            rangeEntries.where((entry) => entry.record == null).length;
+        return AlertDialog(
+          title: const Text('Technician profile'),
+          content: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 760, maxHeight: 620),
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  _MiniStat(
-                    label: 'Sheet',
-                    value: DateFormat('MMMM yyyy').format(now),
+                  Row(
+                    children: [
+                      CircleAvatar(
+                        radius: 28,
+                        backgroundColor:
+                            AppTheme.primary.withValues(alpha: 0.12),
+                        foregroundColor: AppTheme.primary,
+                        child: Text(
+                          _registeredTechnicianName(technician)
+                              .substring(0, 1)
+                              .toUpperCase(),
+                          style: const TextStyle(
+                              fontSize: 22, fontWeight: FontWeight.w900),
+                        ),
+                      ),
+                      const SizedBox(width: 14),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(_registeredTechnicianName(technician),
+                                style: const TextStyle(
+                                    fontSize: 20, fontWeight: FontWeight.w900)),
+                            const SizedBox(height: 3),
+                            Text(technician.phone,
+                                style: const TextStyle(
+                                    color: AppTheme.textSecondary)),
+                            Text(technician.email,
+                                style: const TextStyle(
+                                    color: AppTheme.textSecondary)),
+                          ],
+                        ),
+                      ),
+                    ],
                   ),
-                  _MiniStat(
-                    label: 'Punch-ins',
-                    value: '${monthRecords.length}',
+                  const SizedBox(height: 18),
+                  const Text('Overview',
+                      style: TextStyle(fontWeight: FontWeight.w900)),
+                  const SizedBox(height: 8),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: [
+                      _MiniStat(
+                          label: 'Status',
+                          value:
+                              technician.isActive ? 'Available' : 'Inactive'),
+                      _MiniStat(
+                          label: 'Category',
+                          value: technician.technicianCategory.label),
+                      _MiniStat(
+                          label: 'Salary',
+                          value: technician.monthlySalary > 0
+                              ? 'Rs. ${technician.monthlySalary.toStringAsFixed(0)}/month'
+                              : 'Not set'),
+                      _MiniStat(
+                          label: 'Collections',
+                          value:
+                              'Rs. ${lifetimeCollections.toStringAsFixed(0)}'),
+                      _MiniStat(
+                          label: 'Rating',
+                          value: reviewCount == 0
+                              ? 'No reviews'
+                              : '${averageRating.toStringAsFixed(1)} / 5 ($reviewCount)'),
+                      _MiniStat(
+                          label: 'Location',
+                          value: location == null
+                              ? 'Not shared'
+                              : _formatRelative(location!.updatedAt)),
+                    ],
                   ),
-                  _MiniStat(
-                    label: 'Not marked',
-                    value: '$notMarked',
+                  const SizedBox(height: 18),
+                  const Text('Attendance',
+                      style: TextStyle(fontWeight: FontWeight.w900)),
+                  const SizedBox(height: 8),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: [
+                      _MiniStat(
+                        label: 'Period',
+                        value:
+                            '${DateFormat('dd MMM').format(selectedFrom)} – ${DateFormat('dd MMM yyyy').format(selectedTo)}',
+                      ),
+                      _MiniStat(
+                        label: 'Punch-ins',
+                        value: '${rangeRecords.length}',
+                      ),
+                      _MiniStat(
+                        label: 'Not marked',
+                        value: '$notMarked',
+                      ),
+                      _MiniStat(
+                        label: 'Active jobs',
+                        value: '${activeBookings.length}',
+                      ),
+                      _MiniStat(
+                        label: 'Face ID issues',
+                        value:
+                            '${rangeRecords.where((item) => !item.faceMatchPassed).length}',
+                      ),
+                    ],
                   ),
-                  _MiniStat(
-                    label: 'Active jobs',
-                    value: '${activeBookings.length}',
-                  ),
-                  _MiniStat(
-                    label: 'Face ID issues',
-                    value:
-                        '${monthRecords.where((item) => !item.faceMatchPassed).length}',
-                  ),
+                  const SizedBox(height: 16),
+                  if (rangeEntries.isEmpty)
+                    const _InlineEmptyState(
+                      icon: Icons.event_busy_outlined,
+                      message: 'No attendance records in this period.',
+                    )
+                  else
+                    Column(
+                      children: [
+                        const _AttendanceSheetHeader(),
+                        for (final entry in rangeEntries)
+                          _AttendanceSheetRow(
+                            technician: technician,
+                            entry: entry,
+                          ),
+                      ],
+                    ),
                 ],
               ),
-              const SizedBox(height: 16),
-              if (monthEntries.isEmpty)
-                const _InlineEmptyState(
-                  icon: Icons.event_busy_outlined,
-                  message: 'No attendance marked for this month.',
-                )
-              else
-                Column(
-                  children: [
-                    const _AttendanceSheetHeader(),
-                    for (final entry in monthEntries)
-                      _AttendanceSheetRow(
-                        technician: technician,
-                        entry: entry,
-                      ),
-                  ],
-                ),
-            ],
+            ),
           ),
-        ),
-      ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.pop(context),
-          child: const Text('Close'),
-        ),
-      ],
+          actions: [
+            OutlinedButton.icon(
+              onPressed: () async {
+                final picked = await showDatePicker(
+                  context: context,
+                  initialDate: selectedFrom,
+                  firstDate: DateTime(
+                    employmentStart.year,
+                    employmentStart.month,
+                    employmentStart.day,
+                  ),
+                  lastDate: selectedTo,
+                  helpText: 'Attendance period — From',
+                );
+                if (picked == null) return;
+                setDialogState(() => selectedFrom = picked);
+              },
+              icon: const Icon(Icons.calendar_month_outlined),
+              label: Text(
+                  'From ${DateFormat('dd MMM yyyy').format(selectedFrom)}'),
+            ),
+            OutlinedButton.icon(
+              onPressed: () async {
+                final picked = await showDatePicker(
+                  context: context,
+                  initialDate: selectedTo,
+                  firstDate: selectedFrom,
+                  lastDate: DateTime(now.year, now.month, now.day),
+                  helpText: 'Attendance period — To',
+                );
+                if (picked == null) return;
+                setDialogState(() => selectedTo = picked);
+              },
+              icon: const Icon(Icons.calendar_month_outlined),
+              label: Text('To ${DateFormat('dd MMM yyyy').format(selectedTo)}'),
+            ),
+            FilledButton.icon(
+              onPressed: () async {
+                try {
+                  await AttendancePdfService().shareAttendanceSheet(
+                    technician: technician,
+                    records: records,
+                    startDate: selectedFrom,
+                    endDate: selectedTo,
+                  );
+                } catch (_) {
+                  if (!context.mounted) return;
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text('Could not create the attendance PDF.'),
+                    ),
+                  );
+                }
+              },
+              icon: const Icon(Icons.picture_as_pdf_outlined),
+              label: const Text('Attendance PDF'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Close'),
+            ),
+          ],
+        );
+      },
     );
   }
 }
@@ -4748,6 +5647,15 @@ class _AttendanceSheetRow extends ConsumerWidget {
                     style: const TextStyle(
                       color: AppTheme.textSecondary,
                       fontSize: 11,
+                    ),
+                  ),
+                if (record != null && record.status == 'late')
+                  Text(
+                    'Late by ${_attendanceLateByLabel(record)}',
+                    style: const TextStyle(
+                      color: Color(0xFFF08C00),
+                      fontSize: 11,
+                      fontWeight: FontWeight.w700,
                     ),
                   ),
               ],
@@ -4910,25 +5818,50 @@ class _AttendanceDayEntry {
   final Attendance? record;
 }
 
-List<_AttendanceDayEntry> _monthAttendanceEntries(
+List<_AttendanceDayEntry> _attendanceEntriesForRange(
   List<Attendance> records,
-  DateTime now,
+  DateTime startDate,
+  DateTime endDate,
+  DateTime employmentStart,
 ) {
+  final start = DateTime(startDate.year, startDate.month, startDate.day);
+  final end = DateTime(endDate.year, endDate.month, endDate.day);
   final recordsByDay = {
     for (final record in records)
-      if (record.timestamp.year == now.year &&
-          record.timestamp.month == now.month)
+      if (!record.timestamp.isBefore(start) && !record.timestamp.isAfter(end))
         _attendanceDayKey(record.timestamp): record,
   };
+  final lastDay = DateTime.now();
   return [
-    for (var day = now.day; day >= 1; day--)
-      _AttendanceDayEntry(
-        day: DateTime(now.year, now.month, day),
-        record: recordsByDay[_attendanceDayKey(
-          DateTime(now.year, now.month, day),
-        )],
-      ),
+    for (var day = end;
+        !day.isBefore(start) && !day.isAfter(lastDay);
+        day = day.subtract(const Duration(days: 1)))
+      if (!day.isBefore(DateTime(
+        employmentStart.year,
+        employmentStart.month,
+        employmentStart.day,
+      )))
+        _AttendanceDayEntry(
+          day: day,
+          record: recordsByDay[_attendanceDayKey(day)],
+        ),
   ];
+}
+
+String _attendanceLateByLabel(Attendance record) {
+  final cutoff = DateTime(
+    record.timestamp.year,
+    record.timestamp.month,
+    record.timestamp.day,
+    9,
+    45,
+  );
+  final delay = record.timestamp.difference(cutoff);
+  if (delay <= Duration.zero) return 'admin override';
+  final hours = delay.inHours;
+  final minutes = delay.inMinutes.remainder(60);
+  if (hours == 0) return '$minutes min';
+  return minutes == 0 ? '$hours hr' : '$hours hr $minutes min';
 }
 
 Attendance? _attendanceForDay(List<Attendance> records, DateTime day) {
@@ -4943,6 +5876,13 @@ String _attendanceDayKey(DateTime day) {
   return '${day.year.toString().padLeft(4, '0')}-'
       '${day.month.toString().padLeft(2, '0')}-'
       '${day.day.toString().padLeft(2, '0')}';
+}
+
+bool _isAutomaticAbsenceTime(DateTime selectedDate) {
+  final now = DateTime.now();
+  if (!DateUtils.isSameDay(selectedDate, now)) return false;
+  final cutoff = DateTime(now.year, now.month, now.day, 10, 30);
+  return !now.isBefore(cutoff);
 }
 
 String _adminAttendanceStatusLabel(String status) {
@@ -5066,8 +6006,7 @@ class _AdminBookingCard extends ConsumerWidget {
       );
     final canAssignTechnician =
         booking.status == BookingStatus.booked && booking.technicianId == null;
-    final canResumeHeldBooking = booking.status == BookingStatus.onHold;
-    final canChangeTechnician = canAssignTechnician || canResumeHeldBooking;
+    final canChangeTechnician = canAssignTechnician;
     final assignableTechnicians = technicians.where((tech) {
       if (canChangeTechnician) return (activeLoad[tech.uid] ?? 0) == 0;
       return tech.uid == booking.technicianId;
@@ -5225,13 +6164,9 @@ class _AdminBookingCard extends ConsumerWidget {
               runSpacing: 10,
               alignment: WrapAlignment.end,
               children: [
-                if (assignableTechnicians.isNotEmpty)
+                if (canAssignTechnician && assignableTechnicians.isNotEmpty)
                   _TechnicianPickerButton(
-                    label: booking.technicianId == null
-                        ? 'Assign technician'
-                        : canResumeHeldBooking
-                            ? 'Resume with technician'
-                            : 'Reassign technician',
+                    label: 'Assign technician',
                     enabled: canChangeTechnician,
                     onPressed: () => _showTechnicianPicker(
                       context: context,
@@ -5241,39 +6176,6 @@ class _AdminBookingCard extends ConsumerWidget {
                       branchTechnicianIds: branchTechnicianIds,
                       activeLoad: activeLoad,
                     ),
-                  ),
-                if (booking.status == BookingStatus.onHold &&
-                    booking.technicianId != null)
-                  FilledButton.icon(
-                    onPressed: () async {
-                      try {
-                        await ref
-                            .read(bookingRepositoryProvider)
-                            .resumeFromHold(bookingId: booking.id);
-                        if (!context.mounted) return;
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(
-                            content: Text('Booking resumed.'),
-                          ),
-                        );
-                      } catch (error) {
-                        if (!context.mounted) return;
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(
-                            content: Text(error.toString()),
-                            backgroundColor: Colors.red.shade700,
-                          ),
-                        );
-                      }
-                    },
-                    icon: const Icon(Icons.play_circle_outline),
-                    label: const Text('Resume booking'),
-                  ),
-                if (_canPlaceOnHold(booking.status))
-                  OutlinedButton.icon(
-                    onPressed: () => _showHoldDialog(context, ref),
-                    icon: const Icon(Icons.pause_circle_outline),
-                    label: const Text('Place on hold'),
                   ),
                 FilledButton.icon(
                   onPressed: () => context.push('/booking/${booking.id}'),
@@ -5390,7 +6292,7 @@ class _AdminBookingCard extends ConsumerWidget {
     required bool canChangeTechnician,
   }) {
     if (!canChangeTechnician) {
-      return 'This booking cannot be reassigned in the current status. Place it on hold before changing technician.';
+      return 'This booking cannot be reassigned in the current status. Ask the assigned technician to place it on hold first.';
     }
     if (!hasApprovedTechnician && hasPendingTechnician) {
       return 'A technician is waiting for approval in this branch. Approve the technician request first, then assign this booking.';
@@ -5399,83 +6301,9 @@ class _AdminBookingCard extends ConsumerWidget {
       return 'Approved technicians in this branch are inactive. Switch one technician to Available, then assign this booking.';
     }
     if (hasBusyTechnician) {
-      return 'All available technicians already have an active job. Complete or place a job on hold before assigning another.';
+      return 'All available technicians already have an active job. Complete a job, or wait for its technician to place it on hold.';
     }
     return 'No approved technicians are active in this branch.';
-  }
-
-  static bool _canPlaceOnHold(BookingStatus status) {
-    return status != BookingStatus.booked &&
-        status != BookingStatus.onHold &&
-        status != BookingStatus.serviceCompleted &&
-        status != BookingStatus.billGenerated &&
-        status != BookingStatus.closed;
-  }
-
-  Future<void> _showHoldDialog(BuildContext context, WidgetRef ref) async {
-    final reason = TextEditingController();
-    final formKey = GlobalKey<FormState>();
-    try {
-      await showDialog<void>(
-        context: context,
-        builder: (dialogContext) => AlertDialog(
-          title: const Text('Place booking on hold'),
-          content: Form(
-            key: formKey,
-            child: TextFormField(
-              controller: reason,
-              minLines: 3,
-              maxLines: 5,
-              decoration: const InputDecoration(
-                labelText: 'Hold reason',
-                hintText: 'Example: AC board taken to service center',
-              ),
-              validator: (value) =>
-                  value == null || value.trim().isEmpty ? 'Required' : null,
-            ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(dialogContext),
-              child: const Text('Cancel'),
-            ),
-            FilledButton.icon(
-              onPressed: () async {
-                if (!formKey.currentState!.validate()) return;
-                try {
-                  await ref.read(bookingRepositoryProvider).placeOnHold(
-                        bookingId: booking.id,
-                        reason: reason.text,
-                      );
-                  if (dialogContext.mounted) Navigator.pop(dialogContext);
-                  if (context.mounted) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(
-                        content: Text(
-                          'Booking placed on hold. Technician is now available.',
-                        ),
-                      ),
-                    );
-                  }
-                } catch (error) {
-                  if (!dialogContext.mounted) return;
-                  ScaffoldMessenger.of(dialogContext).showSnackBar(
-                    SnackBar(
-                      content: Text(error.toString()),
-                      backgroundColor: Colors.red.shade700,
-                    ),
-                  );
-                }
-              },
-              icon: const Icon(Icons.pause_circle_outline),
-              label: const Text('Hold booking'),
-            ),
-          ],
-        ),
-      );
-    } finally {
-      reason.dispose();
-    }
   }
 
   Future<void> _assignTechnician({
@@ -5884,90 +6712,6 @@ class _BookingInfoChip extends StatelessWidget {
           ),
         ],
       ),
-    );
-  }
-}
-
-class _RecommendedTechnicianBanner extends StatelessWidget {
-  const _RecommendedTechnicianBanner({
-    required this.technician,
-    required this.label,
-    required this.onAssign,
-  });
-
-  final AppUser technician;
-  final String label;
-  final VoidCallback onAssign;
-
-  @override
-  Widget build(BuildContext context) {
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final stacked =
-            !constraints.hasBoundedWidth || constraints.maxWidth < 520;
-        final content = Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Icon(Icons.auto_awesome, color: AppTheme.accent),
-            const SizedBox(width: 10),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    'Recommended: ${technician.name}',
-                    style: const TextStyle(
-                      color: AppTheme.textPrimary,
-                      fontWeight: FontWeight.w900,
-                      fontSize: 13,
-                    ),
-                  ),
-                  const SizedBox(height: 2),
-                  Text(
-                    label,
-                    style: const TextStyle(
-                      color: AppTheme.textSecondary,
-                      fontSize: 11,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ],
-        );
-        final button = SizedBox(
-          width: stacked ? double.infinity : 150,
-          child: FilledButton.icon(
-            onPressed: onAssign,
-            icon: const Icon(Icons.bolt_outlined, size: 17),
-            label: const Text('Auto assign'),
-          ),
-        );
-        return Container(
-          padding: const EdgeInsets.all(12),
-          decoration: BoxDecoration(
-            color: AppTheme.accent.withValues(alpha: 0.08),
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: AppTheme.accent.withValues(alpha: 0.22)),
-          ),
-          child: stacked
-              ? Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    content,
-                    const SizedBox(height: 10),
-                    button,
-                  ],
-                )
-              : Row(
-                  children: [
-                    Expanded(child: content),
-                    const SizedBox(width: 10),
-                    button,
-                  ],
-                ),
-        );
-      },
     );
   }
 }

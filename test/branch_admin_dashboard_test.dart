@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:fixnow/app/theme/app_theme.dart';
 import 'package:fixnow/core/branches/branch_info.dart';
 import 'package:fixnow/core/branches/branch_repository.dart';
@@ -85,18 +87,24 @@ void main() {
     List<AppUser> pendingRequests = const [],
     List<AppNotification> approvalNotifications = const [],
     List<AppUser>? technicianRoster,
+    Stream<List<AppUser>>? technicianStream,
     String? initialMonitoringTechnicianId,
     List<TechnicianLocation> travelHistory = const [],
     Object? travelHistoryError,
     List<OvertimeRecord> overtimeRecords = const [],
+    List<Booking>? bookingRoster,
   }) {
     return ProviderScope(
       overrides: [
         currentUserProvider.overrideWith((ref) => Stream.value(branchAdmin)),
         branchesProvider.overrideWith((ref) => Stream.value([branch])),
-        allBookingsProvider.overrideWith((ref) => Stream.value([booking])),
+        allBookingsProvider.overrideWith(
+          (ref) => Stream.value(bookingRoster ?? [booking]),
+        ),
         techniciansProvider.overrideWith(
-          (ref) => Stream.value(technicianRoster ?? [technician]),
+          (ref) =>
+              technicianStream ??
+              Stream.value(technicianRoster ?? [technician]),
         ),
         customersProvider.overrideWith((ref) => Stream.value([customer])),
         allBillsProvider.overrideWith(
@@ -116,6 +124,9 @@ void main() {
         ),
         branchApprovalNotificationsProvider.overrideWith(
           (ref) => Stream.value(approvalNotifications),
+        ),
+        branchAlertsProvider.overrideWith(
+          (ref) => Stream.value(<AppNotification>[]),
         ),
         technicianTravelHistoryProvider.overrideWith(
           (ref, technicianId) => travelHistoryError == null
@@ -170,6 +181,105 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Technicians'), findsWidgets);
     expect(find.text('Branch locked'), findsOneWidget);
+  });
+
+  testWidgets('Manage technician exposes inactivation action', (tester) async {
+    await tester.binding.setSurfaceSize(const Size(1440, 1000));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.pumpWidget(dashboard(bookingRoster: const []));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Technicians'));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('Manage').first);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Manage').first);
+    await tester.pumpAndSettle();
+
+    expect(find.text('Inactivate technician'), findsOneWidget);
+    expect(find.byIcon(Icons.person_off_outlined), findsWidgets);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('inactivated technician moves out of the active directory safely',
+      (tester) async {
+    final roster = StreamController<List<AppUser>>();
+    addTearDown(roster.close);
+    final inactiveTechnician = AppUser(
+      uid: technician.uid,
+      name: technician.name,
+      email: technician.email,
+      phone: technician.phone,
+      role: technician.role,
+      accountStatus: technician.accountStatus,
+      createdAt: technician.createdAt,
+      isActive: false,
+      branchId: technician.branchId,
+      branchName: technician.branchName,
+      inactivatedAt: now,
+      inactivatedBy: branchAdmin.uid,
+      inactivationReason: 'Technician left company',
+    );
+
+    await tester.binding.setSurfaceSize(const Size(1440, 1000));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.pumpWidget(
+      dashboard(
+        bookingRoster: const [],
+        technicianStream: roster.stream,
+      ),
+    );
+    roster.add([technician]);
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Technicians'));
+    await tester.pumpAndSettle();
+    expect(find.text(technician.name), findsWidgets);
+
+    roster.add([inactiveTechnician]);
+    await tester.pumpAndSettle();
+
+    expect(find.text('No technicians are approved for this branch yet.'),
+        findsOneWidget);
+    expect(tester.takeException(), isNull);
+
+    await tester.tap(find.text('Past technicians'));
+    await tester.pumpAndSettle();
+    expect(find.text(technician.name), findsOneWidget);
+    expect(find.text('Inactive: Technician left company'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('Bookings navigation opens pending customer bookings', (
+    tester,
+  ) async {
+    final pendingBooking = Booking(
+      id: 'pending-booking',
+      customerId: customer.uid,
+      customerName: customer.name,
+      phone: customer.phone,
+      address: 'Tex Park Road, Coimbatore',
+      applianceType: 'Refrigerator',
+      problemDescription: 'Not cooling',
+      preferredDate: now,
+      preferredTime: '12:00 PM',
+      status: BookingStatus.booked,
+      createdAt: now,
+      branchId: branch.id,
+      branchName: branch.name,
+    );
+    await tester.binding.setSurfaceSize(const Size(1440, 1000));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.pumpWidget(dashboard(bookingRoster: [pendingBooking]));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Bookings'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Unassigned'), findsWidgets);
+    expect(find.text('Refrigerator - ${customer.name}'), findsOneWidget);
+    expect(find.text('Waiting for Admin Review'), findsOneWidget);
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets('Branch Admin revenue dashboard stays locked to its branch', (

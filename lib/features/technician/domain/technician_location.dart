@@ -13,6 +13,9 @@ class TechnicianLocation {
     this.bearing,
     this.isOnline = true,
     this.branchId,
+    this.isOnDuty = false,
+    this.shiftClosedAt,
+    this.attendanceId,
   });
 
   final String technicianId;
@@ -26,6 +29,9 @@ class TechnicianLocation {
   final double? bearing;
   final bool isOnline;
   final String? branchId;
+  final bool isOnDuty;
+  final DateTime? shiftClosedAt;
+  final String? attendanceId;
 
   factory TechnicianLocation.fromFirestore(
     DocumentSnapshot<Map<String, dynamic>> doc,
@@ -43,6 +49,9 @@ class TechnicianLocation {
       bearing: (data['bearing'] as num?)?.toDouble(),
       isOnline: data['isOnline'] as bool? ?? true,
       branchId: data['branchId'] as String?,
+      isOnDuty: data['isOnDuty'] as bool? ?? false,
+      shiftClosedAt: (data['shiftClosedAt'] as Timestamp?)?.toDate(),
+      attendanceId: data['attendanceId'] as String?,
     );
   }
 
@@ -57,6 +66,8 @@ class TechnicianLocation {
         if (accuracy != null) 'accuracy': accuracy,
         if (bearing != null) 'bearing': bearing,
         'isOnline': isOnline,
+        'isOnDuty': isOnDuty,
+        if (attendanceId != null) 'attendanceId': attendanceId,
         if (branchId != null) 'branchId': branchId,
       };
 }

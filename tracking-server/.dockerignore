@@ -1,0 +1,8 @@
+node_modules
+npm-debug.log
+.env
+*service*account*.json
+service-account*.json
+test
+scripts
+README.md

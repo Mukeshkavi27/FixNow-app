@@ -4,6 +4,27 @@ import 'package:firebase_auth/firebase_auth.dart';
 
 enum AuthAction { signIn, createAccount }
 
+String userFacingOperationError(Object error) {
+  if (error is TimeoutException) {
+    return 'The request took too long. Check your connection and try again.';
+  }
+  if (error is FirebaseException) {
+    switch (error.code) {
+      case 'permission-denied':
+      case 'unauthenticated':
+        return 'Your session cannot perform this action. Sign in again and retry.';
+      case 'unavailable':
+      case 'deadline-exceeded':
+        return 'The service is temporarily unavailable. Please try again.';
+    }
+  }
+  if (error is StateError) {
+    final message = error.message.toString().trim();
+    if (message.isNotEmpty && !_looksLikeInternalError(message)) return message;
+  }
+  return 'Unable to complete this action. Please try again.';
+}
+
 String userFacingAuthError(
   Object error, {
   AuthAction action = AuthAction.signIn,
@@ -27,7 +48,22 @@ String userFacingAuthError(
       case 'weak-password':
         return 'Choose a stronger password and try again.';
       case 'operation-not-allowed':
-        return 'This sign-in method is temporarily unavailable.';
+        return 'Mobile OTP is not enabled yet. In Firebase Console, enable Phone under Authentication > Sign-in method.';
+      case 'invalid-phone-number':
+      case 'missing-phone-number':
+        return 'Enter a valid 10-digit Indian mobile number.';
+      case 'captcha-check-failed':
+      case 'web-context-canceled':
+        return 'Phone verification could not complete. Allow the verification popup and try again.';
+      case 'app-not-authorized':
+      case 'invalid-app-credential':
+        return 'This app is not authorised for mobile OTP. Add its Android SHA-1 and SHA-256 fingerprints in Firebase, then rebuild the app.';
+      case 'quota-exceeded':
+        return 'OTP sending limit has been reached. Wait before requesting another code.';
+      case 'invalid-verification-code':
+        return 'That OTP is incorrect. Check the latest SMS and try again.';
+      case 'session-expired':
+        return 'This OTP has expired. Request a new one.';
     }
   }
 

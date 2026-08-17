@@ -12,9 +12,9 @@ test('attendance reminders run every ten minutes from 09:00 through 09:40 IST', 
   }
 });
 
-test('attendance is automatically absent at 09:45 IST', () => {
+test('attendance remains available as late after 09:45 IST', () => {
   const result = attendanceActionAt(new Date(Date.UTC(2026, 6, 26, 4, 15)));
-  assert.deepEqual(result, { action: 'absent', dayKey: '2026-07-26', slot: '09:45' });
+  assert.deepEqual(result, { action: null, dayKey: '2026-07-26' });
 });
 
 test('attendance scheduler is idle before 09:00 IST', () => {

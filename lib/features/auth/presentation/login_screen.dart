@@ -25,10 +25,13 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
   final _password = TextEditingController();
   final _name = TextEditingController();
   final _phone = TextEditingController();
+  final _loginPhone = TextEditingController();
   bool _isRegister = false;
   bool _isTechnicianRequest = false;
   bool _isLoading = false;
   bool _obscurePassword = true;
+  bool _usePhoneLogin = false;
+  String _mobileLoginRole = 'customer';
   String? _errorMessage;
   String? _selectedBranchId;
 
@@ -38,6 +41,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     _password.dispose();
     _name.dispose();
     _phone.dispose();
+    _loginPhone.dispose();
     super.dispose();
   }
 
@@ -49,7 +53,13 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     });
     try {
       final repo = ref.read(authRepositoryProvider);
-      if (_isRegister) {
+      if (!_isRegister && _usePhoneLogin) {
+        await repo.signInWithMobilePassword(
+          phone: _loginPhone.text,
+          password: _password.text,
+          role: _mobileLoginRole,
+        );
+      } else if (_isRegister) {
         if (_isTechnicianRequest) {
           final branches = ref.read(branchesProvider).valueOrNull ??
               BranchInfo.fallbackBranches;
@@ -275,6 +285,41 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                   ),
                 ),
                 SizedBox(height: isMobile ? 12 : (isSmall ? 14 : 20)),
+                if (!_isRegister) ...[
+                  Container(
+                    padding: const EdgeInsets.all(4),
+                    decoration: BoxDecoration(
+                      color: Colors.white.withValues(alpha: 0.52),
+                      borderRadius: BorderRadius.circular(14),
+                    ),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: _RegisterModeChip(
+                            label: 'Email',
+                            selected: !_usePhoneLogin,
+                            onTap: () => setState(() {
+                              _usePhoneLogin = false;
+                              _errorMessage = null;
+                            }),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: _RegisterModeChip(
+                            label: 'Mobile',
+                            selected: _usePhoneLogin,
+                            onTap: () => setState(() {
+                              _usePhoneLogin = true;
+                              _errorMessage = null;
+                            }),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  SizedBox(height: fieldGap),
+                ],
                 if (_isRegister) ...[
                   Container(
                     padding: const EdgeInsets.all(4),
@@ -379,35 +424,110 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                     SizedBox(height: fieldGap),
                   ],
                 ],
-                _UCTextField(
-                  controller: _email,
-                  label: 'Email address',
-                  prefixIcon: Icons.email_outlined,
-                  keyboardType: TextInputType.emailAddress,
-                  validator: (v) => v == null || !v.contains('@')
-                      ? 'Enter a valid email'
-                      : null,
-                ),
-                SizedBox(height: fieldGap),
-                _UCTextField(
-                  controller: _password,
-                  label: 'Password',
-                  prefixIcon: Icons.lock_outline,
-                  obscureText: _obscurePassword,
-                  suffixIcon: IconButton(
-                    icon: Icon(
-                      _obscurePassword
-                          ? Icons.visibility_off_outlined
-                          : Icons.visibility_outlined,
-                      color: AppTheme.textHint,
-                      size: 20,
+                if (!_isRegister && _usePhoneLogin) ...[
+                  const Padding(
+                    padding: EdgeInsets.only(bottom: 10),
+                    child: Text(
+                      'Use your registered mobile number and FixNow password.',
+                      style: TextStyle(
+                        color: AppTheme.textSecondary,
+                        fontSize: 12,
+                      ),
                     ),
-                    onPressed: () =>
-                        setState(() => _obscurePassword = !_obscurePassword),
                   ),
-                  validator: (v) =>
-                      v == null || v.length < 6 ? 'Minimum 6 characters' : null,
-                ),
+                  DropdownButtonFormField<String>(
+                    initialValue: _mobileLoginRole,
+                    decoration: const InputDecoration(
+                      labelText: 'Account type',
+                      prefixIcon: Icon(Icons.badge_outlined),
+                    ),
+                    items: const [
+                      DropdownMenuItem(
+                        value: 'customer',
+                        child: Text('Customer'),
+                      ),
+                      DropdownMenuItem(
+                        value: 'technician',
+                        child: Text('Technician'),
+                      ),
+                      DropdownMenuItem(
+                        value: 'branchAdmin',
+                        child: Text('Branch Admin'),
+                      ),
+                      DropdownMenuItem(
+                        value: 'superAdmin',
+                        child: Text('Super Admin'),
+                      ),
+                    ],
+                    onChanged: (value) {
+                      if (value != null) {
+                        setState(() => _mobileLoginRole = value);
+                      }
+                    },
+                  ),
+                  SizedBox(height: fieldGap),
+                  _UCTextField(
+                    controller: _loginPhone,
+                    label: 'Mobile number',
+                    prefixIcon: Icons.phone_outlined,
+                    keyboardType: TextInputType.phone,
+                    validator: (v) => v == null || v.replaceAll(RegExp(r'[^0-9]'), '').length < 10
+                        ? 'Enter a valid mobile number'
+                        : null,
+                  ),
+                  SizedBox(height: fieldGap),
+                  _UCTextField(
+                    controller: _password,
+                    label: 'Password',
+                    prefixIcon: Icons.lock_outline,
+                    obscureText: _obscurePassword,
+                    suffixIcon: IconButton(
+                      icon: Icon(
+                        _obscurePassword
+                            ? Icons.visibility_off_outlined
+                            : Icons.visibility_outlined,
+                        color: AppTheme.textHint,
+                        size: 20,
+                      ),
+                      onPressed: () =>
+                          setState(() => _obscurePassword = !_obscurePassword),
+                    ),
+                    validator: (v) => v == null || v.length < 6
+                        ? 'Minimum 6 characters'
+                        : null,
+                  ),
+                ] else ...[
+                  _UCTextField(
+                    controller: _email,
+                    label: 'Email address',
+                    prefixIcon: Icons.email_outlined,
+                    keyboardType: TextInputType.emailAddress,
+                    validator: (v) => v == null || !v.contains('@')
+                        ? 'Enter a valid email'
+                        : null,
+                  ),
+                  SizedBox(height: fieldGap),
+                  _UCTextField(
+                    controller: _password,
+                    label: 'Password',
+                    prefixIcon: Icons.lock_outline,
+                    obscureText: _obscurePassword,
+                    suffixIcon: IconButton(
+                      icon: Icon(
+                        _obscurePassword
+                            ? Icons.visibility_off_outlined
+                            : Icons.visibility_outlined,
+                        color: AppTheme.textHint,
+                        size: 20,
+                      ),
+                      onPressed: () =>
+                          setState(() => _obscurePassword = !_obscurePassword),
+                    ),
+                    validator: (v) => v == null || v.length < 6
+                        ? 'Minimum 6 characters'
+                        : null,
+                  ),
+                ],
                 if (_errorMessage != null) ...[
                   SizedBox(height: fieldGap),
                   Semantics(
@@ -478,7 +598,9 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                             ? (_isTechnicianRequest
                                 ? 'Request Technician Access'
                                 : 'Create Service Account')
-                            : 'Sign In'),
+                            : _usePhoneLogin
+                                ? 'Sign in with mobile'
+                                : 'Sign In'),
                   ),
                 ),
                 SizedBox(height: isMobile ? 12 : 16),

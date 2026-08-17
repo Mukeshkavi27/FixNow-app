@@ -2,6 +2,7 @@ import 'package:fixnow/core/constants/app_constants.dart';
 import 'package:fixnow/core/data/app_config_repository.dart';
 import 'package:fixnow/core/enums/booking_status.dart';
 import 'package:fixnow/core/enums/user_role.dart';
+import 'package:fixnow/features/shared/domain/bill.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
@@ -17,6 +18,54 @@ void main() {
     test('falls back safely for an unknown persisted value', () {
       expect(BookingStatus.fromString('unknown'), BookingStatus.booked);
     });
+
+    test('enforces estimate, journey, meeting, work and payment order', () {
+      expect(BookingStatus.accepted.canTransitionTo(BookingStatus.estimateSent),
+          isTrue);
+      expect(BookingStatus.accepted.canTransitionTo(BookingStatus.onTheWay),
+          isFalse);
+      expect(
+          BookingStatus.estimateApproved.canTransitionTo(BookingStatus.onTheWay),
+          isTrue);
+      expect(
+          BookingStatus.estimateApproved
+              .canTransitionTo(BookingStatus.serviceStarted),
+          isFalse);
+      expect(
+          BookingStatus.customerConfirmedArrival
+              .canTransitionTo(BookingStatus.serviceStarted),
+          isTrue);
+      expect(
+          BookingStatus.serviceStarted.canTransitionTo(
+            BookingStatus.workCompletedPendingCustomer,
+          ),
+          isTrue);
+      expect(
+          BookingStatus.workCompletedPendingCustomer
+              .canTransitionTo(BookingStatus.serviceCompleted),
+          isTrue);
+      expect(BookingStatus.billGenerated.canTransitionTo(BookingStatus.closed),
+          isTrue);
+    });
+  });
+
+  test('technician receipt stays pending until customer confirms payment', () {
+    final bill = Bill(
+      id: 'bill-1',
+      bookingId: 'booking-1',
+      customerId: 'customer-1',
+      technicianId: 'technician-1',
+      amount: 1250,
+      amountReceived: 1250,
+      paymentMode: 'upi',
+      paymentProofUrl: 'https://example.test/proof.jpg',
+      paymentSubmittedAt: DateTime(2026, 8, 10),
+      createdAt: DateTime(2026, 8, 10),
+      isPaid: false,
+    );
+
+    expect(bill.hasPaymentForApproval, isTrue);
+    expect(bill.paymentStatusLabel, 'Awaiting customer confirmation');
   });
 
   group('UserRole', () {

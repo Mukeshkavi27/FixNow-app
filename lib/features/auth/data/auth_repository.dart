@@ -1,11 +1,21 @@
+import 'dart:async';
+import 'dart:convert';
+
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:http/http.dart' as http;
 
 import '../../../core/enums/account_status.dart';
 import '../../../core/enums/user_role.dart';
 import '../../../core/providers/firebase_providers.dart';
 import '../domain/app_user.dart';
+
+const _configuredMobileAuthApiUrl = String.fromEnvironment(
+  'FIXNOW_AUTH_API_URL',
+  defaultValue: '',
+);
 
 final authRepositoryProvider = Provider<AuthRepository>((ref) {
   return AuthRepository(ref.watch(firebaseRefsProvider).auth,
@@ -49,6 +59,56 @@ class AuthRepository {
             'Sign-in is taking too long. Check your connection and try again.',
           ),
         );
+    await _validateSignedInUser(credential);
+  }
+
+  Future<void> signInWithMobilePassword({
+    required String phone,
+    required String password,
+    required String role,
+  }) async {
+    final baseUrl = _configuredMobileAuthApiUrl.isNotEmpty
+        ? _configuredMobileAuthApiUrl
+        : kDebugMode
+            ? 'http://127.0.0.1:8088'
+            : '';
+    if (baseUrl.isEmpty) {
+      throw StateError('Mobile login is not configured for this app.');
+    }
+    late http.Response response;
+    try {
+      response = await http
+          .post(
+            Uri.parse(
+                '${baseUrl.replaceFirst(RegExp(r'/$'), '')}/auth/mobile-password'),
+            headers: const {'content-type': 'application/json'},
+            body: jsonEncode({
+              'phone': phone,
+              'password': password,
+              'role': role,
+            }),
+          )
+          .timeout(const Duration(seconds: 25));
+    } on TimeoutException {
+      throw StateError(
+        'Mobile login server is not responding. Start the FixNow tracking server and try again.',
+      );
+    } on http.ClientException {
+      throw StateError(
+        'Mobile login server is offline. Start npm in tracking-server and keep that terminal open.',
+      );
+    }
+    final body = jsonDecode(response.body) as Map<String, dynamic>;
+    if (response.statusCode != 200 || body['ok'] != true) {
+      throw StateError(body['error'] as String? ?? 'Invalid mobile number or password');
+    }
+    final token = body['customToken'] as String?;
+    if (token == null || token.isEmpty) throw StateError('Mobile login failed.');
+    final credential = await _auth.signInWithCustomToken(token);
+    await _validateSignedInUser(credential);
+  }
+
+  Future<void> _validateSignedInUser(UserCredential credential) async {
     final uid = credential.user?.uid;
     if (uid == null) {
       throw StateError('Unable to sign in right now. Please try again.');
@@ -71,6 +131,14 @@ class AuthRepository {
       await signOut();
       throw StateError(denial);
     }
+  }
+
+  String _normalizeIndianPhone(String rawPhone) {
+    final digits = rawPhone.replaceAll(RegExp(r'[^0-9+]'), '');
+    if (digits.startsWith('+')) return digits;
+    if (digits.length == 10) return '+91$digits';
+    if (digits.startsWith('91') && digits.length == 12) return '+$digits';
+    throw ArgumentError('Enter a valid Indian mobile number.');
   }
 
   Future<void> createUser({
@@ -97,7 +165,9 @@ class AuthRepository {
       branchName: branchName,
     );
     try {
-      await _firestore.collection('users').doc(uid).set(user.toJson());
+      final data = user.toJson()
+        ..['phoneNormalized'] = _normalizeIndianPhone(phone);
+      await _firestore.collection('users').doc(uid).set(data);
     } catch (_) {
       await credential.user?.delete();
       rethrow;
@@ -135,7 +205,9 @@ class AuthRepository {
     );
     try {
       final batch = _firestore.batch();
-      batch.set(_firestore.collection('users').doc(uid), user.toJson());
+      final data = user.toJson()
+        ..['phoneNormalized'] = _normalizeIndianPhone(phone);
+      batch.set(_firestore.collection('users').doc(uid), data);
       batch.set(
           _firestore
               .collection('notifications')
@@ -171,6 +243,7 @@ class AuthRepository {
     final changes = <String, dynamic>{
       'name': name.trim(),
       'phone': phone.trim(),
+      'phoneNormalized': _normalizeIndianPhone(phone),
       'updatedAt': FieldValue.serverTimestamp(),
     };
     if (profilePhoto != null) changes['profilePhoto'] = profilePhoto;

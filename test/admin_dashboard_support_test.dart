@@ -96,6 +96,7 @@ void main() {
 
     expect(performance.single.dailyEarnings, 500);
     expect(performance.single.monthlyEarnings, 500);
+    expect(performance.single.lifetimeCollections, 500);
     expect(performance.single.pendingCollections, 300);
     expect(performance.single.activeBookings, 1);
   });

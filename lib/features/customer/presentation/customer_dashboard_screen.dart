@@ -82,6 +82,23 @@ class CustomerDashboardScreen extends ConsumerWidget {
                                 onProfileTap: () =>
                                     context.push('/customer/profile'),
                               ),
+                              const SizedBox(height: 16),
+                              bookings.when(
+                                data: (items) {
+                                  final active = items
+                                      .where((item) =>
+                                          item.status != BookingStatus.closed)
+                                      .toList();
+                                  if (active.isEmpty) {
+                                    return const SizedBox.shrink();
+                                  }
+                                  return _ActiveBookingCard(
+                                    booking: active.first,
+                                  );
+                                },
+                                loading: () => const _BookingSkeleton(),
+                                error: (_, __) => const SizedBox.shrink(),
+                              ),
                               const SizedBox(height: 22),
                               const _WelcomeHero(),
                               const SizedBox(height: 18),
@@ -106,37 +123,6 @@ class CustomerDashboardScreen extends ConsumerWidget {
                                   message: 'Services could not be loaded.',
                                   onRetry: () =>
                                       ref.invalidate(serviceCatalogProvider),
-                                ),
-                              ),
-                              const SizedBox(height: 30),
-                              _SectionHeader(
-                                title: 'Your current service',
-                                subtitle: 'Updates from booking to completion',
-                                action: TextButton(
-                                  onPressed: () =>
-                                      context.push('/customer/history'),
-                                  child: const Text('View all'),
-                                ),
-                              ),
-                              const SizedBox(height: 14),
-                              bookings.when(
-                                data: (items) {
-                                  final active = items
-                                      .where((item) =>
-                                          item.status != BookingStatus.closed)
-                                      .toList();
-                                  if (active.isEmpty) {
-                                    return const _EmptyBookingCard();
-                                  }
-                                  return _ActiveBookingCard(
-                                    booking: active.first,
-                                  );
-                                },
-                                loading: () => const _BookingSkeleton(),
-                                error: (error, _) => _InlineError(
-                                  message: 'Bookings could not be loaded.',
-                                  onRetry: () =>
-                                      ref.invalidate(customerBookingsProvider),
                                 ),
                               ),
                               const SizedBox(height: 30),
@@ -866,39 +852,6 @@ class _ActiveBookingCard extends StatelessWidget {
             ),
           ],
         ),
-      ),
-    );
-  }
-}
-
-class _EmptyBookingCard extends StatelessWidget {
-  const _EmptyBookingCard();
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(18),
-      decoration: BoxDecoration(
-        color: AppTheme.surface,
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: AppTheme.divider),
-      ),
-      child: const Row(
-        children: [
-          Icon(Icons.event_available_outlined, color: AppTheme.accent),
-          SizedBox(width: 12),
-          Expanded(
-            child: Text(
-              'No active booking. Choose an appliance above when you need us.',
-              style: TextStyle(
-                color: AppTheme.textSecondary,
-                fontSize: 12,
-                height: 1.4,
-              ),
-            ),
-          ),
-        ],
       ),
     );
   }

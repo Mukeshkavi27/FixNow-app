@@ -29,7 +29,7 @@ bool isWithinTechnicianTrackingWindow(DateTime time) {
 
 bool isWithinTechnicianTrackingDay(DateTime time) {
   final start = technicianTrackingStart(time);
-  final end = DateTime(time.year, time.month, time.day + 1);
+  final end = technicianTrackingEnd(time);
   return !time.isBefore(start) && time.isBefore(end);
 }
 
@@ -55,6 +55,61 @@ List<TechnicianLocation> technicianVisitedLocations(
   }
   if (visited.last != points.last) visited.add(points.last);
   return visited;
+}
+
+class TechnicianIdlePeriod {
+  const TechnicianIdlePeriod({
+    required this.startedAt,
+    required this.endedAt,
+    required this.latitude,
+    required this.longitude,
+  });
+
+  final DateTime startedAt;
+  final DateTime endedAt;
+  final double latitude;
+  final double longitude;
+
+  Duration get duration => endedAt.difference(startedAt);
+}
+
+/// Finds stationary periods in the minute-by-minute workday history.
+List<TechnicianIdlePeriod> technicianIdlePeriods(
+  List<TechnicianLocation> points, {
+  double stationaryRadiusMeters = 35,
+  Duration minimumDuration = const Duration(minutes: 5),
+}) {
+  if (points.length < 2) return const [];
+  final sorted = [...points]
+    ..sort((left, right) => left.updatedAt.compareTo(right.updatedAt));
+  final periods = <TechnicianIdlePeriod>[];
+  var anchor = sorted.first;
+  var last = sorted.first;
+  for (final point in sorted.skip(1)) {
+    if (_metersBetween(anchor, point) <= stationaryRadiusMeters) {
+      last = point;
+      continue;
+    }
+    if (last.updatedAt.difference(anchor.updatedAt) >= minimumDuration) {
+      periods.add(TechnicianIdlePeriod(
+        startedAt: anchor.updatedAt,
+        endedAt: last.updatedAt,
+        latitude: anchor.latitude,
+        longitude: anchor.longitude,
+      ));
+    }
+    anchor = point;
+    last = point;
+  }
+  if (last.updatedAt.difference(anchor.updatedAt) >= minimumDuration) {
+    periods.add(TechnicianIdlePeriod(
+      startedAt: anchor.updatedAt,
+      endedAt: last.updatedAt,
+      latitude: anchor.latitude,
+      longitude: anchor.longitude,
+    ));
+  }
+  return periods;
 }
 
 double _metersBetween(

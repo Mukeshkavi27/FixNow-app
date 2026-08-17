@@ -59,7 +59,10 @@ class LocationTrackingService implements LocationTrackingController {
   String? _activeBookingId;
   String? _branchId;
   String? _activeOvertimeDateKey;
+  String? _attendanceId;
   DateTime? _lastSuccessfulGpsAt;
+  DateTime? _lastCurrentPublishAt;
+  DateTime? _lastHistoryRecordAt;
   Position? _lastPosition;
   bool _workingHoursOnly = true;
 
@@ -74,7 +77,13 @@ class LocationTrackingService implements LocationTrackingController {
     required String technicianId,
     required String bookingId,
     String? branchId,
-  }) {
+  }) async {
+    if (_technicianId == technicianId && isTracking) {
+      _activeBookingId = bookingId;
+      final position = _lastPosition;
+      if (position != null) await _publishPosition(position, force: true);
+      return;
+    }
     return startWorkingDay(
       technicianId: technicianId,
       branchId: branchId,
@@ -130,7 +139,15 @@ class LocationTrackingService implements LocationTrackingController {
     _technicianId = technicianId;
     _activeBookingId = bookingId;
     _branchId = branchId;
+    _attendanceId = _attendanceDocumentId(technicianId, DateTime.now());
     _workingHoursOnly = workingHoursOnly;
+    if ((branchId ?? '').isNotEmpty) {
+      await _repository.beginWorkdayTracking(
+        technicianId: technicianId,
+        branchId: branchId!,
+        attendanceId: _attendanceId!,
+      );
+    }
     if (!workingHoursOnly) {
       await _beginPositionStream();
       return;
@@ -177,7 +194,10 @@ class LocationTrackingService implements LocationTrackingController {
     _activeBookingId = null;
     _branchId = null;
     _activeOvertimeDateKey = null;
+    _attendanceId = null;
     _lastSuccessfulGpsAt = null;
+    _lastCurrentPublishAt = null;
+    _lastHistoryRecordAt = null;
     _lastPosition = null;
     _workingHoursOnly = true;
   }
@@ -215,7 +235,7 @@ class LocationTrackingService implements LocationTrackingController {
     // online timestamp fresh so an on-duty technician never appears offline.
     _heartbeatTimer?.cancel();
     _heartbeatTimer = Timer.periodic(
-      const Duration(seconds: 12),
+      const Duration(seconds: 15),
       (_) {
         final position = _lastPosition;
         if (position != null) _publishPosition(position);
@@ -255,16 +275,28 @@ class LocationTrackingService implements LocationTrackingController {
     ).listen(_publishPosition, onError: (_) {});
   }
 
-  Future<void> _publishPosition(Position position) async {
+  Future<void> _publishPosition(Position position, {bool force = false}) async {
     if (_sending || !_canPublishNow) {
       return;
     }
     final technicianId = _technicianId;
     if (technicianId == null) return;
+    final publishedAt = DateTime.now();
+    final minimumCurrentInterval = _activeBookingId == null
+        ? const Duration(minutes: 1)
+        : const Duration(seconds: 15);
+    final lastCurrent = _lastCurrentPublishAt;
+    if (!force &&
+        lastCurrent != null &&
+        publishedAt.difference(lastCurrent) < minimumCurrentInterval) {
+      return;
+    }
     _sending = true;
     try {
       _lastPosition = position;
-      final publishedAt = DateTime.now();
+      final lastHistory = _lastHistoryRecordAt;
+      final recordHistory = lastHistory == null ||
+          publishedAt.difference(lastHistory) >= const Duration(minutes: 1);
       if (isTechnicianOvertime(publishedAt)) {
         _activeOvertimeDateKey = overtimeDayKey(publishedAt);
       }
@@ -280,9 +312,14 @@ class LocationTrackingService implements LocationTrackingController {
           speed: position.speed.isNaN ? null : position.speed,
           accuracy: position.accuracy.isNaN ? null : position.accuracy,
           isOnline: true,
+          isOnDuty: true,
           branchId: _branchId,
+          attendanceId: _attendanceId,
         ),
+        recordHistory: recordHistory,
       );
+      _lastCurrentPublishAt = publishedAt;
+      if (recordHistory) _lastHistoryRecordAt = publishedAt;
       _lastSuccessfulGpsAt = DateTime.now();
     } finally {
       _sending = false;
@@ -320,6 +357,13 @@ class LocationTrackingService implements LocationTrackingController {
           distanceFilter: 5,
         ),
     };
+  }
+
+  String _attendanceDocumentId(String technicianId, DateTime day) {
+    final date = '${day.year.toString().padLeft(4, '0')}-'
+        '${day.month.toString().padLeft(2, '0')}-'
+        '${day.day.toString().padLeft(2, '0')}';
+    return '${technicianId}_$date';
   }
 
   Future<bool> _ensurePermission() async {

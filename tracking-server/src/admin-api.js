@@ -27,6 +27,15 @@ export function validateBranchTransferInput(body) {
   return { branchId };
 }
 
+export function validateTechnicianTransferInput(body) {
+  const { branchId } = validateBranchTransferInput(body);
+  return {
+    branchId,
+    futureRevenueStaysWithPreviousBranch:
+      body?.futureRevenueStaysWithPreviousBranch === true,
+  };
+}
+
 export function requireSuperAdmin(req, res, next) {
   if (!hasPermission(req.principal, permissions.manageGlobalOperations)) {
     res.status(403).json({ ok: false, error: 'Super Admin permission is required' });
@@ -63,6 +72,7 @@ export function registerSuperAdminRoutes(app, { auth, firestore }) {
         name: input.name,
         email: input.email,
         phone: input.phone,
+        phoneNormalized: normalizeIndianMobile(input.phone),
         role: roles.branchAdmin,
         accountStatus: 'approved',
         isActive: true,
@@ -194,6 +204,86 @@ export function registerSuperAdminRoutes(app, { auth, firestore }) {
       res.status(400).json({ ok: false, error: error.message });
     }
   });
+
+  app.patch('/api/admin/technicians/:uid/branch', async (req, res) => {
+    try {
+      const { branchId, futureRevenueStaysWithPreviousBranch } =
+        validateTechnicianTransferInput(req.body);
+      const technicianRef = firestore.collection('users').doc(String(req.params.uid));
+      const targetBranchRef = firestore.collection('branches').doc(branchId);
+      const activeJobRef = firestore.collection('technician_active_jobs').doc(String(req.params.uid));
+      const [technician, targetBranch, activeJob, historicBills] = await Promise.all([
+        technicianRef.get(),
+        targetBranchRef.get(),
+        activeJobRef.get(),
+        firestore.collection('bills').where('technicianId', '==', String(req.params.uid)).get(),
+      ]);
+      const technicianData = technician.data();
+      if (!technician.exists || technicianData?.role !== roles.technician) {
+        throw new Error('Technician account was not found');
+      }
+      if (!targetBranch.exists || targetBranch.data()?.isActive === false) {
+        throw new Error('Destination branch is unavailable');
+      }
+      if (activeJob.exists) {
+        throw new Error('Complete the technician active job before changing branches');
+      }
+      const previousBranchId = technicianData.branchId;
+      const previousRevenueBranchId = technicianData.nativeBranchId || previousBranchId;
+      const previousRevenueBranchName = technicianData.nativeBranchName || technicianData.branchName || previousRevenueBranchId;
+      if (!previousRevenueBranchId) {
+        throw new Error('Technician revenue branch could not be determined');
+      }
+      const futureRevenueBranchId = futureRevenueStaysWithPreviousBranch
+        ? previousRevenueBranchId
+        : branchId;
+      const futureRevenueBranchName = futureRevenueStaysWithPreviousBranch
+        ? previousRevenueBranchName
+        : (targetBranch.data()?.name || branchId);
+      const legacyBills = historicBills.docs.filter((bill) => !bill.data().revenueBranchId);
+      // Lock old bill ownership in chunks before changing the technician's
+      // future reporting branch. This supports long-lived technicians too.
+      for (let start = 0; start < legacyBills.length; start += 450) {
+        const ownershipBatch = firestore.batch();
+        legacyBills.slice(start, start + 450).forEach((bill) => {
+          ownershipBatch.update(bill.ref, {
+            revenueBranchId: previousRevenueBranchId,
+            revenueBranchLockedAt: FieldValue.serverTimestamp(),
+          });
+        });
+        await ownershipBatch.commit();
+      }
+      const auditRef = firestore.collection('audit_logs').doc();
+      const batch = firestore.batch();
+      batch.update(technicianRef, {
+        branchId,
+        branchName: targetBranch.data()?.name || '',
+        nativeBranchId: futureRevenueBranchId,
+        nativeBranchName: futureRevenueBranchName,
+        transferredAt: FieldValue.serverTimestamp(),
+        transferredBy: req.principal.uid,
+        updatedAt: FieldValue.serverTimestamp(),
+      });
+      batch.set(auditRef, auditData(req.principal, {
+        action: 'technician.transferred',
+        targetType: 'technician',
+        targetId: technicianRef.id,
+        branchId,
+        summary: `Transferred ${technicianData.email || technicianRef.id} to ${targetBranch.data()?.name || branchId}; future revenue belongs to ${futureRevenueBranchName}. Existing bills remain with ${previousRevenueBranchName}.`,
+      }));
+      await batch.commit();
+      res.json({ ok: true, branchId, futureRevenueBranchId });
+    } catch (error) {
+      res.status(400).json({ ok: false, error: error.message });
+    }
+  });
+}
+
+function normalizeIndianMobile(value) {
+  const digits = String(value ?? '').replace(/\D/g, '');
+  if (/^[6-9]\d{9}$/.test(digits)) return `+91${digits}`;
+  if (/^91[6-9]\d{9}$/.test(digits)) return `+${digits}`;
+  throw new Error('Enter a valid Indian mobile number');
 }
 
 async function branchAdminByUid(uid, { auth, firestore }) {
@@ -211,7 +301,7 @@ function auditData(principal, details) {
     actorId: principal.uid,
     actorRole: principal.role,
     action: details.action,
-    targetType: 'branchAdmin',
+    targetType: details.targetType || 'branchAdmin',
     targetId: details.targetId,
     branchId: details.branchId,
     summary: details.summary,

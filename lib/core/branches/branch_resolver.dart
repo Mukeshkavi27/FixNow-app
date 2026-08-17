@@ -22,19 +22,19 @@ class BranchResolver {
     if (branches.isEmpty) {
       throw StateError('No branches are configured.');
     }
-    final matched = matchByAddress(branches, address);
-    if (matched != null) {
-      return BranchResolution(
-        branch: matched,
-        reason: 'matched_branch_by_address',
-      );
-    }
-
     if (latitude != null && longitude != null) {
       final nearest = nearestByCoordinates(branches, latitude, longitude);
       return BranchResolution(
         branch: nearest,
         reason: 'nearest_branch_by_location',
+      );
+    }
+
+    final matched = matchByAddress(branches, address);
+    if (matched != null) {
+      return BranchResolution(
+        branch: matched,
+        reason: 'matched_branch_by_address',
       );
     }
 

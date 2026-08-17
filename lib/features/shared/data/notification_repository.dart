@@ -41,6 +41,19 @@ class NotificationRepository {
     });
   }
 
+  Stream<List<AppNotification>> watchBranchAlerts(String branchId) {
+    return _firestore
+        .collection('notifications')
+        .where('branchId', isEqualTo: branchId)
+        .where('recipientRole', isEqualTo: 'branchAdmin')
+        .snapshots()
+        .map((snapshot) {
+      final items = snapshot.docs.map(AppNotification.fromFirestore).toList();
+      items.sort((left, right) => right.createdAt.compareTo(left.createdAt));
+      return items;
+    });
+  }
+
   Future<void> markRead(String notificationId) {
     return _firestore.collection('notifications').doc(notificationId).update({
       'isRead': true,
