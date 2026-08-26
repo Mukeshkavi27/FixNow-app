@@ -19,7 +19,7 @@ class _SplashScreenState extends State<SplashScreen> {
   @override
   void initState() {
     super.initState();
-    _timer = Timer(const Duration(seconds: 3), () {
+    _timer = Timer.periodic(const Duration(milliseconds: 250), (_) {
       if (!mounted) return;
       GoRouter.of(context).refresh();
     });

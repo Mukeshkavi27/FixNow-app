@@ -14,6 +14,7 @@ import '../../auth/data/auth_repository.dart';
 import '../../bookings/domain/booking.dart';
 import '../../services/data/service_catalog_repository.dart';
 import 'customer_providers.dart';
+import 'customer_history_screen.dart';
 
 export 'customer_providers.dart';
 
@@ -87,7 +88,7 @@ class CustomerDashboardScreen extends ConsumerWidget {
                                 data: (items) {
                                   final active = items
                                       .where((item) =>
-                                          item.status != BookingStatus.closed)
+                                          isCustomerActiveStatus(item.status))
                                       .toList();
                                   if (active.isEmpty) {
                                     return const SizedBox.shrink();
@@ -105,6 +106,16 @@ class CustomerDashboardScreen extends ConsumerWidget {
                               _SearchBar(
                                 onTap: () => context.push('/customer/search'),
                               ),
+                              if (!showDesktopSupportPrompt) ...[
+                                const SizedBox(height: 14),
+                                Align(
+                                  alignment: Alignment.centerRight,
+                                  child: _SupportChatLauncher(
+                                    expanded: false,
+                                    onTap: openSupport,
+                                  ),
+                                ),
+                              ],
                               const SizedBox(height: 28),
                               _SectionHeader(
                                 title: 'Appliance services',
@@ -142,15 +153,15 @@ class CustomerDashboardScreen extends ConsumerWidget {
                 ),
               ),
             ),
-            Positioned(
-              right: showDesktopSupportPrompt ? 20 : 16,
-              bottom: showDesktopSupportPrompt ? 24 : 18,
-              top: null,
-              child: _SupportChatLauncher(
-                expanded: showDesktopSupportPrompt,
-                onTap: openSupport,
+            if (showDesktopSupportPrompt)
+              Positioned(
+                right: 20,
+                bottom: 24,
+                child: _SupportChatLauncher(
+                  expanded: true,
+                  onTap: openSupport,
+                ),
               ),
-            ),
           ],
         ),
       ),
@@ -377,6 +388,7 @@ class _WelcomeHero extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return ClipRRect(
+      key: const Key('customer-welcome-hero'),
       borderRadius: BorderRadius.circular(8),
       child: Stack(
         children: [
@@ -489,6 +501,7 @@ class _SearchBar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return InkWell(
+      key: const Key('customer-service-search'),
       onTap: onTap,
       borderRadius: BorderRadius.circular(8),
       child: Container(
@@ -1011,6 +1024,7 @@ class _SupportChatLauncher extends StatelessWidget {
   Widget build(BuildContext context) {
     if (!expanded) {
       return SizedBox(
+        key: const Key('customer-mobile-support'),
         width: 200,
         child: Column(
           mainAxisSize: MainAxisSize.min,

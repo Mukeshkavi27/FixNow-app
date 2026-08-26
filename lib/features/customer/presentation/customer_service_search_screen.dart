@@ -7,6 +7,36 @@ import '../../../core/constants/app_constants.dart';
 import '../../services/data/service_catalog_repository.dart';
 import 'customer_back_button.dart';
 
+bool customerServiceMatchesQuery(String serviceName, String rawQuery) {
+  final query = rawQuery.trim().toLowerCase();
+  if (query.isEmpty) return true;
+
+  final words = serviceName
+      .toLowerCase()
+      .split(RegExp(r'[^a-z0-9]+'))
+      .where((word) => word.isNotEmpty)
+      .toList();
+  final initials = words.map((word) => word[0]).join();
+  const aliases = <String, List<String>>{
+    'air conditioner': ['ac', 'aircon'],
+    'refrigerator': ['fridge'],
+    'washing machine': ['wm', 'washer'],
+    'water purifier': ['ro'],
+    'television': ['tv'],
+  };
+
+  if (initials == query ||
+      (aliases[serviceName.toLowerCase()] ?? const <String>[])
+          .any((alias) => alias.startsWith(query))) {
+    return true;
+  }
+  if (query.length <= 2) {
+    return words.any((word) => word.startsWith(query));
+  }
+  return serviceName.toLowerCase().contains(query) ||
+      words.any((word) => word.startsWith(query));
+}
+
 class CustomerServiceSearchScreen extends ConsumerStatefulWidget {
   const CustomerServiceSearchScreen({super.key});
 
@@ -40,11 +70,8 @@ class _CustomerServiceSearchScreenState
   Widget build(BuildContext context) {
     final services = ref.watch(serviceCatalogProvider).valueOrNull ??
         AppConstants.applianceCategories;
-    final normalized = _query.trim().toLowerCase();
     final filtered = services
-        .where((service) =>
-            normalized.isEmpty ||
-            service.name.toLowerCase().contains(normalized))
+        .where((service) => customerServiceMatchesQuery(service.name, _query))
         .toList();
 
     return Scaffold(

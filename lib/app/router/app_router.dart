@@ -21,9 +21,6 @@ import '../../features/technician/presentation/technician_dashboard_screen.dart'
 import '../../features/super_admin/presentation/super_admin_dashboard_screen.dart';
 import '../widgets/splash_screen.dart';
 
-final _splashStartedAt = DateTime.now();
-const _minimumSplashDuration = Duration(milliseconds: 350);
-
 class _RouterRefreshNotifier extends ChangeNotifier {
   void refresh() => notifyListeners();
 }
@@ -52,15 +49,11 @@ final appRouterProvider = Provider<GoRouter>((ref) {
       final user = ref.read(currentUserProvider);
       final isAuthLoading = auth.isLoading || user.isLoading;
       final location = state.matchedLocation;
-      final splashIsStillWarm =
-          DateTime.now().difference(_splashStartedAt) < _minimumSplashDuration;
       if (isAuthLoading) {
         if (location == '/splash') return null;
         final intended = Uri.encodeComponent(state.uri.toString());
         return '/splash?redirect=$intended';
       }
-      if (location == '/splash' && splashIsStillWarm) return null;
-
       final firebaseUser = auth.valueOrNull;
       final appUser = user.valueOrNull;
 

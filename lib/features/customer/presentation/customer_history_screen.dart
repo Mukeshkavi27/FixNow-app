@@ -11,6 +11,12 @@ import '../../shared/domain/bill.dart';
 import 'customer_back_button.dart';
 import 'customer_providers.dart';
 
+bool isCustomerHistoryStatus(BookingStatus status) =>
+    status == BookingStatus.serviceCompleted || status == BookingStatus.closed;
+
+bool isCustomerActiveStatus(BookingStatus status) =>
+    !isCustomerHistoryStatus(status);
+
 class CustomerHistoryScreen extends ConsumerWidget {
   const CustomerHistoryScreen({super.key});
 
@@ -38,7 +44,7 @@ class CustomerHistoryScreen extends ConsumerWidget {
             bookings.when(
               data: (items) => _BookingList(
                 bookings: items
-                    .where((item) => item.status != BookingStatus.closed)
+                    .where((item) => isCustomerActiveStatus(item.status))
                     .toList(),
                 emptyTitle: 'No active bookings',
                 emptyMessage:
@@ -52,7 +58,7 @@ class CustomerHistoryScreen extends ConsumerWidget {
             bookings.when(
               data: (items) => _BookingList(
                 bookings: items
-                    .where((item) => item.status == BookingStatus.closed)
+                    .where((item) => isCustomerHistoryStatus(item.status))
                     .toList(),
                 emptyTitle: 'No completed services yet',
                 emptyMessage:
