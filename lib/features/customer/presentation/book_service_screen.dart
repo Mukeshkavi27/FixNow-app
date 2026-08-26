@@ -317,7 +317,8 @@ class _BookServiceScreenState extends ConsumerState<BookServiceScreen> {
       return;
     }
 
-    final preferredTime = _requestImmediately ? 'Immediately' : _time.format(context);
+    final preferredTime =
+        _requestImmediately ? 'Immediately' : _time.format(context);
     setState(() => _isSaving = true);
     try {
       final confirmed = _confirmedLocation!;
@@ -658,18 +659,28 @@ class _BookServiceScreenState extends ConsumerState<BookServiceScreen> {
                     onTap: () => setState(() => _requestImmediately = false),
                   );
                   if (timingConstraints.maxWidth >= 560) {
-                    return Row(children: [Expanded(child: immediate), const SizedBox(width: 10), Expanded(child: scheduled)]);
+                    return Row(children: [
+                      Expanded(child: immediate),
+                      const SizedBox(width: 10),
+                      Expanded(child: scheduled)
+                    ]);
                   }
-                  return Column(children: [immediate, const SizedBox(height: 10), scheduled]);
+                  return Column(children: [
+                    immediate,
+                    const SizedBox(height: 10),
+                    scheduled
+                  ]);
                 }),
                 if (!_requestImmediately) ...[
                   const SizedBox(height: 12),
                   if (twoColumns)
                     Row(
                       children: [
-                        Expanded(child: _DateTile(date: _date, onTap: _pickDate)),
+                        Expanded(
+                            child: _DateTile(date: _date, onTap: _pickDate)),
                         const SizedBox(width: 12),
-                        Expanded(child: _TimeTile(time: _time, onTap: _pickTime)),
+                        Expanded(
+                            child: _TimeTile(time: _time, onTap: _pickTime)),
                       ],
                     )
                   else ...[
@@ -778,19 +789,27 @@ class _TimingChoice extends StatelessWidget {
           padding: const EdgeInsets.all(12),
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: selected ? AppTheme.primary : AppTheme.divider, width: selected ? 1.5 : 1),
+            border: Border.all(
+                color: selected ? AppTheme.primary : AppTheme.divider,
+                width: selected ? 1.5 : 1),
           ),
           child: Row(children: [
-            Icon(selected ? Icons.radio_button_checked : Icons.radio_button_off, color: color),
+            Icon(selected ? Icons.radio_button_checked : Icons.radio_button_off,
+                color: color),
             const SizedBox(width: 10),
             Icon(icon, color: color),
             const SizedBox(width: 9),
-            Expanded(child: Column(
+            Expanded(
+                child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(title, style: TextStyle(fontWeight: FontWeight.w900, color: color)),
+                Text(title,
+                    style:
+                        TextStyle(fontWeight: FontWeight.w900, color: color)),
                 const SizedBox(height: 2),
-                Text(subtitle, style: const TextStyle(fontSize: 11, color: AppTheme.textSecondary)),
+                Text(subtitle,
+                    style: const TextStyle(
+                        fontSize: 11, color: AppTheme.textSecondary)),
               ],
             )),
           ]),
@@ -1201,6 +1220,7 @@ class _PinPickerSheetState extends ConsumerState<_PinPickerSheet> {
   final _search = TextEditingController();
   final _mapController = MapController();
   Timer? _debounce;
+  Timer? _reverseDebounce;
   late LatLng _selected = LatLng(
     widget.initial.latitude,
     widget.initial.longitude,
@@ -1225,6 +1245,7 @@ class _PinPickerSheetState extends ConsumerState<_PinPickerSheet> {
   @override
   void dispose() {
     _debounce?.cancel();
+    _reverseDebounce?.cancel();
     _search.dispose();
     super.dispose();
   }
@@ -1337,7 +1358,11 @@ class _PinPickerSheetState extends ConsumerState<_PinPickerSheet> {
 
   void _movePin(LatLng point) {
     setState(() => _selected = point);
-    _reverseSelected();
+    _reverseDebounce?.cancel();
+    _reverseDebounce = Timer(
+      const Duration(milliseconds: 600),
+      _reverseSelected,
+    );
   }
 
   _ConfirmedServiceLocation? _confirmedLocation() {
@@ -1430,6 +1455,11 @@ class _PinPickerSheetState extends ConsumerState<_PinPickerSheet> {
                       ],
                     ),
                   ],
+                ),
+                const Positioned(
+                  right: 6,
+                  bottom: 6,
+                  child: OpenStreetMapAttribution(),
                 ),
                 Positioned(
                   left: 14,

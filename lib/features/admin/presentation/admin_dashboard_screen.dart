@@ -21,12 +21,15 @@ import '../../../core/enums/account_status.dart';
 import '../../../core/enums/booking_status.dart';
 import '../../../core/enums/user_role.dart';
 import '../../../core/enums/technician_category.dart';
+import '../../../core/errors/user_facing_error.dart';
 import '../../../core/maps/google_static_map.dart';
 import '../../../core/services/reverse_geocoding_service.dart';
 import '../../auth/data/auth_repository.dart';
 import '../../auth/domain/app_user.dart';
 import '../../bookings/data/booking_repository.dart';
 import '../../bookings/domain/booking.dart';
+import '../../estimates/data/estimate_repository.dart';
+import '../../estimates/domain/estimate.dart';
 import '../../shared/data/bill_repository.dart';
 import '../../shared/data/attendance_pdf_service.dart';
 import '../../shared/data/notification_repository.dart';
@@ -105,6 +108,11 @@ final allReviewsProvider = StreamProvider.autoDispose<List<Review>>((ref) {
   return ref
       .watch(reviewRepositoryProvider)
       .watchAllReviews(branchId: branchId);
+});
+
+final adminManualEstimateProvider =
+    StreamProvider.autoDispose.family<Estimate?, String>((ref, bookingId) {
+  return ref.watch(estimateRepositoryProvider).watchForBooking(bookingId);
 });
 
 final activeTechnicianLocationsProvider =
@@ -186,6 +194,7 @@ String _registeredTechnicianName(AppUser technician) {
 enum _AdminTab {
   overview('Overview', Icons.dashboard_outlined),
   bookings('Bookings', Icons.assignment_outlined),
+  manualBookings('Manual bookings', Icons.phone_in_talk_outlined),
   attendance('Technicians', Icons.engineering_outlined),
   pastTechnicians('Past technicians', Icons.person_off_outlined),
   performance('Performance', Icons.leaderboard_outlined),
@@ -521,6 +530,16 @@ class _AdminDashboardScreenState extends ConsumerState<AdminDashboardScreen> {
                             });
                           },
                         ),
+                      _AdminTab.manualBookings => _ManualBookingsAdminTab(
+                          bookings: branchBookings
+                              .where((booking) =>
+                                  booking.customerId.startsWith('manual_'))
+                              .toList()
+                            ..sort(
+                                (a, b) => b.createdAt.compareTo(a.createdAt)),
+                          bills: bills,
+                          onCreate: () => _manualBooking(context, ref),
+                        ),
                       _AdminTab.attendance => _TechnicianWorkspaceSection(
                           performance: performance
                               .where((item) => item.technician.isActive)
@@ -754,7 +773,7 @@ class _AdminDashboardScreenState extends ConsumerState<AdminDashboardScreen> {
                     );
                 if (mounted) {
                   setState(() {
-                    _selectedAdminTab = _AdminTab.bookings;
+                    _selectedAdminTab = _AdminTab.manualBookings;
                     _selectedBookingSegment = _BookingSegment.unassigned;
                     _selectedBranchId = branch.id;
                     _selectedStatus = null;
@@ -1965,13 +1984,59 @@ class _PastTechniciansSection extends StatelessWidget {
   }
 }
 
-class _PastTechnicianTile extends StatelessWidget {
+class _PastTechnicianTile extends ConsumerWidget {
   const _PastTechnicianTile({required this.technician});
 
   final AppUser technician;
 
+  Future<void> _reactivate(BuildContext context, WidgetRef ref) async {
+    final admin = ref.read(currentUserProvider).valueOrNull;
+    final branchId = admin?.branchId;
+    if (admin == null || branchId == null || branchId.isEmpty) return;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Reactivate technician?'),
+        content: Text(
+          '${_registeredTechnicianName(technician)} will be able to sign in and receive bookings again.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton.icon(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            icon: const Icon(Icons.restore),
+            label: const Text('Reactivate'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !context.mounted) return;
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      await ref.read(adminRepositoryProvider).setTechnicianActive(
+            uid: technician.uid,
+            isActive: true,
+            actorId: admin.uid,
+            branchId: branchId,
+          );
+      messenger.showSnackBar(
+        const SnackBar(content: Text('Technician reactivated.')),
+      );
+    } catch (error) {
+      messenger.showSnackBar(
+        SnackBar(
+          content: Text(userFacingOperationError(error)),
+          backgroundColor: Colors.red.shade700,
+        ),
+      );
+    }
+  }
+
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final name = _registeredTechnicianName(technician);
     return Row(
       children: [
@@ -2000,6 +2065,12 @@ class _PastTechnicianTile extends StatelessWidget {
           ),
         ),
         const _StatusPill(label: 'Inactive', color: Color(0xFFD95C2A)),
+        const SizedBox(width: 8),
+        IconButton(
+          onPressed: () => _reactivate(context, ref),
+          icon: const Icon(Icons.restore),
+          tooltip: 'Reactivate technician',
+        ),
       ],
     );
   }
@@ -2529,6 +2600,234 @@ class _AdminFilterPanel extends StatelessWidget {
                 icon: const Icon(Icons.restart_alt),
                 label: const Text('Clear'),
               ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ManualBookingsAdminTab extends StatelessWidget {
+  const _ManualBookingsAdminTab({
+    required this.bookings,
+    required this.bills,
+    required this.onCreate,
+  });
+
+  final List<Booking> bookings;
+  final List<Bill> bills;
+  final VoidCallback onCreate;
+
+  @override
+  Widget build(BuildContext context) {
+    return _SectionCard(
+      title: 'Customers without the app',
+      subtitle:
+          'Create phone bookings and complete customer confirmations from this tab.',
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Align(
+            alignment: Alignment.centerLeft,
+            child: FilledButton.icon(
+              onPressed: onCreate,
+              icon: const Icon(Icons.add_call),
+              label: const Text('Create manual booking'),
+            ),
+          ),
+          const SizedBox(height: 14),
+          if (bookings.isEmpty)
+            const _InlineEmptyState(
+              icon: Icons.phone_in_talk_outlined,
+              message: 'No manual bookings for this branch.',
+            )
+          else
+            for (var index = 0; index < bookings.length; index++) ...[
+              _ManualBookingCard(
+                booking: bookings[index],
+                bill: bills
+                    .where((bill) => bill.bookingId == bookings[index].id)
+                    .firstOrNull,
+              ),
+              if (index != bookings.length - 1) const SizedBox(height: 12),
+            ],
+        ],
+      ),
+    );
+  }
+}
+
+class _ManualBookingCard extends ConsumerStatefulWidget {
+  const _ManualBookingCard({required this.booking, required this.bill});
+
+  final Booking booking;
+  final Bill? bill;
+
+  @override
+  ConsumerState<_ManualBookingCard> createState() => _ManualBookingCardState();
+}
+
+class _ManualBookingCardState extends ConsumerState<_ManualBookingCard> {
+  bool _working = false;
+
+  Future<void> _run(String success, Future<void> Function() action) async {
+    if (_working) return;
+    setState(() => _working = true);
+    try {
+      await action();
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(success)),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(userFacingOperationError(error)),
+          backgroundColor: Colors.red.shade700,
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _working = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final booking = widget.booking;
+    final estimateAsync = ref.watch(adminManualEstimateProvider(booking.id));
+    final estimate = estimateAsync.valueOrNull;
+    final bill = widget.bill;
+    final canConfirmPayment = booking.status == BookingStatus.billGenerated &&
+        bill != null &&
+        bill.hasPaymentForApproval;
+
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        border: Border.all(color: AppTheme.divider),
+        borderRadius: BorderRadius.circular(14),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  '${booking.customerName} • ${booking.applianceType}',
+                  style: const TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+              ),
+              Chip(label: Text(booking.status.label)),
+            ],
+          ),
+          Text('${booking.phone} • ${booking.address}'),
+          const SizedBox(height: 4),
+          Text(
+            booking.problemDescription,
+            style: const TextStyle(color: AppTheme.textSecondary),
+          ),
+          const SizedBox(height: 12),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              OutlinedButton.icon(
+                onPressed: () => context.push('/booking/${booking.id}'),
+                icon: const Icon(Icons.open_in_new),
+                label: Text(booking.status == BookingStatus.booked
+                    ? 'Open & assign technician'
+                    : 'Open booking'),
+              ),
+              if (booking.status == BookingStatus.arrived)
+                FilledButton.icon(
+                  onPressed: _working
+                      ? null
+                      : () => _run(
+                            'Customer arrival confirmed by admin.',
+                            () => ref
+                                .read(bookingRepositoryProvider)
+                                .confirmTechnicianArrival(
+                                  bookingId: booking.id,
+                                  customerId: booking.customerId,
+                                ),
+                          ),
+                  icon: const Icon(Icons.person_pin_circle_outlined),
+                  label: const Text('Confirm customer met'),
+                ),
+              if (booking.status == BookingStatus.estimateSent &&
+                  estimate != null) ...[
+                FilledButton.icon(
+                  onPressed: _working
+                      ? null
+                      : () => _run(
+                            'Estimate approved by admin for phone customer.',
+                            () => ref
+                                .read(estimateRepositoryProvider)
+                                .approve(estimate.id, booking.id),
+                          ),
+                  icon: const Icon(Icons.check_circle_outline),
+                  label: Text(
+                    'Approve estimate ₹${estimate.total.toStringAsFixed(0)}',
+                  ),
+                ),
+                OutlinedButton.icon(
+                  onPressed: _working
+                      ? null
+                      : () => _run(
+                            'Estimate rejected. Technician can revise it.',
+                            () => ref
+                                .read(estimateRepositoryProvider)
+                                .reject(estimate.id, booking.id),
+                          ),
+                  icon: const Icon(Icons.edit_note_outlined),
+                  label: const Text('Reject estimate'),
+                ),
+              ],
+              if (booking.status == BookingStatus.workCompletedPendingCustomer)
+                FilledButton.icon(
+                  onPressed: _working
+                      ? null
+                      : () => _run(
+                            'Work completion confirmed by admin.',
+                            () => ref
+                                .read(bookingRepositoryProvider)
+                                .confirmWorkCompleted(
+                                  bookingId: booking.id,
+                                  customerId: booking.customerId,
+                                ),
+                          ),
+                  icon: const Icon(Icons.fact_check_outlined),
+                  label: const Text('Confirm work completed'),
+                ),
+              if (canConfirmPayment)
+                FilledButton.icon(
+                  onPressed: _working
+                      ? null
+                      : () => _run(
+                            'Payment confirmed and booking closed.',
+                            () =>
+                                ref.read(billRepositoryProvider).approvePayment(
+                                      bookingId: booking.id,
+                                      customerId: booking.customerId,
+                                    ),
+                          ),
+                  icon: const Icon(Icons.payments_outlined),
+                  label: Text(
+                    'Confirm payment ₹${bill.amount.toStringAsFixed(0)}',
+                  ),
+                ),
+              if (_working)
+                const SizedBox.square(
+                  dimension: 22,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                ),
             ],
           ),
         ],

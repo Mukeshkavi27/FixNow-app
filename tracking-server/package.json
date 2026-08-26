@@ -6,7 +6,7 @@
   "scripts": {
     "start": "node src/index.js",
     "dev": "node --watch src/index.js",
-    "test": "node --test",
+    "test": "node --test test/*.test.js",
     "migrate:rbac": "node scripts/migrate-rbac.js",
     "migrate:booking-branches": "node scripts/migrate-booking-branches.js",
     "migrate:review-branches": "node scripts/migrate-review-branches.js",

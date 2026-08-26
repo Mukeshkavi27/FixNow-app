@@ -1,0 +1,105 @@
+name: Android signed release
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Target environment
+        required: true
+        type: choice
+        options: [staging, production]
+      version_name:
+        description: Version name, for example 1.0.1
+        required: true
+      version_code:
+        description: Increasing Play Store version code
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-release-${{ inputs.environment }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    environment: ${{ inputs.environment }}
+    env:
+      FIXNOW_APPLICATION_ID: ${{ vars.FIXNOW_APPLICATION_ID }}
+      GOOGLE_MAPS_API_KEY: ${{ secrets.GOOGLE_MAPS_API_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Restore protected Android files
+        shell: bash
+        env:
+          GOOGLE_SERVICES_BASE64: ${{ secrets.GOOGLE_SERVICES_BASE64 }}
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          test -n "$GOOGLE_SERVICES_BASE64"
+          test -n "$ANDROID_KEYSTORE_BASE64"
+          printf '%s' "$GOOGLE_SERVICES_BASE64" | base64 --decode > android/app/google-services.json
+          printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > android/app/fixnow-release.jks
+          printf 'storeFile=fixnow-release.jks\nstorePassword=%s\nkeyAlias=%s\nkeyPassword=%s\n' \
+            "$KEYSTORE_PASSWORD" "$KEY_ALIAS" "$KEY_PASSWORD" > android/key.properties
+      - name: Validate release configuration
+        run: >-
+          dart run tool/validate_release_config.dart
+          --environment=${{ inputs.environment }}
+          --auth-api-url=${{ vars.FIXNOW_AUTH_API_URL }}
+          --admin-api-url=${{ vars.FIXNOW_ADMIN_API_URL }}
+          --firebase-project-id=${{ vars.FIXNOW_FIREBASE_PROJECT_ID }}
+          --application-id=${{ vars.FIXNOW_APPLICATION_ID }}
+          --google-services=android/app/google-services.json
+          --keystore=android/app/fixnow-release.jks
+      - run: flutter pub get
+      - run: flutter analyze
+      - run: flutter test
+      - name: Build signed APK and AAB
+        run: >-
+          flutter build apk --release
+          --build-name=${{ inputs.version_name }}
+          --build-number=${{ inputs.version_code }}
+          --dart-define=FIXNOW_ENVIRONMENT=${{ inputs.environment }}
+          --dart-define=FIXNOW_AUTH_API_URL=${{ vars.FIXNOW_AUTH_API_URL }}
+          --dart-define=FIXNOW_ADMIN_API_URL=${{ vars.FIXNOW_ADMIN_API_URL }}
+          --dart-define=FIXNOW_FIREBASE_API_KEY=${{ secrets.FIXNOW_FIREBASE_API_KEY }}
+          --dart-define=FIXNOW_FIREBASE_AUTH_DOMAIN=${{ vars.FIXNOW_FIREBASE_AUTH_DOMAIN }}
+          --dart-define=FIXNOW_FIREBASE_PROJECT_ID=${{ vars.FIXNOW_FIREBASE_PROJECT_ID }}
+          --dart-define=FIXNOW_FIREBASE_STORAGE_BUCKET=${{ vars.FIXNOW_FIREBASE_STORAGE_BUCKET }}
+          --dart-define=FIXNOW_FIREBASE_MESSAGING_SENDER_ID=${{ vars.FIXNOW_FIREBASE_MESSAGING_SENDER_ID }}
+          --dart-define=FIXNOW_FIREBASE_APP_ID=${{ vars.FIXNOW_FIREBASE_APP_ID }}
+      - run: >-
+          flutter build appbundle --release
+          --build-name=${{ inputs.version_name }}
+          --build-number=${{ inputs.version_code }}
+          --dart-define=FIXNOW_ENVIRONMENT=${{ inputs.environment }}
+          --dart-define=FIXNOW_AUTH_API_URL=${{ vars.FIXNOW_AUTH_API_URL }}
+          --dart-define=FIXNOW_ADMIN_API_URL=${{ vars.FIXNOW_ADMIN_API_URL }}
+          --dart-define=FIXNOW_FIREBASE_API_KEY=${{ secrets.FIXNOW_FIREBASE_API_KEY }}
+          --dart-define=FIXNOW_FIREBASE_AUTH_DOMAIN=${{ vars.FIXNOW_FIREBASE_AUTH_DOMAIN }}
+          --dart-define=FIXNOW_FIREBASE_PROJECT_ID=${{ vars.FIXNOW_FIREBASE_PROJECT_ID }}
+          --dart-define=FIXNOW_FIREBASE_STORAGE_BUCKET=${{ vars.FIXNOW_FIREBASE_STORAGE_BUCKET }}
+          --dart-define=FIXNOW_FIREBASE_MESSAGING_SENDER_ID=${{ vars.FIXNOW_FIREBASE_MESSAGING_SENDER_ID }}
+          --dart-define=FIXNOW_FIREBASE_APP_ID=${{ vars.FIXNOW_FIREBASE_APP_ID }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: fixnow-android-${{ inputs.environment }}-${{ inputs.version_name }}-${{ inputs.version_code }}
+          path: |
+            build/app/outputs/flutter-apk/app-release.apk
+            build/app/outputs/bundle/release/app-release.aab
+          if-no-files-found: error
+          retention-days: 30

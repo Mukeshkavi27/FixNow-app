@@ -16,6 +16,8 @@ class TechnicianLocation {
     this.isOnDuty = false,
     this.shiftClosedAt,
     this.attendanceId,
+    this.isMocked = false,
+    this.capturedAt,
   });
 
   final String technicianId;
@@ -32,6 +34,8 @@ class TechnicianLocation {
   final bool isOnDuty;
   final DateTime? shiftClosedAt;
   final String? attendanceId;
+  final bool isMocked;
+  final DateTime? capturedAt;
 
   factory TechnicianLocation.fromFirestore(
     DocumentSnapshot<Map<String, dynamic>> doc,
@@ -52,6 +56,8 @@ class TechnicianLocation {
       isOnDuty: data['isOnDuty'] as bool? ?? false,
       shiftClosedAt: (data['shiftClosedAt'] as Timestamp?)?.toDate(),
       attendanceId: data['attendanceId'] as String?,
+      isMocked: data['isMocked'] as bool? ?? false,
+      capturedAt: (data['capturedAt'] as Timestamp?)?.toDate(),
     );
   }
 
@@ -69,5 +75,7 @@ class TechnicianLocation {
         'isOnDuty': isOnDuty,
         if (attendanceId != null) 'attendanceId': attendanceId,
         if (branchId != null) 'branchId': branchId,
+        'isMocked': isMocked,
+        'capturedAt': Timestamp.fromDate(capturedAt ?? updatedAt),
       };
 }

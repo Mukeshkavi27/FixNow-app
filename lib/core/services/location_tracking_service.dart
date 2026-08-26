@@ -9,6 +9,46 @@ import '../../features/technician/domain/technician_location.dart';
 import '../../features/technician/domain/overtime_record.dart';
 import '../../features/technician/domain/technician_travel.dart';
 
+const technicianCurrentLocationWriteInterval = Duration(minutes: 1);
+const technicianHistoryWriteInterval = Duration(minutes: 1);
+const technicianMaximumAcceptedAccuracyMeters = 250.0;
+
+bool isAcceptableTechnicianPosition({
+  required double latitude,
+  required double longitude,
+  required double accuracy,
+  required bool isMocked,
+}) {
+  return !isMocked &&
+      latitude.isFinite &&
+      latitude >= -90 &&
+      latitude <= 90 &&
+      longitude.isFinite &&
+      longitude >= -180 &&
+      longitude <= 180 &&
+      accuracy.isFinite &&
+      accuracy >= 0 &&
+      accuracy <= technicianMaximumAcceptedAccuracyMeters;
+}
+
+bool shouldPublishTechnicianLocation({
+  required DateTime now,
+  required DateTime? lastPublishedAt,
+  bool force = false,
+}) {
+  return force ||
+      lastPublishedAt == null ||
+      now.difference(lastPublishedAt) >= technicianCurrentLocationWriteInterval;
+}
+
+bool shouldRecordTechnicianLocationHistory({
+  required DateTime now,
+  required DateTime? lastRecordedAt,
+}) {
+  if (lastRecordedAt == null) return true;
+  return now.difference(lastRecordedAt) >= technicianHistoryWriteInterval;
+}
+
 abstract interface class LocationTrackingController {
   bool get isTracking;
   String? get activeBookingId;
@@ -235,7 +275,7 @@ class LocationTrackingService implements LocationTrackingController {
     // online timestamp fresh so an on-duty technician never appears offline.
     _heartbeatTimer?.cancel();
     _heartbeatTimer = Timer.periodic(
-      const Duration(seconds: 15),
+      const Duration(seconds: 30),
       (_) {
         final position = _lastPosition;
         if (position != null) _publishPosition(position);
@@ -281,22 +321,30 @@ class LocationTrackingService implements LocationTrackingController {
     }
     final technicianId = _technicianId;
     if (technicianId == null) return;
+    if (!isAcceptableTechnicianPosition(
+      latitude: position.latitude,
+      longitude: position.longitude,
+      accuracy: position.accuracy,
+      isMocked: position.isMocked,
+    )) {
+      return;
+    }
+    _lastPosition = position;
+    _lastSuccessfulGpsAt = DateTime.now();
     final publishedAt = DateTime.now();
-    final minimumCurrentInterval = _activeBookingId == null
-        ? const Duration(minutes: 1)
-        : const Duration(seconds: 15);
-    final lastCurrent = _lastCurrentPublishAt;
-    if (!force &&
-        lastCurrent != null &&
-        publishedAt.difference(lastCurrent) < minimumCurrentInterval) {
+    if (!shouldPublishTechnicianLocation(
+      now: publishedAt,
+      lastPublishedAt: _lastCurrentPublishAt,
+      force: force,
+    )) {
       return;
     }
     _sending = true;
     try {
-      _lastPosition = position;
-      final lastHistory = _lastHistoryRecordAt;
-      final recordHistory = lastHistory == null ||
-          publishedAt.difference(lastHistory) >= const Duration(minutes: 1);
+      final recordHistory = shouldRecordTechnicianLocationHistory(
+        now: publishedAt,
+        lastRecordedAt: _lastHistoryRecordAt,
+      );
       if (isTechnicianOvertime(publishedAt)) {
         _activeOvertimeDateKey = overtimeDayKey(publishedAt);
       }
@@ -315,12 +363,15 @@ class LocationTrackingService implements LocationTrackingController {
           isOnDuty: true,
           branchId: _branchId,
           attendanceId: _attendanceId,
+          isMocked: position.isMocked,
+          capturedAt: position.timestamp,
         ),
         recordHistory: recordHistory,
       );
       _lastCurrentPublishAt = publishedAt;
-      if (recordHistory) _lastHistoryRecordAt = publishedAt;
-      _lastSuccessfulGpsAt = DateTime.now();
+      if (recordHistory) {
+        _lastHistoryRecordAt = publishedAt;
+      }
     } finally {
       _sending = false;
     }
@@ -336,25 +387,25 @@ class LocationTrackingService implements LocationTrackingController {
     return switch (defaultTargetPlatform) {
       TargetPlatform.android => AndroidSettings(
           accuracy: LocationAccuracy.bestForNavigation,
-          distanceFilter: 5,
-          intervalDuration: const Duration(seconds: 10),
+          distanceFilter: 15,
+          intervalDuration: const Duration(seconds: 30),
           foregroundNotificationConfig: const ForegroundNotificationConfig(
             notificationTitle: 'FixNow automatic location tracking',
             notificationText:
-                'Your location is shared while you are signed in.',
+                'Your location is shared while workday tracking is active.',
             enableWakeLock: true,
           ),
         ),
       TargetPlatform.iOS || TargetPlatform.macOS => AppleSettings(
           accuracy: LocationAccuracy.bestForNavigation,
           activityType: ActivityType.automotiveNavigation,
-          distanceFilter: 5,
+          distanceFilter: 15,
           pauseLocationUpdatesAutomatically: false,
           showBackgroundLocationIndicator: true,
         ),
       _ => const LocationSettings(
           accuracy: LocationAccuracy.bestForNavigation,
-          distanceFilter: 5,
+          distanceFilter: 15,
         ),
     };
   }

@@ -20,20 +20,15 @@ void main() {
     });
 
     test('enforces estimate, journey, meeting, work and payment order', () {
-      expect(BookingStatus.accepted.canTransitionTo(BookingStatus.estimateSent),
-          isTrue);
       expect(BookingStatus.accepted.canTransitionTo(BookingStatus.onTheWay),
-          isFalse);
-      expect(
-          BookingStatus.estimateApproved.canTransitionTo(BookingStatus.onTheWay),
           isTrue);
       expect(
           BookingStatus.estimateApproved
               .canTransitionTo(BookingStatus.serviceStarted),
-          isFalse);
+          isTrue);
       expect(
           BookingStatus.customerConfirmedArrival
-              .canTransitionTo(BookingStatus.serviceStarted),
+              .canTransitionTo(BookingStatus.estimateSent),
           isTrue);
       expect(
           BookingStatus.serviceStarted.canTransitionTo(

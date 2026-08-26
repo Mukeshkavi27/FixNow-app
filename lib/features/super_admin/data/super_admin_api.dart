@@ -8,6 +8,7 @@ import 'package:http/http.dart' as http;
 
 import '../../../core/enums/account_status.dart';
 import '../../../core/enums/user_role.dart';
+import '../../../core/config/app_environment.dart';
 import '../../../core/providers/firebase_providers.dart';
 import '../../auth/domain/app_user.dart';
 
@@ -15,11 +16,15 @@ const _configuredAdminApiUrl = String.fromEnvironment(
   'FIXNOW_ADMIN_API_URL',
   defaultValue: '',
 );
-const _localAdminApiUrl = 'http://127.0.0.1:8088';
-const _adminApiUrl =
-    _configuredAdminApiUrl == '' && !bool.fromEnvironment('dart.vm.product')
-        ? _localAdminApiUrl
-        : _configuredAdminApiUrl;
+const _productionAdminApiUrl = 'https://fixnow-tracking-server.onrender.com';
+String get _adminApiUrl => AppEnvironment.requireServiceUrl(
+      _configuredAdminApiUrl != ''
+          ? _configuredAdminApiUrl
+          : const bool.fromEnvironment('dart.vm.product')
+              ? _productionAdminApiUrl
+              : '',
+      name: 'FIXNOW_ADMIN_API_URL',
+    );
 
 final superAdminApiProvider = Provider<SuperAdminApi>((ref) {
   return SuperAdminApi(
@@ -34,14 +39,16 @@ class SuperAdminApi {
     required FirebaseAuth auth,
     required FirebaseFirestore firestore,
     required http.Client client,
-    String baseUrl = _adminApiUrl,
+    String? baseUrl,
     bool? useClientFallback,
   })  : _auth = auth,
         _firestore = firestore,
         _client = client,
-        _baseUrl = baseUrl.replaceFirst(RegExp(r'/$'), ''),
+        _baseUrl = (baseUrl ?? _adminApiUrl).replaceFirst(RegExp(r'/$'), ''),
         _useClientFallback = useClientFallback ??
-            (baseUrl == _adminApiUrl && _configuredAdminApiUrl.isEmpty);
+            (baseUrl == null &&
+                _configuredAdminApiUrl.isEmpty &&
+                AppEnvironment.isDevelopment);
 
   final FirebaseAuth _auth;
   final FirebaseFirestore _firestore;
@@ -172,7 +179,7 @@ class SuperAdminApi {
       throw StateError(
         'The FixNow administration service is not configured. '
         'Build with --dart-define=FIXNOW_ADMIN_API_URL=https://your-service. '
-        'Local debug builds default to $_localAdminApiUrl.',
+        'Development builds must configure their server explicitly.',
       );
     }
     final serviceUri = Uri.tryParse(_baseUrl);
@@ -181,12 +188,8 @@ class SuperAdminApi {
         !serviceUri.hasAuthority) {
       throw StateError('The FixNow administration service URL is invalid.');
     }
-    final isLocalService =
-        (serviceUri.host == 'localhost' || serviceUri.host == '127.0.0.1') &&
-            serviceUri.scheme == 'http';
     if (const bool.fromEnvironment('dart.vm.product') &&
-        serviceUri.scheme != 'https' &&
-        !isLocalService) {
+        serviceUri.scheme != 'https') {
       throw StateError(
         'The production administration service must use HTTPS.',
       );
@@ -440,9 +443,8 @@ class SuperAdminApi {
         .collection('bills')
         .where('technicianId', isEqualTo: uid)
         .get();
-    final futureRevenueBranchId = futureRevenueStaysWithPreviousBranch
-        ? nativeBranchId
-        : branchId;
+    final futureRevenueBranchId =
+        futureRevenueStaysWithPreviousBranch ? nativeBranchId : branchId;
     final futureRevenueBranchName = futureRevenueStaysWithPreviousBranch
         ? (nativeBranchName ?? nativeBranchId)
         : (branchData['name'] as String? ?? branchId);

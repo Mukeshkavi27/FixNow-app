@@ -4,8 +4,11 @@ import { FieldValue } from 'firebase-admin/firestore';
 // fresh, but retain one immutable replay point per technician per minute.
 const lastHistoryWriteAtByTechnician = new Map();
 const historyIntervalMs = 60 * 1000;
+const maximumAccuracyMeters = 250;
+const maximumPastAgeMs = 10 * 60 * 1000;
+const maximumFutureAgeMs = 2 * 60 * 1000;
 
-export function normalizeGpsPayload(payload) {
+export function normalizeGpsPayload(payload, receivedAt = new Date()) {
   const required = ['technicianId', 'jobId', 'latitude', 'longitude'];
   for (const key of required) {
     if (payload?.[key] === undefined || payload?.[key] === null) {
@@ -20,6 +23,18 @@ export function normalizeGpsPayload(payload) {
   if (!Number.isFinite(longitude) || longitude < -180 || longitude > 180) {
     throw new Error('Longitude is invalid');
   }
+  if (payload.isMocked === true) throw new Error('Mocked location is rejected');
+  const accuracy = numberOrNull(payload.accuracy);
+  if (accuracy !== null && (accuracy < 0 || accuracy > maximumAccuracyMeters)) {
+    throw new Error('Location accuracy is insufficient');
+  }
+  const capturedAt = payload.timestamp == null
+    ? receivedAt
+    : new Date(payload.timestamp);
+  if (Number.isNaN(capturedAt.getTime())) throw new Error('Timestamp is invalid');
+  const ageMs = receivedAt.getTime() - capturedAt.getTime();
+  if (ageMs > maximumPastAgeMs) throw new Error('Location update is stale');
+  if (ageMs < -maximumFutureAgeMs) throw new Error('Location timestamp is in the future');
   return {
     technicianId: String(payload.technicianId),
     jobId: String(payload.jobId),
@@ -32,9 +47,11 @@ export function normalizeGpsPayload(payload) {
     heading: numberOrNull(payload.heading),
     bearing: numberOrNull(payload.bearing ?? payload.heading),
     speed: numberOrNull(payload.speed),
-    accuracy: numberOrNull(payload.accuracy),
+    accuracy,
+    isMocked: false,
     isOnline: true,
-    updatedAt: payload.timestamp ?? new Date().toISOString(),
+    capturedAt: capturedAt.toISOString(),
+    updatedAt: receivedAt.toISOString(),
   };
 }
 
@@ -62,6 +79,7 @@ export async function persistGpsUpdate(update, firestore) {
     bearing: update.bearing,
     speed: update.speed,
     accuracy: update.accuracy,
+    isMocked: false,
     isOnline: true,
   };
   const batch = firestore.batch();

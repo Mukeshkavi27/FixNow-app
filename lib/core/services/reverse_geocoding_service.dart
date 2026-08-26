@@ -9,33 +9,39 @@ import '../maps/google_maps_config.dart';
 final reverseGeocodingServiceProvider = Provider<ReverseGeocodingService>(
   (ref) {
     final fallback = NominatimReverseGeocodingService();
-    if (!GoogleMapsConfig.isConfigured) return fallback;
-    return FallbackReverseGeocodingService([
-      GoogleReverseGeocodingService(apiKey: GoogleMapsConfig.apiKey),
-      fallback,
-    ]);
+    final service = GoogleMapsConfig.isConfigured
+        ? FallbackReverseGeocodingService([
+            GoogleReverseGeocodingService(apiKey: GoogleMapsConfig.apiKey),
+            fallback,
+          ])
+        : fallback;
+    return CachedReverseGeocodingService(service);
   },
 );
 
 final addressGeocodingServiceProvider = Provider<AddressGeocodingService>(
   (ref) {
     final fallback = NominatimAddressGeocodingService();
-    if (!GoogleMapsConfig.isConfigured) return fallback;
-    return FallbackAddressGeocodingService([
-      GoogleAddressGeocodingService(apiKey: GoogleMapsConfig.apiKey),
-      fallback,
-    ]);
+    final service = GoogleMapsConfig.isConfigured
+        ? FallbackAddressGeocodingService([
+            GoogleAddressGeocodingService(apiKey: GoogleMapsConfig.apiKey),
+            fallback,
+          ])
+        : fallback;
+    return CachedAddressGeocodingService(service);
   },
 );
 
 final addressSearchServiceProvider = Provider<AddressSearchService>(
   (ref) {
     final fallback = NominatimAddressSearchService();
-    if (!GoogleMapsConfig.isConfigured) return fallback;
-    return FallbackAddressSearchService([
-      GooglePlacesAddressSearchService(apiKey: GoogleMapsConfig.apiKey),
-      fallback,
-    ]);
+    final service = GoogleMapsConfig.isConfigured
+        ? FallbackAddressSearchService([
+            GooglePlacesAddressSearchService(apiKey: GoogleMapsConfig.apiKey),
+            fallback,
+          ])
+        : fallback;
+    return CachedAddressSearchService(service);
   },
 );
 
@@ -129,6 +135,120 @@ abstract class AddressGeocodingService {
 abstract class AddressSearchService {
   Future<List<AddressSearchSuggestion>> suggestions(String input);
   Future<AddressGeocodingResult?> resolve(AddressSearchSuggestion suggestion);
+}
+
+class CachedReverseGeocodingService implements ReverseGeocodingService {
+  CachedReverseGeocodingService(this.delegate, {this.maximumEntries = 200});
+
+  final ReverseGeocodingService delegate;
+  final int maximumEntries;
+  final Map<String, Future<ReverseGeocodingResult?>> _cache = {};
+
+  @override
+  Future<ReverseGeocodingResult?> reverse({
+    required double latitude,
+    required double longitude,
+  }) async {
+    final key =
+        '${latitude.toStringAsFixed(5)},${longitude.toStringAsFixed(5)}';
+    final cached = _cache[key];
+    if (cached != null) return cached;
+    final request = delegate.reverse(latitude: latitude, longitude: longitude);
+    _storeBounded(_cache, key, request, maximumEntries);
+    try {
+      final result = await request;
+      if (result == null) _cache.remove(key);
+      return result;
+    } catch (_) {
+      _cache.remove(key);
+      rethrow;
+    }
+  }
+}
+
+class CachedAddressGeocodingService implements AddressGeocodingService {
+  CachedAddressGeocodingService(this.delegate, {this.maximumEntries = 200});
+
+  final AddressGeocodingService delegate;
+  final int maximumEntries;
+  final Map<String, Future<AddressGeocodingResult?>> _cache = {};
+
+  @override
+  Future<AddressGeocodingResult?> search(String address) async {
+    final key = address.trim().toLowerCase();
+    if (key.isEmpty) return null;
+    final cached = _cache[key];
+    if (cached != null) return cached;
+    final request = delegate.search(address.trim());
+    _storeBounded(_cache, key, request, maximumEntries);
+    try {
+      final result = await request;
+      if (result == null) _cache.remove(key);
+      return result;
+    } catch (_) {
+      _cache.remove(key);
+      rethrow;
+    }
+  }
+}
+
+class CachedAddressSearchService implements AddressSearchService {
+  CachedAddressSearchService(this.delegate, {this.maximumEntries = 200});
+
+  final AddressSearchService delegate;
+  final int maximumEntries;
+  final Map<String, Future<List<AddressSearchSuggestion>>> _suggestionCache =
+      {};
+  final Map<String, Future<AddressGeocodingResult?>> _resolutionCache = {};
+
+  @override
+  Future<List<AddressSearchSuggestion>> suggestions(String input) async {
+    final key = input.trim().toLowerCase();
+    if (key.length < 3) return const [];
+    final cached = _suggestionCache[key];
+    if (cached != null) return cached;
+    final request = delegate.suggestions(input.trim());
+    _storeBounded(_suggestionCache, key, request, maximumEntries);
+    try {
+      return await request;
+    } catch (_) {
+      _suggestionCache.remove(key);
+      rethrow;
+    }
+  }
+
+  @override
+  Future<AddressGeocodingResult?> resolve(
+    AddressSearchSuggestion suggestion,
+  ) async {
+    final key = '${suggestion.provider}|${suggestion.placeId ?? ''}|'
+        '${suggestion.latitude ?? ''}|${suggestion.longitude ?? ''}|'
+        '${suggestion.title.toLowerCase()}';
+    final cached = _resolutionCache[key];
+    if (cached != null) return cached;
+    final request = delegate.resolve(suggestion);
+    _storeBounded(_resolutionCache, key, request, maximumEntries);
+    try {
+      final result = await request;
+      if (result == null) _resolutionCache.remove(key);
+      return result;
+    } catch (_) {
+      _resolutionCache.remove(key);
+      rethrow;
+    }
+  }
+}
+
+void _storeBounded<T>(
+  Map<String, T> cache,
+  String key,
+  T value,
+  int maximumEntries,
+) {
+  if (maximumEntries > 0 && cache.length >= maximumEntries) {
+    cache.remove(cache.keys.first);
+  }
+  cache[key] = value;
 }
 
 class FallbackReverseGeocodingService implements ReverseGeocodingService {

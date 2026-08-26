@@ -40,11 +40,15 @@ import {
 } from './realtime-events.js';
 import { startAttendanceAutomation } from './attendance-automation.js';
 import { startNotificationPushBridge } from './notification-push-bridge.js';
+import { createRateLimiter, securityHeaders } from './http-security.js';
 
 const app = express();
+if (process.env.NODE_ENV === 'production') app.set('trust proxy', 1);
+app.disable('x-powered-by');
 const allowedCorsOrigins = allowedOriginsFor();
 app.use(cors(httpCorsOptions(allowedCorsOrigins)));
-app.use(express.json());
+app.use(securityHeaders);
+app.use(express.json({ limit: '64kb', strict: true }));
 
 const httpServer = http.createServer(app);
 const io = new Server(httpServer, {
@@ -72,8 +76,17 @@ app.get('/health', (_, res) => {
 // This endpoint is deliberately before /api authentication: it creates the
 // Firebase session. It validates the password via Firebase Auth and is rate
 // limited in the route itself.
+app.use('/auth', createRateLimiter({
+  windowMs: 15 * 60 * 1000,
+  maximumRequests: 30,
+  message: 'Too many sign-in requests from this device. Try again later.',
+}));
 registerMobilePasswordAuth(app, { auth: firebaseAuth, firestore });
 
+app.use('/api', createRateLimiter({
+  windowMs: 60 * 1000,
+  maximumRequests: 300,
+}));
 app.use('/api', authenticateRequest);
 app.get('/api/session', (req, res) => {
   res.json({
@@ -209,14 +222,23 @@ io.on('connection', (socket) => {
       io.to('admin:global').emit('tracking:stopped', { technicianId, jobId });
       io.to(`admin:branch:${principal.branchId}`)
         .emit('tracking:stopped', { technicianId, jobId });
+      routeByJob.delete(String(jobId));
+      firedEventsByJob.delete(String(jobId));
     }
     ack?.({ ok: true });
   });
 });
 
-startRealtimeEventBridge({ firestore, io });
-startAttendanceAutomation(firestore, console, firebaseMessaging);
-startNotificationPushBridge(firestore, firebaseMessaging);
+const stopRealtimeEventBridge = startRealtimeEventBridge({ firestore, io });
+const stopAttendanceAutomation = startAttendanceAutomation(
+  firestore,
+  console,
+  firebaseMessaging,
+);
+const stopNotificationPushBridge = startNotificationPushBridge(
+  firestore,
+  firebaseMessaging,
+);
 
 async function bookingById(jobId) {
   if (!jobId) throw new Error('Booking ID is required');
@@ -357,6 +379,14 @@ app.use((error, _req, res, next) => {
     res.status(403).json({ ok: false, error: error.message });
     return;
   }
+  if (error?.type === 'entity.too.large') {
+    res.status(413).json({ ok: false, error: 'Request body is too large' });
+    return;
+  }
+  if (error instanceof SyntaxError && 'body' in error) {
+    res.status(400).json({ ok: false, error: 'Request body is not valid JSON' });
+    return;
+  }
   next(error);
 });
 
@@ -364,3 +394,23 @@ const port = Number(process.env.PORT ?? 8088);
 httpServer.listen(port, () => {
   console.log(`FixNow tracking server listening on ${port}`);
 });
+
+let shuttingDown = false;
+async function shutdown(signal) {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  console.log(`${signal} received; closing FixNow tracking server`);
+  stopAttendanceAutomation();
+  stopRealtimeEventBridge();
+  stopNotificationPushBridge();
+  io.close();
+  const forceExit = setTimeout(() => process.exit(1), 10_000);
+  forceExit.unref();
+  httpServer.close(() => {
+    clearTimeout(forceExit);
+    process.exit(0);
+  });
+}
+
+process.once('SIGTERM', () => void shutdown('SIGTERM'));
+process.once('SIGINT', () => void shutdown('SIGINT'));

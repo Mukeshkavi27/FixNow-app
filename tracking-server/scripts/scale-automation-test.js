@@ -15,6 +15,8 @@ const CONFIG = Object.freeze({
   firestoreBatchSize: 400,
   querySamples: 50,
   p95QueryLimitMs: 1000,
+  trackingConcurrency: 25,
+  trackingRounds: 5,
   keepData: process.argv.includes('--keep-data'),
 });
 
@@ -247,6 +249,64 @@ async function validate(auth, db, fixture, timings) {
   );
 }
 
+async function exerciseTrackingLoad(db, fixture) {
+  const stages = [10, 50, 100, 150, 200];
+  const report = [];
+  for (const technicianCount of stages) {
+    const technicians = fixture.technicians.slice(0, technicianCount);
+    const latencies = [];
+    let errors = 0;
+    const stageStarted = performance.now();
+    for (let round = 0; round < CONFIG.trackingRounds; round += 1) {
+      await mapConcurrent(technicians, CONFIG.trackingConcurrency, async (technician, index) => {
+        const requestStarted = performance.now();
+        try {
+          const locationRef = db.collection('technician_locations').doc(technician.uid);
+          const historyRef = locationRef.collection('history')
+            .doc(`${CONFIG.runId}_${technicianCount}_${round}_${index}`);
+          const batch = db.batch();
+          const data = {
+            technicianId: technician.uid,
+            branchId: technician.branchId,
+            latitude: 11.0168 + index / 100000,
+            longitude: 76.9558 + round / 100000,
+            accuracy: 10,
+            isMocked: false,
+            capturedAt: Timestamp.now(),
+            updatedAt: FieldValue.serverTimestamp(),
+            isOnline: true,
+            scaleRunId: CONFIG.runId,
+          };
+          batch.set(locationRef, data, { merge: true });
+          batch.set(historyRef, data);
+          await batch.commit();
+        } catch (_) {
+          errors += 1;
+        } finally {
+          latencies.push(performance.now() - requestStarted);
+        }
+      });
+    }
+    const elapsedMs = performance.now() - stageStarted;
+    const requests = technicianCount * CONFIG.trackingRounds;
+    report.push({
+      technicians: technicianCount,
+      rounds: CONFIG.trackingRounds,
+      requests,
+      writes: requests * 2,
+      requestsPerSecond: Number((requests / (elapsedMs / 1000)).toFixed(2)),
+      p50Ms: Number(percentile(latencies, 0.50).toFixed(2)),
+      p95Ms: Number(percentile(latencies, 0.95).toFixed(2)),
+      p99Ms: Number(percentile(latencies, 0.99).toFixed(2)),
+      errors,
+      errorRate: Number((errors / requests).toFixed(4)),
+    });
+  }
+  assert.equal(report.at(-1).technicians, 200);
+  assert.equal(report.reduce((sum, stage) => sum + stage.errors, 0), 0);
+  return report;
+}
+
 async function cleanup(auth, db, fixture, timings) {
   const started = performance.now();
   const refs = [
@@ -260,6 +320,17 @@ async function cleanup(auth, db, fixture, timings) {
     const batch = db.batch();
     refs.slice(offset, offset + CONFIG.firestoreBatchSize).forEach((ref) => batch.delete(ref));
     await batch.commit();
+  }
+  for (const technician of fixture.technicians) {
+    const locationRef = db.collection('technician_locations').doc(technician.uid);
+    const history = await locationRef.collection('history').get();
+    for (let offset = 0; offset < history.docs.length; offset += CONFIG.firestoreBatchSize) {
+      const batch = db.batch();
+      history.docs.slice(offset, offset + CONFIG.firestoreBatchSize)
+        .forEach((doc) => batch.delete(doc.ref));
+      await batch.commit();
+    }
+    await locationRef.delete();
   }
   await mapConcurrent(
     [...fixture.technicians, ...fixture.customers],
@@ -283,11 +354,13 @@ async function main() {
   const db = getFirestore(app);
   const fixture = buildFixture(db);
   const timings = {};
+  let trackingLoad = [];
   const totalStarted = performance.now();
   let passed = false;
   try {
     await seed(auth, db, fixture, timings);
     await validate(auth, db, fixture, timings);
+    trackingLoad = await exerciseTrackingLoad(db, fixture);
     passed = true;
   } finally {
     if (!CONFIG.keepData) await cleanup(auth, db, fixture, timings);
@@ -313,6 +386,7 @@ async function main() {
     timings: Object.fromEntries(
       Object.entries(timings).map(([key, value]) => [key, Number(value.toFixed(2))]),
     ),
+    trackingLoad,
     dataRetained: CONFIG.keepData,
   };
   console.log(JSON.stringify(report, null, 2));

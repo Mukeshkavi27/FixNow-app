@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:http/http.dart' as http;
 import 'package:latlong2/latlong.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../../app/theme/app_theme.dart';
 import 'google_maps_config.dart';
@@ -13,6 +14,35 @@ import 'route_recalculation.dart';
 
 bool get _isFlutterTest =>
     WidgetsBinding.instance.runtimeType.toString().contains('TestWidgets');
+
+class OpenStreetMapAttribution extends StatelessWidget {
+  const OpenStreetMapAttribution({super.key});
+
+  static final Uri _copyrightUri =
+      Uri.parse('https://www.openstreetmap.org/copyright');
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.white.withValues(alpha: 0.9),
+      borderRadius: BorderRadius.circular(4),
+      child: InkWell(
+        onTap: () => launchUrl(
+          _copyrightUri,
+          mode: LaunchMode.externalApplication,
+        ),
+        borderRadius: BorderRadius.circular(4),
+        child: const Padding(
+          padding: EdgeInsets.symmetric(horizontal: 5, vertical: 3),
+          child: Text(
+            '© OpenStreetMap contributors',
+            style: TextStyle(fontSize: 9, color: AppTheme.textSecondary),
+          ),
+        ),
+      ),
+    );
+  }
+}
 
 class GoogleMapPoint {
   const GoogleMapPoint({
@@ -149,45 +179,55 @@ class OpenStreetMapFallback extends StatelessWidget {
     final center = points.isEmpty
         ? const LatLng(20.5937, 78.9629)
         : LatLng(points.first.latitude, points.first.longitude);
-    return FlutterMap(
-      options: MapOptions(
-        initialCenter: center,
-        initialZoom: points.isEmpty ? 4 : zoom,
-        interactionOptions: const InteractionOptions(
-          flags: InteractiveFlag.drag |
-              InteractiveFlag.pinchZoom |
-              InteractiveFlag.doubleTapZoom,
-        ),
-      ),
+    return Stack(
+      fit: StackFit.expand,
       children: [
-        if (!_isFlutterTest)
-          TileLayer(
-            urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-            userAgentPackageName: 'com.fixnow.app',
+        FlutterMap(
+          options: MapOptions(
+            initialCenter: center,
+            initialZoom: points.isEmpty ? 4 : zoom,
+            interactionOptions: const InteractionOptions(
+              flags: InteractiveFlag.drag |
+                  InteractiveFlag.pinchZoom |
+                  InteractiveFlag.doubleTapZoom,
+            ),
           ),
-        if (polylinePoints.length >= 2)
-          PolylineLayer(
-            polylines: [
-              Polyline(
-                points: [
-                  for (final point in polylinePoints)
-                    LatLng(point.latitude, point.longitude),
+          children: [
+            if (!_isFlutterTest)
+              TileLayer(
+                urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+                userAgentPackageName: 'com.fixnow.app',
+              ),
+            if (polylinePoints.length >= 2)
+              PolylineLayer(
+                polylines: [
+                  Polyline(
+                    points: [
+                      for (final point in polylinePoints)
+                        LatLng(point.latitude, point.longitude),
+                    ],
+                    color: AppTheme.primary,
+                    strokeWidth: 4,
+                  ),
                 ],
-                color: AppTheme.primary,
-                strokeWidth: 4,
               ),
-            ],
-          ),
-        MarkerLayer(
-          markers: [
-            for (final point in points)
-              Marker(
-                point: LatLng(point.latitude, point.longitude),
-                width: 52,
-                height: 52,
-                child: _MapMarker(point: point),
-              ),
+            MarkerLayer(
+              markers: [
+                for (final point in points)
+                  Marker(
+                    point: LatLng(point.latitude, point.longitude),
+                    width: 52,
+                    height: 52,
+                    child: _MapMarker(point: point),
+                  ),
+              ],
+            ),
           ],
+        ),
+        const Positioned(
+          right: 6,
+          bottom: 6,
+          child: OpenStreetMapAttribution(),
         ),
       ],
     );
@@ -264,7 +304,7 @@ class InAppLiveMap extends StatelessWidget {
             ),
             Positioned(
               right: 10,
-              bottom: 10,
+              top: 10,
               child: DecoratedBox(
                 decoration: BoxDecoration(
                   color: Colors.white.withValues(alpha: 0.94),
@@ -286,6 +326,11 @@ class InAppLiveMap extends StatelessWidget {
                   ),
                 ),
               ),
+            ),
+            const Positioned(
+              right: 6,
+              bottom: 6,
+              child: OpenStreetMapAttribution(),
             ),
           ],
         );

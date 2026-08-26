@@ -104,8 +104,52 @@ final technicianAddressPinProvider =
 );
 
 final _technicianTabProvider = StateProvider.autoDispose<int>((ref) => 0);
+final technicianLocationDisclosureAcceptedProvider =
+    StateProvider<bool>((ref) => false);
 final _earningsRangeProvider =
     StateProvider.autoDispose<_EarningsRange>((ref) => _EarningsRange.week);
+
+Future<bool> showTechnicianLocationDisclosure(BuildContext context) async {
+  final accepted = await showDialog<bool>(
+    context: context,
+    barrierDismissible: false,
+    builder: (dialogContext) => AlertDialog(
+      icon: const Icon(Icons.location_on_outlined, size: 36),
+      title: const Text('Allow workday location tracking?'),
+      content: const SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'FixNow collects your precise location while workday tracking is active, including when the app is in the background.',
+              style: TextStyle(fontWeight: FontWeight.w700),
+            ),
+            SizedBox(height: 12),
+            Text(
+              'Your location is used to show your live route, confirm job arrival, calculate travel, and help Branch Admins and Super Admins monitor field work.',
+            ),
+            SizedBox(height: 12),
+            Text(
+              'Tracking starts after attendance. It stops when you close today\'s work or sign out. Android will ask for location permission next.',
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(dialogContext, false),
+          child: const Text('Not now'),
+        ),
+        FilledButton(
+          onPressed: () => Navigator.pop(dialogContext, true),
+          child: const Text('Agree & continue'),
+        ),
+      ],
+    ),
+  );
+  return accepted == true;
+}
 
 bool isLocalAttendanceHost(String host) {
   final normalized = host.trim().toLowerCase();
@@ -144,6 +188,7 @@ class _TechnicianDashboardScreenState
       _AutomaticLocationState.waitingForAttendance;
   String? _requestedTrackingKey;
   String? _pushRegistrationUserId;
+  bool _locationDisclosureInProgress = false;
 
   void _schedulePushRegistration(String userId) {
     if (_pushRegistrationUserId == userId) return;
@@ -194,6 +239,29 @@ class _TechnicianDashboardScreenState
         });
       }
       return;
+    }
+    if (!ref.read(technicianLocationDisclosureAcceptedProvider)) {
+      if (_locationDisclosureInProgress) return;
+      _locationDisclosureInProgress = true;
+      final accepted = await showTechnicianLocationDisclosure(context);
+      _locationDisclosureInProgress = false;
+      if (!mounted) return;
+      if (!accepted) {
+        _requestedTrackingKey = null;
+        setState(() {
+          _locationState = _AutomaticLocationState.permissionRequired;
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Location tracking was not started. Tap the location status to try again.',
+            ),
+          ),
+        );
+        return;
+      }
+      ref.read(technicianLocationDisclosureAcceptedProvider.notifier).state =
+          true;
     }
     final service = ref.read(locationTrackingServiceProvider);
     if (!force && service.isTracking) {
@@ -1244,12 +1312,13 @@ class _HeroPanel extends StatelessWidget {
 String _technicianNextAction(BookingStatus status) {
   return switch (status) {
     BookingStatus.technicianAssigned => 'Review and accept the assignment',
-    BookingStatus.accepted => 'Review the issue and send an estimate',
+    BookingStatus.accepted => 'Start your journey to the customer',
     BookingStatus.estimateSent => 'Wait for customer estimate approval',
-    BookingStatus.estimateApproved => 'Start your journey',
+    BookingStatus.estimateApproved => 'Start the service work',
     BookingStatus.onTheWay => 'Confirm when you meet the customer',
     BookingStatus.arrived => 'Wait for customer meeting confirmation',
-    BookingStatus.customerConfirmedArrival => 'Start the service work',
+    BookingStatus.customerConfirmedArrival =>
+      'Review the issue and send an estimate',
     BookingStatus.serviceStarted => 'Complete the service work',
     BookingStatus.workCompletedPendingCustomer =>
       'Wait for customer work confirmation',
@@ -1516,9 +1585,32 @@ class _TechnicianJobCard extends ConsumerWidget {
                 ],
                 if (booking.status == BookingStatus.accepted)
                   FilledButton.icon(
-                    onPressed: () => _showEstimateDialog(context, ref),
-                    icon: const Icon(Icons.request_quote_outlined),
-                    label: const Text('Review issue & create estimate'),
+                    onPressed: user == null
+                        ? null
+                        : () async {
+                            if (!await confirmAction(
+                              'Start Journey?',
+                              'Your location will now be tracked while travelling to the customer.',
+                              'Start Journey',
+                            )) {
+                              return;
+                            }
+                            await bookingRepository().transitionStatus(
+                              bookingId: booking.id,
+                              technicianId: user.uid,
+                              expected: BookingStatus.accepted,
+                              next: BookingStatus.onTheWay,
+                            );
+                            await ref
+                                .read(locationTrackingServiceProvider)
+                                .start(
+                                  technicianId: user.uid,
+                                  bookingId: booking.id,
+                                  branchId: user.branchId,
+                                );
+                          },
+                    icon: const Icon(Icons.navigation),
+                    label: const Text('Start journey'),
                   ),
                 if (booking.status == BookingStatus.onTheWay &&
                     !trackingThisBooking)
@@ -1628,28 +1720,9 @@ class _TechnicianJobCard extends ConsumerWidget {
                   ),
                 if (booking.status == BookingStatus.customerConfirmedArrival)
                   FilledButton.icon(
-                    onPressed: user == null
-                        ? null
-                        : () async {
-                            if (!await confirmAction(
-                              'Start Work?',
-                              'Both you and the customer confirmed the meeting. Start service now?',
-                              'Start Work',
-                            )) {
-                              return;
-                            }
-                            await bookingRepository().transitionStatus(
-                              bookingId: booking.id,
-                              technicianId: user.uid,
-                              expected: BookingStatus.customerConfirmedArrival,
-                              next: BookingStatus.serviceStarted,
-                            );
-                            await ref
-                                .read(locationTrackingServiceProvider)
-                                .finishBooking();
-                          },
-                    icon: const Icon(Icons.build_outlined),
-                    label: const Text('Start work'),
+                    onPressed: () => _showEstimateDialog(context, ref),
+                    icon: const Icon(Icons.request_quote_outlined),
+                    label: const Text('Review issue & create estimate'),
                   ),
                 if (booking.status == BookingStatus.estimateSent)
                   OutlinedButton.icon(
@@ -1669,9 +1742,9 @@ class _TechnicianJobCard extends ConsumerWidget {
                         ? null
                         : () async {
                             if (!await confirmAction(
-                              'Start Journey?',
-                              'Your location will now be tracked while travelling to the customer.',
-                              'Start Journey',
+                              'Start Work?',
+                              'The customer approved the estimate. Start service now?',
+                              'Start Work',
                             )) {
                               return;
                             }
@@ -1679,18 +1752,14 @@ class _TechnicianJobCard extends ConsumerWidget {
                               bookingId: booking.id,
                               technicianId: user.uid,
                               expected: BookingStatus.estimateApproved,
-                              next: BookingStatus.onTheWay,
+                              next: BookingStatus.serviceStarted,
                             );
                             await ref
                                 .read(locationTrackingServiceProvider)
-                                .start(
-                                  technicianId: user.uid,
-                                  bookingId: booking.id,
-                                  branchId: user.branchId,
-                                );
+                                .finishBooking();
                           },
-                    icon: const Icon(Icons.navigation),
-                    label: const Text('Start journey'),
+                    icon: const Icon(Icons.build_outlined),
+                    label: const Text('Start work'),
                   ),
                 if (booking.status == BookingStatus.serviceStarted)
                   FilledButton.icon(
@@ -3514,11 +3583,6 @@ class _AttendanceViewState extends ConsumerState<_AttendanceView> {
   Future<void> _captureAttendanceSelfie() async {
     final user = ref.read(currentUserProvider).valueOrNull;
     final referenceSignature = user?.faceReferenceSignature?.trim() ?? '';
-    if (referenceSignature.isEmpty) {
-      _setViewState(() => _result =
-          'Register your Face ID reference before taking attendance.');
-      return;
-    }
     _setViewState(() {
       _loading = true;
       _result = 'Opening camera...';
@@ -3540,26 +3604,20 @@ class _AttendanceViewState extends ConsumerState<_AttendanceView> {
           );
       final faceService = const FaceMatchService();
       final signature = await faceService.createSignature(bytes);
-      final match = faceService.compare(
-        referenceSignature: referenceSignature,
-        selfieSignature: signature,
-      );
-      if (!match.passed) {
-        _setViewState(() {
-          _attendanceSelfie = null;
-          _attendanceSelfieBytes = null;
-          _attendanceFaceMatch = null;
-          _result =
-              'Face could not be verified. Position your face clearly and retake the selfie.';
-        });
-        return;
-      }
+      final match = referenceSignature.isEmpty
+          ? const FaceMatchResult(passed: false, score: 0)
+          : faceService.compare(
+              referenceSignature: referenceSignature,
+              selfieSignature: signature,
+            );
       _setViewState(() {
         _attendanceSelfie = image;
         _attendanceSelfieBytes = bytes;
         _attendanceFaceMatch = match;
         _attendanceStep = 2;
-        _result = 'Selfie verified. Continue to location verification.';
+        _result = match.passed
+            ? 'Selfie captured. Continue to location verification.'
+            : 'Selfie captured for admin review. Continue to location verification.';
       });
     } catch (error) {
       _setViewState(() => _result = _selfieFailureMessage(
@@ -3577,6 +3635,17 @@ class _AttendanceViewState extends ConsumerState<_AttendanceView> {
       _setViewState(() => _result = 'Attendance settings are still loading.');
       return;
     }
+    if (!ref.read(technicianLocationDisclosureAcceptedProvider)) {
+      final accepted = await showTechnicianLocationDisclosure(context);
+      if (!mounted) return;
+      if (!accepted) {
+        _setViewState(() => _result =
+            'Location tracking was not started. Tap Start tracking when you are ready.');
+        return;
+      }
+      ref.read(technicianLocationDisclosureAcceptedProvider.notifier).state =
+          true;
+    }
     _setViewState(() {
       _loading = true;
       _result = 'Detecting current location...';
@@ -3591,8 +3660,9 @@ class _AttendanceViewState extends ConsumerState<_AttendanceView> {
       _setViewState(() {
         _attendanceLocation = position;
         _attendanceStep = 3;
-        _result = 'Location detected. Review and confirm attendance.';
+        _result = 'Location permission granted. Starting day tracking...';
       });
+      await _confirmStagedAttendance();
     } finally {
       _setViewState(() => _loading = false);
     }
@@ -3610,8 +3680,7 @@ class _AttendanceViewState extends ConsumerState<_AttendanceView> {
         image == null ||
         bytes == null ||
         position == null ||
-        match == null ||
-        !match.passed) {
+        match == null) {
       _setViewState(() => _result =
           'Complete selfie and location verification before confirming.');
       return;
@@ -3644,7 +3713,7 @@ class _AttendanceViewState extends ConsumerState<_AttendanceView> {
               longitude: position.longitude,
               timestamp: now,
               status: status,
-              faceMatchPassed: true,
+              faceMatchPassed: match.passed,
               geofencePassed: distance <= config.geofenceRadiusMeters,
               faceMatchScore: match.score,
               branchId: user.branchId,
@@ -3665,7 +3734,8 @@ class _AttendanceViewState extends ConsumerState<_AttendanceView> {
       } catch (_) {}
       _setViewState(() {
         _marked = true;
-        _result = 'Attendance recorded successfully.';
+        _result =
+            'Attendance recorded. Live tracking is running throughout your workday.';
       });
     } catch (error) {
       _setViewState(() => _result = _selfieFailureMessage(
@@ -4020,10 +4090,14 @@ class _AttendanceViewState extends ConsumerState<_AttendanceView> {
             folder: 'attendance/$userId',
             fileName: '${dayKey}_${DateTime.now().millisecondsSinceEpoch}.jpg',
           );
-    } catch (error) {
-      throw StateError(
-        'Selfie upload was blocked. Deploy Storage rules and configure Storage CORS for web testing.',
-      );
+    } catch (_) {
+      // Firebase Storage is optional during the pilot. Keep the compressed
+      // selfie inside the protected attendance record so lack of a Storage
+      // bucket never prevents a technician from starting work.
+      final mimeType = image.mimeType?.startsWith('image/') == true
+          ? image.mimeType!
+          : 'image/jpeg';
+      return 'data:$mimeType;base64,${base64Encode(bytes)}';
     }
   }
 
@@ -4077,7 +4151,7 @@ class _AttendanceViewState extends ConsumerState<_AttendanceView> {
                         fontWeight: FontWeight.w900)),
                 SizedBox(height: 6),
                 Text(
-                    'Mark today once with Face ID and location. After this, jobs unlock and live location stays shared until sign out.',
+                    'Mark today once with a selfie and location. After this, jobs unlock and live location stays shared until sign out.',
                     style: TextStyle(color: Colors.white70)),
               ],
             ),
@@ -4187,7 +4261,7 @@ class _AttendanceViewState extends ConsumerState<_AttendanceView> {
                     const Expanded(child: Divider()),
                     _AttendanceStepIndicator(
                       number: 2,
-                      label: 'Location',
+                      label: 'Tracking',
                       complete: _attendanceStep > 2,
                       active: _attendanceStep == 2,
                     ),
@@ -4244,7 +4318,7 @@ class _AttendanceViewState extends ConsumerState<_AttendanceView> {
                   ),
                   const SizedBox(height: 10),
                   const Text(
-                    '✓ Selfie verified',
+                    '✓ Selfie captured',
                     style: TextStyle(
                       color: Colors.green,
                       fontWeight: FontWeight.w900,
@@ -4252,10 +4326,13 @@ class _AttendanceViewState extends ConsumerState<_AttendanceView> {
                   ),
                   const SizedBox(height: 12),
                   const Text(
-                    'Step 2 — Location Verification',
+                    'Step 2 — Start Day Tracking',
                     style: TextStyle(fontWeight: FontWeight.w900),
                   ),
-                  const Text('📍 Current Location'),
+                  const Text(
+                    'Allow location access to share your live position throughout the workday.',
+                    textAlign: TextAlign.center,
+                  ),
                 ] else ...[
                   const Icon(Icons.verified_outlined,
                       size: 48, color: Colors.green),
@@ -4270,7 +4347,9 @@ class _AttendanceViewState extends ConsumerState<_AttendanceView> {
                   const SizedBox(height: 12),
                   _AttendanceConfirmationRow(
                     label: 'Selfie',
-                    value: '✓ Verified',
+                    value: _attendanceFaceMatch?.passed == true
+                        ? '✓ Matched'
+                        : '✓ Captured for admin review',
                   ),
                   _AttendanceConfirmationRow(
                     label: 'Location',
@@ -4345,7 +4424,7 @@ class _AttendanceViewState extends ConsumerState<_AttendanceView> {
                       : _attendanceStep == 1
                           ? "✓ I'm Present — Take Selfie"
                           : _attendanceStep == 2
-                              ? 'Verify Location'
+                              ? 'Start tracking'
                               : 'Confirm Attendance'),
                 ),
                 if (_attendanceSelfie != null && !_marked) ...[
@@ -4535,7 +4614,9 @@ class _TechnicianAttendanceRow extends StatelessWidget {
                 ),
                 const SizedBox(height: 2),
                 Text(
-                  record.faceMatchPassed ? 'Face ID matched' : 'Face ID failed',
+                  record.faceMatchPassed
+                      ? 'Face reference matched'
+                      : 'Selfie saved for admin review',
                   style: const TextStyle(
                     fontSize: 12,
                     color: AppTheme.textSecondary,

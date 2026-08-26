@@ -128,8 +128,8 @@ void main() {
       'Technician revenue',
       'Service revenue',
       'Revenue reports',
-      'Monthly base salary',
-      'Automatic incentive',
+      'Base salary',
+      '₹8,000 rule incentive',
       'Admin-added incentive',
       'Technician compensation',
       'Technician salary chart',
@@ -138,7 +138,8 @@ void main() {
     }
     expect(find.text('₹2,000'), findsWidgets);
 
-    expect(find.textContaining('50,000'), findsWidgets);
+    expect(find.textContaining('30,000'), findsWidgets);
+    expect(find.textContaining('20,000'), findsWidgets);
 
     await tester.tap(find.text('All branches'));
     await tester.pumpAndSettle();

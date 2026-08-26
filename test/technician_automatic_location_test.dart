@@ -16,6 +16,116 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  group('technician location write throttling', () {
+    final start = DateTime(2026, 8, 20, 9);
+
+    test('publishes current location at most once per minute', () {
+      expect(
+        shouldPublishTechnicianLocation(
+          now: start.add(const Duration(seconds: 59)),
+          lastPublishedAt: start,
+        ),
+        isFalse,
+      );
+      expect(
+        shouldPublishTechnicianLocation(
+          now: start.add(const Duration(minutes: 1)),
+          lastPublishedAt: start,
+        ),
+        isTrue,
+      );
+    });
+
+    test('force publish bypasses the current location interval', () {
+      expect(
+        shouldPublishTechnicianLocation(
+          now: start.add(const Duration(seconds: 5)),
+          lastPublishedAt: start,
+          force: true,
+        ),
+        isTrue,
+      );
+    });
+
+    test('records route history every minute while moving', () {
+      expect(
+        shouldRecordTechnicianLocationHistory(
+          now: start.add(const Duration(seconds: 59)),
+          lastRecordedAt: start,
+        ),
+        isFalse,
+      );
+      expect(
+        shouldRecordTechnicianLocationHistory(
+          now: start.add(const Duration(minutes: 1)),
+          lastRecordedAt: start,
+        ),
+        isTrue,
+      );
+    });
+
+    test('records route history every minute while stationary', () {
+      expect(
+        shouldRecordTechnicianLocationHistory(
+          now: start.add(const Duration(seconds: 59)),
+          lastRecordedAt: start,
+        ),
+        isFalse,
+      );
+      expect(
+        shouldRecordTechnicianLocationHistory(
+          now: start.add(const Duration(minutes: 1)),
+          lastRecordedAt: start,
+        ),
+        isTrue,
+      );
+    });
+  });
+
+  group('technician location integrity', () {
+    test('accepts a precise physical-device sample', () {
+      expect(
+        isAcceptableTechnicianPosition(
+          latitude: 11.0168,
+          longitude: 76.9558,
+          accuracy: 12,
+          isMocked: false,
+        ),
+        isTrue,
+      );
+    });
+
+    test('rejects mocked, invalid, and low-confidence samples', () {
+      expect(
+        isAcceptableTechnicianPosition(
+          latitude: 11.0168,
+          longitude: 76.9558,
+          accuracy: 12,
+          isMocked: true,
+        ),
+        isFalse,
+      );
+      expect(
+        isAcceptableTechnicianPosition(
+          latitude: 91,
+          longitude: 76.9558,
+          accuracy: 12,
+          isMocked: false,
+        ),
+        isFalse,
+      );
+      expect(
+        isAcceptableTechnicianPosition(
+          latitude: 11.0168,
+          longitude: 76.9558,
+          accuracy: 251,
+          isMocked: false,
+        ),
+        isFalse,
+      );
+    });
+  });
+
   test('attendance location fallback is restricted to local hosts', () {
     expect(isLocalAttendanceHost('localhost'), isTrue);
     expect(isLocalAttendanceHost('127.0.0.1'), isTrue);
@@ -120,6 +230,15 @@ void main() {
         ),
       ]),
     );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Allow workday location tracking?'), findsOneWidget);
+    expect(
+      find.textContaining('including when the app is in the background'),
+      findsOneWidget,
+    );
+    expect(tracker.startCount, 0);
+    await tester.tap(find.text('Agree & continue'));
     await tester.pumpAndSettle();
 
     expect(tracker.startCount, 1);

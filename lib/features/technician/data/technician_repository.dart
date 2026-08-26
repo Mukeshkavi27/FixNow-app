@@ -85,6 +85,8 @@ class TechnicianRepository {
     TechnicianLocation location, {
     required bool recordHistory,
   }) async {
+    final locationData = location.toJson()
+      ..['updatedAt'] = FieldValue.serverTimestamp();
     final technicianRef = _firestore
         .collection('technician_locations')
         .doc(location.technicianId);
@@ -96,12 +98,13 @@ class TechnicianRepository {
         technicianRef: technicianRef,
         historyRef: historyRef,
         recordHistory: recordHistory,
+        locationData: locationData,
       );
       return;
     }
     final batch = _firestore.batch();
-    batch.set(technicianRef, location.toJson(), SetOptions(merge: true));
-    if (recordHistory) batch.set(historyRef, location.toJson());
+    batch.set(technicianRef, locationData, SetOptions(merge: true));
+    if (recordHistory) batch.set(historyRef, locationData);
     await batch.commit();
   }
 
@@ -110,6 +113,7 @@ class TechnicianRepository {
     required DocumentReference<Map<String, dynamic>> technicianRef,
     required DocumentReference<Map<String, dynamic>> historyRef,
     required bool recordHistory,
+    required Map<String, dynamic> locationData,
   }) async {
     final dateKey = overtimeDayKey(location.updatedAt);
     final overtimeRef = _firestore
@@ -117,9 +121,8 @@ class TechnicianRepository {
         .doc('${location.technicianId}_$dateKey');
     await _firestore.runTransaction((transaction) async {
       final existing = await transaction.get(overtimeRef);
-      transaction.set(
-          technicianRef, location.toJson(), SetOptions(merge: true));
-      if (recordHistory) transaction.set(historyRef, location.toJson());
+      transaction.set(technicianRef, locationData, SetOptions(merge: true));
+      if (recordHistory) transaction.set(historyRef, locationData);
       transaction.set(
           overtimeRef,
           {

@@ -1,5 +1,41 @@
 # FixNow Deployment
 
+## Automated release pipeline
+
+Pull requests and pushes to `main` run `.github/workflows/ci.yml`. It checks
+static analysis, Flutter tests, Node tests, and committed secrets.
+Never merge when a required check is failing.
+
+Create separate GitHub Environments named `staging` and `production`. Configure
+these variables in each environment:
+
+- `FIXNOW_APPLICATION_ID`
+- `FIXNOW_AUTH_API_URL`
+- `FIXNOW_ADMIN_API_URL`
+- `FIXNOW_FIREBASE_AUTH_DOMAIN`
+- `FIXNOW_FIREBASE_PROJECT_ID`
+- `FIXNOW_FIREBASE_STORAGE_BUCKET`
+- `FIXNOW_FIREBASE_MESSAGING_SENDER_ID`
+- `FIXNOW_FIREBASE_APP_ID`
+
+Configure these protected environment secrets:
+
+- `GOOGLE_SERVICES_BASE64`
+- `ANDROID_KEYSTORE_BASE64`
+- `ANDROID_KEYSTORE_PASSWORD`
+- `ANDROID_KEY_ALIAS`
+- `ANDROID_KEY_PASSWORD`
+- `GOOGLE_MAPS_API_KEY`
+- `FIXNOW_FIREBASE_API_KEY`
+
+Use a different Firebase project and server for staging. GitHub production
+environment approval should be required. Run **Android signed release**
+manually with an increasing version code. The workflow validates configuration,
+runs all checks, builds signed APK/AAB files, and stores them as GitHub artifacts.
+
+The pipeline creates artifacts only; it intentionally does not automatically
+publish to Google Play.
+
 ## Android Play Store
 
 1. Confirm the checked-in Firebase Android options still match project `fixnow-a6515`. Run `flutterfire configure` again whenever the Android application ID changes.
@@ -59,3 +95,18 @@
 - Use Firebase App Check, Crashlytics, Performance Monitoring, and Remote Config before public launch.
 - Store payment status and invoices in `bills`; compute revenue from paid bills, not booking state alone.
 - Deploy Firestore rules and the indexes declared in `firestore.indexes.json` together.
+
+## Rollback
+
+1. Stop rollout in Play Console immediately when crash, login, booking, billing,
+   or tracking alerts exceed the accepted threshold.
+2. Promote the previous known-good artifact for users who have not updated.
+   Android version codes cannot be reused, so a corrective release must use a
+   higher code.
+3. Roll back the Node service to the previous known-good Git commit in Render.
+4. Keep timestamped copies of previously deployed Firestore and Storage rules.
+   Validate restored rules against the Firebase emulator before deployment.
+5. Export Firestore before schema migrations. Application rollback does not
+   automatically undo data migrations.
+6. Record the incident, affected release/version, time window, and recovery
+   decision. Do not delete production evidence or logs during recovery.

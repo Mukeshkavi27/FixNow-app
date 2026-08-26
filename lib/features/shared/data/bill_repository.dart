@@ -120,11 +120,13 @@ class BillRepository {
     }
     final serviceAmount =
         double.parse((labourCharge + partsCharge).toStringAsFixed(2));
-    if (serviceAmount <= 0) throw ArgumentError('Bill amount must be positive.');
+    if (serviceAmount <= 0) {
+      throw ArgumentError('Bill amount must be positive.');
+    }
     final cgstAmount = double.parse((serviceAmount * 0.09).toStringAsFixed(2));
     final sgstAmount = double.parse((serviceAmount * 0.09).toStringAsFixed(2));
-    final payableAmount =
-        double.parse((serviceAmount + cgstAmount + sgstAmount).toStringAsFixed(2));
+    final payableAmount = double.parse(
+        (serviceAmount + cgstAmount + sgstAmount).toStringAsFixed(2));
     final billRef = _firestore.collection('bills').doc(bookingId);
     final bookingRef = _firestore.collection('bookings').doc(bookingId);
     final technicianRef = _firestore.collection('users').doc(technicianId);
@@ -197,7 +199,12 @@ class BillRepository {
         'status': BookingStatus.billGenerated.name,
         'updatedAt': FieldValue.serverTimestamp(),
       });
-      transaction.set(_firestore.collection('notifications').doc(), {
+    });
+    // Notification delivery is deliberately outside the billing transaction.
+    // A notification permission/configuration problem must never roll back an
+    // otherwise valid final bill and leave the technician blocked.
+    try {
+      await _firestore.collection('notifications').add({
         'userId': customerId,
         'bookingId': bookingId,
         'type': 'billGenerated',
@@ -206,7 +213,7 @@ class BillRepository {
         'isRead': false,
         'createdAt': FieldValue.serverTimestamp(),
       });
-    });
+    } catch (_) {}
   }
 
   Future<void> confirmCollectedPayment({
@@ -317,7 +324,8 @@ class BillRepository {
       }
       if ((billData['amountReceived'] as num?)?.toDouble() !=
           (billData['amount'] as num?)?.toDouble()) {
-        throw StateError('The recorded payment amount does not match the bill.');
+        throw StateError(
+            'The recorded payment amount does not match the bill.');
       }
       transaction.update(billRef, {
         'isPaid': true,

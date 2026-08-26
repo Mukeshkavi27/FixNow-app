@@ -164,7 +164,7 @@ void main() {
 
     await tester.tap(find.text('Technicians'));
     await tester.pumpAndSettle();
-    expect(find.text('Approved'), findsOneWidget);
+    expect(find.text('Technician directory'), findsOneWidget);
   });
 
   testWidgets('Branch Admin dashboard remains responsive on mobile', (
@@ -351,6 +351,9 @@ void main() {
     await tester.tap(find.text('Technicians'));
     await tester.pumpAndSettle();
 
+    await tester.tap(find.text('Past technicians'));
+    await tester.pumpAndSettle();
+
     expect(find.text('Inactive'), findsOneWidget);
     expect(
       find.text('Inactive: Technician moved to another branch.'),
@@ -405,9 +408,6 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Bookings'));
-    await tester.pumpAndSettle();
-
     expect(find.text('Pending'), findsOneWidget);
     expect(
       find.text('1 new technician approval notification for this branch.'),

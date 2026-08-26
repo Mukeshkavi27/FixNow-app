@@ -35,7 +35,7 @@ class EstimateRepository {
       final status =
           BookingStatus.fromString(data['status'] as String? ?? 'booked');
       if (data['technicianId'] != estimate.technicianId ||
-          (status != BookingStatus.accepted &&
+          (status != BookingStatus.customerConfirmedArrival &&
               status != BookingStatus.estimateRejected)) {
         throw StateError('Estimate cannot be created for this booking.');
       }
@@ -88,7 +88,7 @@ class EstimateRepository {
         'bookingId': bookingId,
         'type': 'estimateApproved',
         'title': 'Estimate approved',
-        'body': 'Customer approved the estimate. You can start the journey.',
+        'body': 'Customer approved the estimate. You can start the work.',
         'isRead': false,
         'createdAt': FieldValue.serverTimestamp(),
       });

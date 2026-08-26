@@ -9,6 +9,7 @@ import 'package:http/http.dart' as http;
 
 import '../../../core/enums/account_status.dart';
 import '../../../core/enums/user_role.dart';
+import '../../../core/config/app_environment.dart';
 import '../../../core/providers/firebase_providers.dart';
 import '../domain/app_user.dart';
 
@@ -16,6 +17,8 @@ const _configuredMobileAuthApiUrl = String.fromEnvironment(
   'FIXNOW_AUTH_API_URL',
   defaultValue: '',
 );
+const _defaultProductionMobileAuthApiUrl =
+    'https://fixnow-tracking-server.onrender.com';
 
 final authRepositoryProvider = Provider<AuthRepository>((ref) {
   return AuthRepository(ref.watch(firebaseRefsProvider).auth,
@@ -67,14 +70,15 @@ class AuthRepository {
     required String password,
     required String role,
   }) async {
-    final baseUrl = _configuredMobileAuthApiUrl.isNotEmpty
+    final configuredUrl = _configuredMobileAuthApiUrl.isNotEmpty
         ? _configuredMobileAuthApiUrl
         : kDebugMode
-            ? 'http://127.0.0.1:8088'
-            : '';
-    if (baseUrl.isEmpty) {
-      throw StateError('Mobile login is not configured for this app.');
-    }
+            ? ''
+            : _defaultProductionMobileAuthApiUrl;
+    final baseUrl = AppEnvironment.requireServiceUrl(
+      configuredUrl,
+      name: 'FIXNOW_AUTH_API_URL',
+    );
     late http.Response response;
     try {
       response = await http
@@ -100,10 +104,13 @@ class AuthRepository {
     }
     final body = jsonDecode(response.body) as Map<String, dynamic>;
     if (response.statusCode != 200 || body['ok'] != true) {
-      throw StateError(body['error'] as String? ?? 'Invalid mobile number or password');
+      throw StateError(
+          body['error'] as String? ?? 'Invalid mobile number or password');
     }
     final token = body['customToken'] as String?;
-    if (token == null || token.isEmpty) throw StateError('Mobile login failed.');
+    if (token == null || token.isEmpty) {
+      throw StateError('Mobile login failed.');
+    }
     final credential = await _auth.signInWithCustomToken(token);
     await _validateSignedInUser(credential);
   }

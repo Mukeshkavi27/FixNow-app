@@ -198,7 +198,8 @@ class SuperAdminDashboardScreen extends ConsumerWidget {
     final city = TextEditingController(text: branch?.city);
     final officeLocation = TextEditingController();
     double? latitude = branch?.hasCoordinates == true ? branch!.latitude : null;
-    double? longitude = branch?.hasCoordinates == true ? branch!.longitude : null;
+    double? longitude =
+        branch?.hasCoordinates == true ? branch!.longitude : null;
     final radius =
         TextEditingController(text: branch?.radiusMeters.toStringAsFixed(0));
     final aliases = TextEditingController(text: branch?.aliases.join(', '));
@@ -260,7 +261,8 @@ class SuperAdminDashboardScreen extends ConsumerWidget {
                                         .read(addressGeocodingServiceProvider)
                                         .search(officeLocation.text.trim());
                                     if (result == null) {
-                                      throw StateError('Location could not be found. Add a more complete address.');
+                                      throw StateError(
+                                          'Location could not be found. Add a more complete address.');
                                     }
                                     latitude = result.latitude;
                                     longitude = result.longitude;
@@ -284,15 +286,22 @@ class SuperAdminDashboardScreen extends ConsumerWidget {
                               : () async {
                                   setState(() => locating = true);
                                   try {
-                                    var permission = await Geolocator.checkPermission();
-                                    if (permission == LocationPermission.denied) {
-                                      permission = await Geolocator.requestPermission();
+                                    var permission =
+                                        await Geolocator.checkPermission();
+                                    if (permission ==
+                                        LocationPermission.denied) {
+                                      permission =
+                                          await Geolocator.requestPermission();
                                     }
-                                    if (permission == LocationPermission.denied ||
-                                        permission == LocationPermission.deniedForever) {
-                                      throw StateError('Location permission is required to use the current office location.');
+                                    if (permission ==
+                                            LocationPermission.denied ||
+                                        permission ==
+                                            LocationPermission.deniedForever) {
+                                      throw StateError(
+                                          'Location permission is required to use the current office location.');
                                     }
-                                    final position = await Geolocator.getCurrentPosition();
+                                    final position =
+                                        await Geolocator.getCurrentPosition();
                                     latitude = position.latitude;
                                     longitude = position.longitude;
                                     final address = await ref
@@ -301,8 +310,8 @@ class SuperAdminDashboardScreen extends ConsumerWidget {
                                           latitude: position.latitude,
                                           longitude: position.longitude,
                                         );
-                                    officeLocation.text =
-                                        address?.address ?? 'Current office location';
+                                    officeLocation.text = address?.address ??
+                                        'Current office location';
                                   } catch (error) {
                                     if (dialogContext.mounted) {
                                       _showError(dialogContext, error);
@@ -789,31 +798,37 @@ class SuperAdminDashboardScreen extends ConsumerWidget {
                   'Revenue ownership for future bills',
                   style: Theme.of(dialogContext).textTheme.titleSmall,
                 ),
-                RadioListTile<bool>(
-                  value: false,
+                RadioGroup<bool>(
                   groupValue: futureRevenueStaysWithPreviousBranch,
-                  contentPadding: EdgeInsets.zero,
-                  title: const Text('Credit future bills to the new branch'),
-                  subtitle: const Text(
-                    'Recommended. Past bills and collections stay with the old branch.',
+                  onChanged: (value) {
+                    if (saving) return;
+                    setState(() =>
+                        futureRevenueStaysWithPreviousBranch = value ?? false);
+                  },
+                  child: Column(
+                    children: [
+                      RadioListTile<bool>(
+                        value: false,
+                        enabled: !saving,
+                        contentPadding: EdgeInsets.zero,
+                        title:
+                            const Text('Credit future bills to the new branch'),
+                        subtitle: const Text(
+                          'Recommended. Past bills and collections stay with the old branch.',
+                        ),
+                      ),
+                      RadioListTile<bool>(
+                        value: true,
+                        enabled: !saving,
+                        contentPadding: EdgeInsets.zero,
+                        title:
+                            const Text('Keep future bills with the old branch'),
+                        subtitle: const Text(
+                          'Use for a temporary operating transfer.',
+                        ),
+                      ),
+                    ],
                   ),
-                  onChanged: saving
-                      ? null
-                      : (value) => setState(() =>
-                          futureRevenueStaysWithPreviousBranch = value ?? false),
-                ),
-                RadioListTile<bool>(
-                  value: true,
-                  groupValue: futureRevenueStaysWithPreviousBranch,
-                  contentPadding: EdgeInsets.zero,
-                  title: const Text('Keep future bills with the old branch'),
-                  subtitle: const Text(
-                    'Use for a temporary operating transfer.',
-                  ),
-                  onChanged: saving
-                      ? null
-                      : (value) => setState(() =>
-                          futureRevenueStaysWithPreviousBranch = value ?? false),
                 ),
                 const Text(
                   'A technician with an active job cannot be transferred. Already generated bills are never moved.',

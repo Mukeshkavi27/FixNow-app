@@ -7,6 +7,7 @@ import {
 } from '../src/tracking-persistence.js';
 
 test('GPS payload retains complete technician and booking telemetry', () => {
+  const receivedAt = new Date('2026-07-14T09:30:30.000Z');
   const update = normalizeGpsPayload({
     technicianId: 'tech-1',
     jobId: 'booking-1',
@@ -17,18 +18,43 @@ test('GPS payload retains complete technician and booking telemetry', () => {
     speed: 8.2,
     accuracy: 4.5,
     timestamp: '2026-07-14T09:30:00.000Z',
-  });
+  }, receivedAt);
 
   assert.equal(update.technicianId, 'tech-1');
   assert.equal(update.jobId, 'booking-1');
   assert.equal(update.speed, 8.2);
   assert.equal(update.accuracy, 4.5);
-  assert.equal(update.updatedAt, '2026-07-14T09:30:00.000Z');
+  assert.equal(update.capturedAt, '2026-07-14T09:30:00.000Z');
+  assert.equal(update.updatedAt, receivedAt.toISOString());
   assert.throws(
     () => normalizeGpsPayload({
       technicianId: 'tech-1', jobId: 'booking-1', latitude: 100, longitude: 80,
     }),
     /Latitude is invalid/,
+  );
+});
+
+test('GPS validation rejects spoofed, stale, future, and inaccurate samples', () => {
+  const now = new Date('2026-08-25T10:00:00.000Z');
+  const valid = {
+    technicianId: 'tech-1', jobId: 'booking-1',
+    latitude: 13.0827, longitude: 80.2707, accuracy: 12,
+  };
+  assert.throws(
+    () => normalizeGpsPayload({ ...valid, isMocked: true }, now),
+    /Mocked location/,
+  );
+  assert.throws(
+    () => normalizeGpsPayload({ ...valid, accuracy: 251 }, now),
+    /accuracy is insufficient/,
+  );
+  assert.throws(
+    () => normalizeGpsPayload({ ...valid, timestamp: '2026-08-25T09:49:59Z' }, now),
+    /stale/,
+  );
+  assert.throws(
+    () => normalizeGpsPayload({ ...valid, timestamp: '2026-08-25T10:02:01Z' }, now),
+    /future/,
   );
 });
 
@@ -64,7 +90,7 @@ test('GPS persistence updates latest point and appends immutable history', async
     speed: 7,
     accuracy: 5,
     timestamp: '2026-07-14T09:30:00.000Z',
-  });
+  }, new Date('2026-07-14T09:30:30.000Z'));
 
   await persistGpsUpdate(update, firestore);
 

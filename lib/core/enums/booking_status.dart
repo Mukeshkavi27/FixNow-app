@@ -2,12 +2,12 @@ enum BookingStatus {
   booked('Waiting for Admin Review'),
   technicianAssigned('Technician Assigned'),
   accepted('Accepted'),
-  estimateSent('Waiting for Customer Approval'),
-  estimateRejected('Estimate Rejected'),
-  estimateApproved('Customer Approved'),
   onTheWay('On The Way'),
   arrived('Technician Arrived'),
   customerConfirmedArrival('Arrival Confirmed'),
+  estimateSent('Waiting for Customer Approval'),
+  estimateRejected('Estimate Rejected'),
+  estimateApproved('Customer Approved'),
   serviceStarted('Work In Progress'),
   workCompletedPendingCustomer('Waiting for Customer Completion'),
   onHold('On Hold'),
@@ -29,15 +29,15 @@ enum BookingStatus {
     return switch (this) {
       BookingStatus.booked => next == BookingStatus.technicianAssigned,
       BookingStatus.technicianAssigned => next == BookingStatus.accepted,
-      BookingStatus.accepted => next == BookingStatus.estimateSent,
+      BookingStatus.accepted => next == BookingStatus.onTheWay,
       BookingStatus.onTheWay => next == BookingStatus.arrived,
       BookingStatus.arrived => next == BookingStatus.customerConfirmedArrival,
       BookingStatus.customerConfirmedArrival =>
-        next == BookingStatus.serviceStarted,
+        next == BookingStatus.estimateSent,
       BookingStatus.estimateSent => next == BookingStatus.estimateApproved ||
           next == BookingStatus.estimateRejected,
       BookingStatus.estimateRejected => next == BookingStatus.estimateSent,
-      BookingStatus.estimateApproved => next == BookingStatus.onTheWay,
+      BookingStatus.estimateApproved => next == BookingStatus.serviceStarted,
       BookingStatus.serviceStarted =>
         next == BookingStatus.workCompletedPendingCustomer ||
             next == BookingStatus.onHold,
