@@ -13,6 +13,17 @@ const technicianCurrentLocationWriteInterval = Duration(minutes: 1);
 const technicianHistoryWriteInterval = Duration(minutes: 1);
 const technicianMaximumAcceptedAccuracyMeters = 250.0;
 
+bool hasTechnicianTrackingPermission({
+  required TargetPlatform platform,
+  required LocationPermission permission,
+}) {
+  if (platform == TargetPlatform.android) {
+    return permission == LocationPermission.always;
+  }
+  return permission == LocationPermission.always ||
+      permission == LocationPermission.whileInUse;
+}
+
 bool isAcceptableTechnicianPosition({
   required double latitude,
   required double longitude,
@@ -437,7 +448,9 @@ class LocationTrackingService implements LocationTrackingController {
     if (permission == LocationPermission.denied) {
       permission = await Geolocator.requestPermission();
     }
-    return permission == LocationPermission.always ||
-        permission == LocationPermission.whileInUse;
+    return hasTechnicianTrackingPermission(
+      platform: defaultTargetPlatform,
+      permission: permission,
+    );
   }
 }

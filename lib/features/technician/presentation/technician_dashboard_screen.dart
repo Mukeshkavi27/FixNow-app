@@ -41,7 +41,6 @@ import '../data/technician_repository.dart';
 import '../domain/attendance.dart';
 import '../domain/overtime_record.dart';
 import '../domain/technician_location.dart';
-import 'overtime_summary_panel.dart';
 
 final technicianBookingsProvider =
     StreamProvider.autoDispose<List<Booking>>((ref) {
@@ -174,6 +173,12 @@ enum _AutomaticLocationState {
   profileRequired,
 }
 
+enum _TechnicianHeaderAction {
+  attendance,
+  closeWork,
+  signOut,
+}
+
 class TechnicianDashboardScreen extends ConsumerStatefulWidget {
   const TechnicianDashboardScreen({super.key});
 
@@ -189,6 +194,7 @@ class _TechnicianDashboardScreenState
   String? _requestedTrackingKey;
   String? _pushRegistrationUserId;
   bool _locationDisclosureInProgress = false;
+  bool _backgroundPermissionPromptInProgress = false;
 
   void _schedulePushRegistration(String userId) {
     if (_pushRegistrationUserId == userId) return;
@@ -301,6 +307,71 @@ class _TechnicianDashboardScreenState
           ),
         ),
       );
+      await _showBackgroundPermissionHelp();
+    }
+  }
+
+  Future<void> _showBackgroundPermissionHelp() async {
+    if (kIsWeb ||
+        defaultTargetPlatform != TargetPlatform.android ||
+        _backgroundPermissionPromptInProgress ||
+        !mounted) {
+      return;
+    }
+    final permission = await Geolocator.checkPermission();
+    if (permission == LocationPermission.always || !mounted) return;
+    _backgroundPermissionPromptInProgress = true;
+    final openSettings = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        icon: const Icon(Icons.location_on_outlined),
+        title: const Text('Allow all-day location'),
+        content: const Text(
+          'For workday tracking to continue when FixNow is minimized, open Android settings, choose Permissions > Location, and select Allow all the time. Then return and tap LOCATION OFF.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Not now'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('Open app settings'),
+          ),
+        ],
+      ),
+    );
+    _backgroundPermissionPromptInProgress = false;
+    if (openSettings == true) {
+      _requestedTrackingKey = null;
+      await Geolocator.openAppSettings();
+    }
+  }
+
+  Future<void> _signOut() async {
+    try {
+      await ref
+          .read(locationTrackingServiceProvider)
+          .stop()
+          .timeout(const Duration(seconds: 8));
+    } catch (_) {
+      // Sign-out must stay available even if GPS shutdown or the location
+      // write takes too long on a device.
+    }
+    await ref.read(authRepositoryProvider).signOut();
+  }
+
+  Future<void> _handleHeaderAction(
+    _TechnicianHeaderAction action,
+    AppUser? user,
+  ) async {
+    switch (action) {
+      case _TechnicianHeaderAction.attendance:
+        _showAttendanceHistory();
+      case _TechnicianHeaderAction.closeWork:
+        if (user != null) await _closeTodaysWork(user.uid);
+      case _TechnicianHeaderAction.signOut:
+        await _signOut();
     }
   }
 
@@ -425,121 +496,132 @@ class _TechnicianDashboardScreenState
     return Scaffold(
       backgroundColor: AppTheme.background,
       appBar: AppBar(
-        title: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-                'Hello, ${(user?.name ?? 'Technician').trim().split(' ').first}'),
-            const Text(
-              'FixNow Technician App',
-              style: TextStyle(fontSize: 12, fontWeight: FontWeight.w500),
-            ),
-          ],
+        title: Text(
+          'Hello, ${(user?.name ?? 'Technician').trim().split(' ').first}',
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
         ),
         actions: [
-          _LocationStatusBadge(
-            label: switch (_locationState) {
-              _AutomaticLocationState.waitingForAttendance => 'OFF DUTY',
-              _AutomaticLocationState.starting => 'STARTING',
-              _AutomaticLocationState.sharing => 'LIVE',
-              _AutomaticLocationState.permissionRequired => 'LOCATION OFF',
-              _AutomaticLocationState.profileRequired => 'NO BRANCH',
-            },
-            tooltip: _locationTooltip,
-            icon: _locationIcon,
-            color: switch (_locationState) {
-              _AutomaticLocationState.waitingForAttendance =>
-                AppTheme.textSecondary,
-              _AutomaticLocationState.starting => const Color(0xFFF38A1F),
-              _AutomaticLocationState.sharing => const Color(0xFF138A52),
-              _AutomaticLocationState.permissionRequired ||
-              _AutomaticLocationState.profileRequired =>
-                const Color(0xFFD95C2A),
-            },
-            onRetry:
-                _locationState == _AutomaticLocationState.permissionRequired &&
-                        user != null &&
-                        bookings != null &&
-                        checkedInToday
-                    ? () => _startAutomaticLocation(
-                          technicianId: user.uid,
-                          branchId: user.branchId,
-                          bookingId: activeBooking?.id,
-                          force: true,
-                        )
-                    : null,
-          ),
-          if (checkedInToday)
-            IconButton(
-              tooltip: 'View attendance',
-              onPressed: _showAttendanceHistory,
-              icon: const Icon(Icons.fact_check_outlined),
-            ),
-          if (workingToday && !workClosedToday)
-            IconButton(
-              tooltip: 'Close today\'s work',
-              onPressed: () => _closeTodaysWork(user!.uid),
-              icon: const Icon(Icons.stop_circle_outlined),
-            ),
           IconButton(
             tooltip: 'My profile',
             onPressed: user == null ? null : () => _showProfile(user),
             icon: const Icon(Icons.account_circle_outlined),
           ),
-          IconButton(
-            tooltip: 'Sign out',
-            onPressed: () async {
-              try {
-                await ref
-                    .read(locationTrackingServiceProvider)
-                    .stop()
-                    .timeout(const Duration(seconds: 8));
-              } catch (_) {
-                // Sign-out must stay available even if GPS shutdown or the
-                // location write takes too long on a device.
-              }
-              await ref.read(authRepositoryProvider).signOut();
-            },
-            icon: const Icon(Icons.logout),
+          PopupMenuButton<_TechnicianHeaderAction>(
+            tooltip: 'More technician actions',
+            onSelected: (action) => _handleHeaderAction(action, user),
+            itemBuilder: (context) => [
+              if (checkedInToday)
+                const PopupMenuItem(
+                  value: _TechnicianHeaderAction.attendance,
+                  child: ListTile(
+                    leading: Icon(Icons.fact_check_outlined),
+                    title: Text('View attendance'),
+                  ),
+                ),
+              if (workingToday && !workClosedToday)
+                const PopupMenuItem(
+                  value: _TechnicianHeaderAction.closeWork,
+                  child: ListTile(
+                    leading: Icon(Icons.stop_circle_outlined),
+                    title: Text('Close today\'s work'),
+                  ),
+                ),
+              const PopupMenuItem(
+                value: _TechnicianHeaderAction.signOut,
+                child: ListTile(
+                  leading: Icon(Icons.logout),
+                  title: Text('Sign out'),
+                ),
+              ),
+            ],
           ),
         ],
       ),
       body: SafeArea(
         child: user == null || attendance == null
             ? const Center(child: CircularProgressIndicator())
-            : checkedInToday
-                ? Column(
-                    children: [
-                      if (todayAttendance.status == 'absent')
-                        Container(
-                          width: double.infinity,
-                          padding: const EdgeInsets.all(12),
-                          color: Colors.red.shade50,
-                          child: Text(
-                            selfDeclaredLeave
-                                ? '✕ On Leave Today'
-                                : '✕ Attendance not marked by 9:45 AM',
-                            textAlign: TextAlign.center,
-                            style: const TextStyle(
-                              color: Colors.red,
-                              fontWeight: FontWeight.w900,
-                            ),
-                          ),
-                        ),
-                      Expanded(
-                        child: IndexedStack(
-                          index: visibleTab,
-                          children: const [
-                            _JobsView(),
-                            _JobHistoryView(),
-                            _EarningsView(),
-                            _TechnicianReviewsView(),
-                          ],
-                        ),
+            : Column(
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+                    child: Align(
+                      alignment: Alignment.centerLeft,
+                      child: _LocationStatusBadge(
+                        label: switch (_locationState) {
+                          _AutomaticLocationState.waitingForAttendance =>
+                            'OFF DUTY',
+                          _AutomaticLocationState.starting => 'STARTING',
+                          _AutomaticLocationState.sharing => 'LIVE',
+                          _AutomaticLocationState.permissionRequired =>
+                            'LOCATION OFF',
+                          _AutomaticLocationState.profileRequired =>
+                            'NO BRANCH',
+                        },
+                        tooltip: _locationTooltip,
+                        icon: _locationIcon,
+                        color: switch (_locationState) {
+                          _AutomaticLocationState.waitingForAttendance =>
+                            AppTheme.textSecondary,
+                          _AutomaticLocationState.starting =>
+                            const Color(0xFFF38A1F),
+                          _AutomaticLocationState.sharing =>
+                            const Color(0xFF138A52),
+                          _AutomaticLocationState.permissionRequired ||
+                          _AutomaticLocationState.profileRequired =>
+                            const Color(0xFFD95C2A),
+                        },
+                        onRetry: _locationState ==
+                                    _AutomaticLocationState
+                                        .permissionRequired &&
+                                bookings != null
+                            ? () => _startAutomaticLocation(
+                                  technicianId: user.uid,
+                                  branchId: user.branchId,
+                                  bookingId: activeBooking?.id,
+                                  force: true,
+                                )
+                            : null,
                       ),
-                    ],
-                  )
-                : const _AttendanceGateView(),
+                    ),
+                  ),
+                  Expanded(
+                    child: checkedInToday
+                        ? Column(
+                            children: [
+                              if (todayAttendance.status == 'absent')
+                                Container(
+                                  width: double.infinity,
+                                  padding: const EdgeInsets.all(12),
+                                  color: Colors.red.shade50,
+                                  child: Text(
+                                    selfDeclaredLeave
+                                        ? '✕ On Leave Today'
+                                        : '✕ Attendance not marked by 9:45 AM',
+                                    textAlign: TextAlign.center,
+                                    style: const TextStyle(
+                                      color: Colors.red,
+                                      fontWeight: FontWeight.w900,
+                                    ),
+                                  ),
+                                ),
+                              Expanded(
+                                child: IndexedStack(
+                                  index: visibleTab,
+                                  children: const [
+                                    _JobsView(),
+                                    _JobHistoryView(),
+                                    _EarningsView(),
+                                    _TechnicianReviewsView(),
+                                  ],
+                                ),
+                              ),
+                            ],
+                          )
+                        : const _AttendanceGateView(),
+                  ),
+                ],
+              ),
       ),
       bottomNavigationBar: checkedInToday
           ? NavigationBar(
@@ -1037,10 +1119,6 @@ class _JobsView extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final bookings = ref.watch(technicianBookingsProvider);
-    final bills = ref.watch(technicianBillsProvider).valueOrNull ?? const [];
-    final overtime =
-        ref.watch(technicianOvertimeProvider).valueOrNull ?? const [];
-    final technician = ref.watch(currentUserProvider).valueOrNull;
     return bookings.when(
       data: (items) {
         final active =
@@ -1053,21 +1131,6 @@ class _JobsView extends ConsumerWidget {
                 b.status == BookingStatus.serviceCompleted ||
                 b.status == BookingStatus.billGenerated)
             .toList();
-        final completed =
-            items.where((b) => b.status == BookingStatus.closed).toList();
-        final done = completed.length;
-        final paidBills = bills.where((bill) => bill.isPaid).toList();
-        double totalFor(bool Function(DateTime date) matches) => paidBills
-            .where((bill) => matches(bill.revenueDate))
-            .fold<double>(0, (sum, bill) => sum + bill.amount);
-        final now = DateTime.now();
-        final todayTotal = totalFor((date) =>
-            date.year == now.year &&
-            date.month == now.month &&
-            date.day == now.day);
-        final monthlyTotal = totalFor(
-            (date) => date.year == now.year && date.month == now.month);
-        final yearlyTotal = totalFor((date) => date.year == now.year);
         return LayoutBuilder(
           builder: (context, constraints) {
             final contentWidth =
@@ -1100,71 +1163,6 @@ class _JobsView extends ConsumerWidget {
                           ],
                         ),
                       ),
-                      Padding(
-                        padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
-                        child: _HeroPanel(
-                          active: active.length,
-                          done: done,
-                          technicianName: technician?.name ?? 'Technician',
-                          nextAction: active.isEmpty
-                              ? 'No active job right now'
-                              : _technicianNextAction(active.first.status),
-                        ),
-                      ),
-                      Padding(
-                        padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
-                        child: LayoutBuilder(
-                          builder: (context, metricConstraints) {
-                            final compact = metricConstraints.maxWidth < 600;
-                            final width = compact
-                                ? (metricConstraints.maxWidth - 10) / 2
-                                : 190.0;
-                            return Wrap(
-                              spacing: 10,
-                              runSpacing: 10,
-                              children: [
-                                SizedBox(
-                                  width: width,
-                                  child: _MetricCard(
-                                    label: 'Today earnings',
-                                    value:
-                                        'Rs. ${todayTotal.toStringAsFixed(0)}',
-                                    width: double.infinity,
-                                  ),
-                                ),
-                                SizedBox(
-                                  width: width,
-                                  child: _MetricCard(
-                                    label: 'Monthly earnings',
-                                    value:
-                                        'Rs. ${monthlyTotal.toStringAsFixed(0)}',
-                                    width: double.infinity,
-                                  ),
-                                ),
-                                SizedBox(
-                                  width: width,
-                                  child: _MetricCard(
-                                    label: 'Yearly earnings',
-                                    value:
-                                        'Rs. ${yearlyTotal.toStringAsFixed(0)}',
-                                    width: double.infinity,
-                                  ),
-                                ),
-                              ],
-                            );
-                          },
-                        ),
-                      ),
-                      if (overtime.isNotEmpty)
-                        Padding(
-                          padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
-                          child: OvertimeSummaryPanel(
-                            records: overtime,
-                            bookings: items,
-                            bills: bills,
-                            title: 'Your overtime',
-                          ),
-                        ),
                       Expanded(
                         child: TabBarView(
                           children: [
@@ -1251,59 +1249,6 @@ class _JobTabList extends StatelessWidget {
       separatorBuilder: (_, __) => const SizedBox(height: 12),
       itemBuilder: (context, index) => _TechnicianJobCard(
         booking: bookings[index],
-      ),
-    );
-  }
-}
-
-class _HeroPanel extends StatelessWidget {
-  const _HeroPanel({
-    required this.active,
-    required this.done,
-    required this.technicianName,
-    required this.nextAction,
-  });
-
-  final int active;
-  final int done;
-  final String technicianName;
-  final String nextAction;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(18),
-      decoration: BoxDecoration(
-        color: AppTheme.primary,
-        borderRadius: BorderRadius.circular(8),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text('Good morning, ${technicianName.split(' ').first}',
-              style: TextStyle(color: Colors.white70, fontSize: 13)),
-          const SizedBox(height: 6),
-          const Text('Today’s work',
-              style: TextStyle(
-                  color: Colors.white,
-                  fontSize: 22,
-                  fontWeight: FontWeight.w900)),
-          const SizedBox(height: 6),
-          Text(
-            'Next: $nextAction',
-            style: const TextStyle(color: Colors.white, fontSize: 14),
-          ),
-          const SizedBox(height: 16),
-          Row(
-            children: [
-              _InlineMetric(label: 'Active', value: '$active'),
-              const SizedBox(width: 10),
-              _InlineMetric(label: 'Done', value: '$done'),
-              const SizedBox(width: 10),
-              const _InlineMetric(label: 'ETA alerts', value: 'Live'),
-            ],
-          ),
-        ],
       ),
     );
   }
@@ -5025,35 +4970,54 @@ class _EarningsView extends ConsumerWidget {
     return ListView(
       padding: const EdgeInsets.all(16),
       children: [
-        Wrap(
-          spacing: 12,
-          runSpacing: 12,
-          children: [
-            _MetricCard(
-              label: 'Today collection',
-              value: 'Rs. ${daily.toStringAsFixed(0)}',
-            ),
-            _MetricCard(
-              label: 'Lifetime confirmed collection',
-              value: 'Rs. ${lifetimeCollection.toStringAsFixed(0)}',
-            ),
-            _MetricCard(
-              label: 'Monthly base salary',
-              value: 'Rs. ${monthlySalary.toStringAsFixed(0)}',
-            ),
-            _MetricCard(
-              label: 'Automatic incentive',
-              value: 'Rs. ${targetIncentive.toStringAsFixed(0)}',
-            ),
-            _MetricCard(
-              label: 'Admin-added incentive',
-              value: 'Rs. ${adminIncentive.toStringAsFixed(0)}',
-            ),
-            _MetricCard(
-              label: 'Total earnings',
-              value: 'Rs. ${totalMonthlyEarnings.toStringAsFixed(0)}',
-            ),
-          ],
+        LayoutBuilder(
+          builder: (context, constraints) {
+            const spacing = 12.0;
+            final columnCount = constraints.maxWidth >= 900
+                ? 3
+                : constraints.maxWidth >= 600
+                    ? 2
+                    : 1;
+            final cardWidth =
+                (constraints.maxWidth - spacing * (columnCount - 1)) /
+                    columnCount;
+            return Wrap(
+              spacing: spacing,
+              runSpacing: spacing,
+              children: [
+                _MetricCard(
+                  width: cardWidth,
+                  label: 'Today collection',
+                  value: 'Rs. ${daily.toStringAsFixed(0)}',
+                ),
+                _MetricCard(
+                  width: cardWidth,
+                  label: 'Lifetime confirmed collection',
+                  value: 'Rs. ${lifetimeCollection.toStringAsFixed(0)}',
+                ),
+                _MetricCard(
+                  width: cardWidth,
+                  label: 'Monthly base salary',
+                  value: 'Rs. ${monthlySalary.toStringAsFixed(0)}',
+                ),
+                _MetricCard(
+                  width: cardWidth,
+                  label: 'Automatic incentive',
+                  value: 'Rs. ${targetIncentive.toStringAsFixed(0)}',
+                ),
+                _MetricCard(
+                  width: cardWidth,
+                  label: 'Admin-added incentive',
+                  value: 'Rs. ${adminIncentive.toStringAsFixed(0)}',
+                ),
+                _MetricCard(
+                  width: cardWidth,
+                  label: 'Total earnings',
+                  value: 'Rs. ${totalMonthlyEarnings.toStringAsFixed(0)}',
+                ),
+              ],
+            );
+          },
         ),
         const SizedBox(height: 16),
         Card(
@@ -5448,7 +5412,7 @@ class _MetricCard extends StatelessWidget {
   const _MetricCard({
     required this.label,
     required this.value,
-    this.width = 180,
+    required this.width,
   });
 
   final String label;
@@ -5481,37 +5445,6 @@ class _MetricCard extends StatelessWidget {
   }
 }
 
-class _InlineMetric extends StatelessWidget {
-  const _InlineMetric({required this.label, required this.value});
-
-  final String label;
-  final String value;
-
-  @override
-  Widget build(BuildContext context) {
-    return Expanded(
-      child: Container(
-        padding: const EdgeInsets.all(10),
-        decoration: BoxDecoration(
-            color: Colors.white.withValues(alpha: 0.12),
-            borderRadius: BorderRadius.circular(8)),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(value,
-                style: const TextStyle(
-                    color: Colors.white,
-                    fontWeight: FontWeight.w900,
-                    fontSize: 18)),
-            Text(label,
-                style: const TextStyle(color: Colors.white70, fontSize: 12)),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
 class _PayoutRow extends StatelessWidget {
   const _PayoutRow({required this.label, required this.value});
 
@@ -5523,10 +5456,20 @@ class _PayoutRow extends StatelessWidget {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 5),
       child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(label),
-          Text(value, style: const TextStyle(fontWeight: FontWeight.w800)),
+          Expanded(
+            child: Text(
+              label,
+              softWrap: true,
+            ),
+          ),
+          const SizedBox(width: 12),
+          Text(
+            value,
+            textAlign: TextAlign.end,
+            style: const TextStyle(fontWeight: FontWeight.w800),
+          ),
         ],
       ),
     );

@@ -16,7 +16,7 @@ class NotificationPopupService {
   Future<void> initialize() async {
     if (_initialized) return;
     const initializationSettings = InitializationSettings(
-      android: AndroidInitializationSettings('@mipmap/ic_launcher'),
+      android: AndroidInitializationSettings('@drawable/ic_stat_fixnow'),
       iOS: DarwinInitializationSettings(
         requestAlertPermission: true,
         requestBadgePermission: true,
@@ -67,6 +67,8 @@ class NotificationPopupService {
           'fixnow_technician_alerts',
           'Technician alerts',
           channelDescription: 'Job assignments and urgent technician updates',
+          icon: 'ic_stat_fixnow',
+          largeIcon: DrawableResourceAndroidBitmap('ic_launcher'),
           importance: Importance.max,
           priority: Priority.high,
           playSound: true,

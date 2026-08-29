@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <!-- Monochrome small-icon version of the FixNow flying-F brand mark. -->
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M4.1,14.3C5.4,7.1 11.1,2.5 20.9,1.7L20,7.3L17.1,6.1C12.9,6.3 8.8,9 6.2,13.1Z" />
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M4.8,21.8V14.2C4.8,9.8 8.3,6.4 12.8,6.4H19.4L18.5,11H12.6C10.8,11 9.4,12.4 9.4,14.2V21.8Z" />
+</vector>

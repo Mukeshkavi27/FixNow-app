@@ -535,6 +535,11 @@ service cloud.firestore {
 
     match /bills/{bookingId} {
       allow read: if canAdministerBooking(booking(bookingId))
+        // Booking screens subscribe before a bill exists. Authorize that
+        // empty document lookup from the linked booking identity instead of
+        // requiring fields that only exist after bill creation.
+        || ownsBooking(booking(bookingId))
+        || assignedBooking(booking(bookingId))
         || (isBranchAdmin()
           && (resource.data.branchId == currentUser().branchId
             || resource.data.revenueBranchId == currentUser().branchId))

@@ -40,7 +40,11 @@ async function deliverNotification(doc, { firestore, messaging, logger, startedA
       data: payload,
       android: {
         priority: 'high',
-        notification: { channelId: androidChannelId },
+        notification: {
+          channelId: androidChannelId,
+          icon: 'ic_stat_fixnow',
+          color: '#0B5EEA',
+        },
       },
       apns: { payload: { aps: { sound: 'default' } } },
     })));

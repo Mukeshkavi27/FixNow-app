@@ -64,7 +64,11 @@ export async function runAttendanceAutomation(
               },
               android: {
                 priority: 'high',
-                notification: { channelId: 'fixnow_technician_alerts' },
+                notification: {
+                  channelId: 'fixnow_technician_alerts',
+                  icon: 'ic_stat_fixnow',
+                  color: '#0B5EEA',
+                },
               },
             });
             await firestore.collection('notifications').doc(notificationId)

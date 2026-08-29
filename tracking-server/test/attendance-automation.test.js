@@ -74,6 +74,8 @@ test('attendance reminder is delivered to the registered FCM token', async () =>
   assert.equal(sent.length, 1);
   assert.equal(sent[0].token, 'device-token-1');
   assert.equal(sent[0].data.type, 'attendanceReminder');
+  assert.equal(sent[0].android.notification.icon, 'ic_stat_fixnow');
+  assert.equal(sent[0].android.notification.color, '#0B5EEA');
   const notification = stored.get(
     'notifications/attendance_reminder_tech-1_2026-07-26_0900',
   );

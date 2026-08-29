@@ -14,8 +14,26 @@ import 'package:fixnow/features/technician/presentation/technician_dashboard_scr
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:geolocator/geolocator.dart';
 
 void main() {
+  test('Android workday tracking requires all-the-time permission', () {
+    expect(
+      hasTechnicianTrackingPermission(
+        platform: TargetPlatform.android,
+        permission: LocationPermission.whileInUse,
+      ),
+      isFalse,
+    );
+    expect(
+      hasTechnicianTrackingPermission(
+        platform: TargetPlatform.android,
+        permission: LocationPermission.always,
+      ),
+      isTrue,
+    );
+  });
+
   group('technician location write throttling', () {
     final start = DateTime(2026, 8, 20, 9);
 
@@ -249,6 +267,12 @@ void main() {
     expect(
       find.byTooltip('Location is automatically shared'),
       findsOneWidget,
+    );
+    expect(find.text('Hello, Technician'), findsOneWidget);
+    expect(find.text('Accept & track'), findsOneWidget);
+    expect(
+      tester.getRect(find.text('Accept & track')).bottom,
+      lessThan(720),
     );
     expect(find.byTooltip('My profile'), findsOneWidget);
     await tester.tap(find.byTooltip('My profile'));
