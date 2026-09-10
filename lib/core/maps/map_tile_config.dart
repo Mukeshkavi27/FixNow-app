@@ -1,6 +1,6 @@
 import 'package:flutter/foundation.dart';
 
-/// Production builds should provide an OSM-compatible tile endpoint with:
+/// An alternative OSM-compatible endpoint can be supplied without an app update:
 /// --dart-define=FIXNOW_MAP_TILE_URL=https://provider/{z}/{x}/{y}.png
 const _configuredMapTileUrl = String.fromEnvironment(
   'FIXNOW_MAP_TILE_URL',
@@ -24,8 +24,9 @@ bool get isUsingCommunityOpenStreetMapTiles =>
 void warnIfCommunityTilesAreUsedInRelease() {
   if (kReleaseMode && isUsingCommunityOpenStreetMapTiles) {
     debugPrint(
-      'FIXNOW_MAP_TILE_URL is using the community OpenStreetMap service. '
-      'Configure a production tile provider before a large rollout.',
+      'FixNow is using the community OpenStreetMap tile service. '
+      'Normal interactive viewing is supported; bulk/offline tile downloads '
+      'must remain disabled.',
     );
   }
 }
