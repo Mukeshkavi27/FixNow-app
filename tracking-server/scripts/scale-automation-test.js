@@ -4,19 +4,31 @@ import { initializeApp } from 'firebase-admin/app';
 import { getAuth } from 'firebase-admin/auth';
 import { FieldValue, Timestamp, getFirestore } from 'firebase-admin/firestore';
 
+function positiveIntegerArgument(name, fallback) {
+  const prefix = `--${name}=`;
+  const raw = process.argv.find((argument) => argument.startsWith(prefix))
+    ?.slice(prefix.length);
+  if (raw == null) return fallback;
+  const value = Number(raw);
+  if (!Number.isSafeInteger(value) || value <= 0) {
+    throw new Error(`--${name} must be a positive integer.`);
+  }
+  return value;
+}
+
 const CONFIG = Object.freeze({
   projectId: 'demo-fixnow-scale-test',
   runId: `scale_${Date.now()}`,
   branchCount: 5,
   techniciansPerBranch: 40,
-  customersPerBranch: 200,
+  customersPerBranch: positiveIntegerArgument('customers-per-branch', 200),
   bookingsPerCustomer: 1,
   authConcurrency: 25,
   firestoreBatchSize: 400,
-  querySamples: 50,
+  querySamples: positiveIntegerArgument('query-samples', 50),
   p95QueryLimitMs: 1000,
   trackingConcurrency: 25,
-  trackingRounds: 5,
+  trackingRounds: positiveIntegerArgument('tracking-rounds', 5),
   keepData: process.argv.includes('--keep-data'),
 });
 
@@ -197,18 +209,30 @@ async function validate(auth, db, fixture, timings) {
     authUsers.push(...page.users.filter((user) => user.uid.startsWith(CONFIG.runId)));
     pageToken = page.pageToken;
   } while (pageToken);
-  assert.equal(authUsers.filter((user) => user.uid.includes('_tech_')).length, 200);
-  assert.equal(authUsers.filter((user) => user.uid.includes('_customer_')).length, 1000);
+  assert.equal(
+    authUsers.filter((user) => user.uid.includes('_tech_')).length,
+    fixture.technicians.length,
+  );
+  assert.equal(
+    authUsers.filter((user) => user.uid.includes('_customer_')).length,
+    fixture.customers.length,
+  );
 
   const [users, bookings, activeJobs] = await Promise.all([
     db.collection('users').where('scaleRunId', '==', CONFIG.runId).get(),
     db.collection('bookings').where('scaleRunId', '==', CONFIG.runId).get(),
     db.collection('technician_active_jobs').where('scaleRunId', '==', CONFIG.runId).get(),
   ]);
-  assert.equal(users.docs.filter((doc) => doc.data().role === 'technician').length, 200);
-  assert.equal(users.docs.filter((doc) => doc.data().role === 'customer').length, 1000);
-  assert.equal(bookings.size, 1000);
-  assert.equal(activeJobs.size, 200);
+  assert.equal(
+    users.docs.filter((doc) => doc.data().role === 'technician').length,
+    fixture.technicians.length,
+  );
+  assert.equal(
+    users.docs.filter((doc) => doc.data().role === 'customer').length,
+    fixture.customers.length,
+  );
+  assert.equal(bookings.size, fixture.bookings.length);
+  assert.equal(activeJobs.size, fixture.technicians.length);
 
   const lockByTechnician = new Map(activeJobs.docs.map((doc) => [doc.id, doc.data()]));
   for (const doc of bookings.docs) {

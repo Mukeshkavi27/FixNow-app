@@ -30,7 +30,6 @@ Configure these protected environment secrets:
 - `ANDROID_KEYSTORE_PASSWORD`
 - `ANDROID_KEY_ALIAS`
 - `ANDROID_KEY_PASSWORD`
-- `GOOGLE_MAPS_API_KEY`
 - `FIXNOW_FIREBASE_API_KEY`
 
 Use a different Firebase project and server for staging. GitHub production
@@ -43,7 +42,7 @@ publish to Google Play.
 
 ## Android Play Store
 
-1. Confirm the checked-in Firebase Android options still match project `fixnow-a6515`. Run `flutterfire configure` again whenever the Android application ID changes.
+1. Confirm the checked-in Firebase Android options still match project `fixnow-2933a`. Run `flutterfire configure` again whenever the Android application ID changes.
 2. The default Android package is `com.fixnow.app`. To override it, set `FIXNOW_APPLICATION_ID` in `android/local.properties`, as a Gradle property, or as an environment variable.
 3. Add release signing in `android/key.properties`:
 
@@ -58,36 +57,34 @@ publish to Google Play.
    value is missing. FixNow never falls back to the debug key for a Play Store
    artifact.
 
-4. Add a real Google Maps API key with Android app restrictions by setting `GOOGLE_MAPS_API_KEY` in `android/local.properties`, as a Gradle property, or as an environment variable.
-5. Configure launcher icons and adaptive icon assets.
-6. Deploy the authenticated tracking/administration service and pass its HTTPS URL at build time. Device-localhost is intentionally not used as a production fallback:
+4. Configure launcher icons and adaptive icon assets.
+5. Deploy the authenticated tracking/administration service and pass its HTTPS URL at build time. Device-localhost is intentionally not used as a production fallback:
 
    ```sh
    flutter build apk --release --dart-define=FIXNOW_ADMIN_API_URL=https://your-service
    ```
 
-7. Build the Play Store bundle with the same API URL and map keys:
+6. Build the Play Store bundle with the same API URL:
 
    ```sh
    flutter build appbundle --release
    ```
 
-8. Upload the `.aab` to Play Console with privacy policy, data safety, screenshots, and production track settings.
+7. Upload the `.aab` to Play Console with privacy policy, data safety, screenshots, and production track settings.
 
 ## iOS App Store
 
 1. Run `flutterfire configure` for iOS and commit `GoogleService-Info.plist`.
 2. Set bundle identifier and signing team in Xcode.
 3. Add APNs auth key to Firebase Cloud Messaging.
-4. Add the Google Maps iOS API key in `AppDelegate.swift`.
-5. Configure app icons and privacy manifest.
-6. Build archive from Xcode or:
+4. Configure app icons and privacy manifest.
+5. Build archive from Xcode or:
 
    ```sh
    flutter build ipa --release
    ```
 
-7. Upload through Transporter or Xcode Organizer to App Store Connect.
+6. Upload through Transporter or Xcode Organizer to App Store Connect.
 
 ## Production notes
 

@@ -3,7 +3,9 @@
 .flutter-plugins-dependencies
 .packages
 build/
+.test-tools/
 .firebase-tools-cache/
+firestore-debug*.log
 tracking-server/node_modules/
 tracking-server/.env
 tracking-server/*service*account*.json

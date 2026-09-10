@@ -7,6 +7,7 @@
     "start": "node src/index.js",
     "dev": "node --watch src/index.js",
     "test": "node --test test/*.test.js",
+    "test:http-load": "node scripts/http-load-smoke-test.js",
     "migrate:rbac": "node scripts/migrate-rbac.js",
     "migrate:booking-branches": "node scripts/migrate-booking-branches.js",
     "migrate:review-branches": "node scripts/migrate-review-branches.js",
@@ -14,17 +15,21 @@
     "migrate:legacy-gst-bills": "node scripts/reissue-legacy-unpaid-bills-with-gst.js",
     "audit:booking-data": "node scripts/audit-booking-data.js",
     "clear:booking-data": "node scripts/clear-booking-data.js",
-    "test:scale": "node scripts/scale-automation-test.js"
+    "test:scale": "node scripts/scale-automation-test.js",
+    "test:scale:10k": "node scripts/scale-automation-test.js --customers-per-branch=2000 --query-samples=200 --tracking-rounds=10"
   },
   "dependencies": {
-    "@googlemaps/google-maps-services-js": "^3.4.0",
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",
-    "express": "^4.19.2",
+    "express": "^5.2.1",
     "firebase-admin": "^14.1.0",
     "socket.io": "^4.7.5"
   },
   "overrides": {
+    "qs": "^6.16.0",
     "uuid": "^11.1.1"
+  },
+  "devDependencies": {
+    "firebase-tools": "^15.30.0"
   }
 }

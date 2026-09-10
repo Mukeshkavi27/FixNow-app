@@ -3,7 +3,6 @@ import cors from 'cors';
 import express from 'express';
 import http from 'http';
 import { Server } from 'socket.io';
-import { Client as GoogleMapsClient } from '@googlemaps/google-maps-services-js';
 import { FieldValue } from 'firebase-admin/firestore';
 import {
   authenticateRequest,
@@ -26,7 +25,7 @@ import {
 } from './overtime.js';
 import {
   canReuseNavigationRoute,
-  safeNavigationRoute,
+  navigationMetersBetween,
 } from './navigation-routing.js';
 import { allowedOriginsFor, httpCorsOptions } from './server-config.js';
 import {
@@ -62,7 +61,6 @@ const io = new Server(httpServer, {
   },
 });
 
-const googleMaps = new GoogleMapsClient({});
 const latestByTechnician = new Map();
 const routeByJob = new Map();
 const firedEventsByJob = new Map();
@@ -276,11 +274,21 @@ async function routeForUpdate(update) {
     deviationMeters: routeDeviationMeters,
   })) return existing.route;
 
-  const route = await safeNavigationRoute(
-    () => fetchGoogleRoute(update),
-    (error) => console.warn('Navigation provider failed:', error.message),
-  );
-  if (!route) return null;
+  const origin = { lat: update.latitude, lng: update.longitude };
+  const destination = {
+    lat: update.destinationLatitude,
+    lng: update.destinationLongitude,
+  };
+  const distanceMeters = navigationMetersBetween(origin, destination);
+  const route = {
+    provider: 'direct',
+    version: Date.now(),
+    points: [origin, destination],
+    distanceMeters,
+    // This is deliberately labelled as an estimate by clients. It avoids an
+    // external routing provider while keeping proximity alerts operational.
+    durationSeconds: Math.round(distanceMeters / 8.33),
+  };
   const cached = {
     origin: { lat: update.latitude, lng: update.longitude },
     destination: {
@@ -291,33 +299,6 @@ async function routeForUpdate(update) {
   };
   routeByJob.set(update.jobId, cached);
   return route;
-}
-
-async function fetchGoogleRoute(update) {
-  if (!process.env.GOOGLE_MAPS_API_KEY) return null;
-  const response = await googleMaps.directions({
-    params: {
-      key: process.env.GOOGLE_MAPS_API_KEY,
-      origin: { lat: update.latitude, lng: update.longitude },
-      destination: {
-        lat: update.destinationLatitude,
-        lng: update.destinationLongitude,
-      },
-      mode: 'driving',
-    },
-    timeout: 8000,
-  });
-  const route = response.data.routes?.[0];
-  const leg = route?.legs?.[0];
-  if (!route?.overview_polyline?.points || !leg) return null;
-  return {
-    provider: 'google',
-    version: Date.now(),
-    encodedPolyline: route.overview_polyline.points,
-    points: decodePolyline(route.overview_polyline.points),
-    distanceMeters: leg.distance?.value ?? 0,
-    durationSeconds: leg.duration?.value ?? 0,
-  };
 }
 
 function geofenceEvents(update, route) {
@@ -350,36 +331,6 @@ function toNotification(eventName, update) {
     title: customerTitleByEvent[eventName] ?? 'Technician update',
     createdAt: new Date().toISOString(),
   };
-}
-
-function decodePolyline(encoded) {
-  const points = [];
-  let index = 0;
-  let lat = 0;
-  let lng = 0;
-  while (index < encoded.length) {
-    let shift = 0;
-    let result = 0;
-    let byte;
-    do {
-      byte = encoded.charCodeAt(index++) - 63;
-      result |= (byte & 0x1f) << shift;
-      shift += 5;
-    } while (byte >= 0x20);
-    lat += result & 1 ? ~(result >> 1) : result >> 1;
-
-    shift = 0;
-    result = 0;
-    do {
-      byte = encoded.charCodeAt(index++) - 63;
-      result |= (byte & 0x1f) << shift;
-      shift += 5;
-    } while (byte >= 0x20);
-    lng += result & 1 ? ~(result >> 1) : result >> 1;
-
-    points.push({ lat: lat / 1e5, lng: lng / 1e5 });
-  }
-  return points;
 }
 
 function jobRoom(jobId) {

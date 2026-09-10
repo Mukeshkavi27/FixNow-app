@@ -52,3 +52,15 @@ The script exits with code `0` only when all of these are true:
 The final stdout entry is a JSON report containing topology, assertions,
 latencies, total duration, pass/fail status, and whether test data was retained.
 By default all Auth and Firestore fixture data is deleted in a `finally` block.
+
+## 10,000-customer capacity dataset
+
+To validate 10,000 customer accounts and bookings while exercising all 200
+technician writers for ten rounds, run:
+
+```powershell
+firebase emulators:exec --project demo-fixnow-scale-test --only auth,firestore "npm --prefix tracking-server run test:scale:10k"
+```
+
+This is a local data-model capacity gate. It does not replace a controlled
+internet load test against the deployed Render service.
