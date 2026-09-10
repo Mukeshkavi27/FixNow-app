@@ -12,6 +12,10 @@ these variables in each environment:
 - `FIXNOW_APPLICATION_ID`
 - `FIXNOW_AUTH_API_URL`
 - `FIXNOW_ADMIN_API_URL`
+- `FIXNOW_MAP_TILE_URL` — managed OSM-compatible HTTPS tile template containing
+  `{z}`, `{x}` and `{y}`. Production validation rejects the community
+  `tile.openstreetmap.org` endpoint.
+- `FIXNOW_MAP_TILE_USER_AGENT` — use the Android application ID.
 - `FIXNOW_FIREBASE_AUTH_DOMAIN`
 - `FIXNOW_FIREBASE_PROJECT_ID`
 - `FIXNOW_FIREBASE_STORAGE_BUCKET`

@@ -10,6 +10,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../../app/theme/app_theme.dart';
 import 'google_maps_config.dart';
+import 'map_tile_config.dart';
 import 'route_recalculation.dart';
 
 bool get _isFlutterTest =>
@@ -195,8 +196,8 @@ class OpenStreetMapFallback extends StatelessWidget {
           children: [
             if (!_isFlutterTest)
               TileLayer(
-                urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-                userAgentPackageName: 'com.fixnow.app',
+                urlTemplate: fixNowMapTileUrl,
+                userAgentPackageName: fixNowMapTileUserAgent,
               ),
             if (polylinePoints.length >= 2)
               PolylineLayer(
@@ -275,9 +276,8 @@ class InAppLiveMap extends StatelessWidget {
               children: [
                 if (!_isFlutterTest)
                   TileLayer(
-                    urlTemplate:
-                        'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-                    userAgentPackageName: 'com.fixnow.app',
+                    urlTemplate: fixNowMapTileUrl,
+                    userAgentPackageName: fixNowMapTileUserAgent,
                   ),
                 if (routePolyline.length >= 2)
                   PolylineLayer(

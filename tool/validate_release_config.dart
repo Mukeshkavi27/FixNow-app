@@ -33,6 +33,23 @@ void main(List<String> arguments) {
     }
   }
 
+  final tileTemplate = values['map-tile-url'];
+  if (tileTemplate == null) {
+    _fail('map-tile-url is required.');
+  }
+  final tileUri = Uri.tryParse(tileTemplate);
+  if (tileUri == null ||
+      tileUri.scheme != 'https' ||
+      !tileTemplate.contains('{z}') ||
+      !tileTemplate.contains('{x}') ||
+      !tileTemplate.contains('{y}')) {
+    _fail('map-tile-url must be an HTTPS template containing {z}, {x} and {y}.');
+  }
+  if (environment == 'production' &&
+      tileUri.host == 'tile.openstreetmap.org') {
+    _fail('Production releases must use a managed OSM-compatible tile provider.');
+  }
+
   for (final name in ['google-services', 'keystore']) {
     final path = values[name];
     if (path == null ||

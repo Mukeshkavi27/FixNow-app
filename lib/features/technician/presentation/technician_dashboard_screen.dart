@@ -121,7 +121,7 @@ Future<bool> showTechnicianLocationDisclosure(BuildContext context) async {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              'FixNow collects your precise location while workday tracking is active, including when the app is in the background.',
+              'FixNow collects precise location data to enable live technician monitoring, route progress, job arrival confirmation, and travel history even when the app is closed or not in use.',
               style: TextStyle(fontWeight: FontWeight.w700),
             ),
             SizedBox(height: 12),

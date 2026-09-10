@@ -239,6 +239,34 @@ class AuthRepository {
 
   Future<void> signOut() => _auth.signOut();
 
+  Future<void> requestAccountDeletion() async {
+    final user = _auth.currentUser;
+    if (user == null) throw StateError('Please sign in again and retry.');
+    final token = await user.getIdToken(true);
+    final configuredUrl = _configuredMobileAuthApiUrl.isNotEmpty
+        ? _configuredMobileAuthApiUrl
+        : kDebugMode
+            ? ''
+            : _defaultProductionMobileAuthApiUrl;
+    final baseUrl = AppEnvironment.requireServiceUrl(
+      configuredUrl,
+      name: 'FIXNOW_AUTH_API_URL',
+    );
+    final response = await http.post(
+      Uri.parse('$baseUrl/api/account/deletion-request'),
+      headers: {
+        'authorization': 'Bearer $token',
+        'content-type': 'application/json',
+      },
+    ).timeout(const Duration(seconds: 30));
+    final body = jsonDecode(response.body) as Map<String, dynamic>;
+    if (response.statusCode != 200 || body['ok'] != true) {
+      throw StateError(body['error'] as String? ??
+          'Account deletion could not be requested.');
+    }
+    await _auth.signOut();
+  }
+
   Future<void> updateCustomerProfile({
     required String uid,
     required String name,

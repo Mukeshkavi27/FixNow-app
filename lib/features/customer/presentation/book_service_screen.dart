@@ -18,6 +18,7 @@ import '../../../core/branches/branch_repository.dart';
 import '../../../core/branches/branch_resolver.dart';
 import '../../../core/enums/booking_status.dart';
 import '../../../core/maps/google_static_map.dart';
+import '../../../core/maps/map_tile_config.dart';
 import '../../../core/services/reverse_geocoding_service.dart';
 import '../../auth/data/auth_repository.dart';
 import '../../auth/domain/app_user.dart';
@@ -1436,9 +1437,8 @@ class _PinPickerSheetState extends ConsumerState<_PinPickerSheet> {
                   ),
                   children: [
                     TileLayer(
-                      urlTemplate:
-                          'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-                      userAgentPackageName: 'com.fixnow.app',
+                      urlTemplate: fixNowMapTileUrl,
+                      userAgentPackageName: fixNowMapTileUserAgent,
                     ),
                     MarkerLayer(
                       markers: [
@@ -1730,7 +1730,7 @@ class _ServiceProfile {
         title: 'Air Conditioner',
         subtitle:
             'Cooling, leakage and maintenance support for split and window AC units.',
-        assetName: 'assets/images/ac.png',
+        assetName: 'assets/images/service_ac_uniform_v2.jpg',
         price: 'Starts Rs. 499',
         duration: '60-90 min',
         problemHint: 'Example: not cooling, water leakage, noise, servicing',
@@ -1746,7 +1746,7 @@ class _ServiceProfile {
         title: 'Refrigerator',
         subtitle:
             'Diagnosis for cooling problems, noises, frosting and compressor-related symptoms.',
-        assetName: 'assets/images/refrigerator.png',
+        assetName: 'assets/images/service_refrigerator_uniform_v2.jpg',
         price: 'Starts Rs. 399',
         duration: '45-75 min',
         problemHint: 'Example: not cooling, over freezing, water leakage',
@@ -1762,7 +1762,7 @@ class _ServiceProfile {
         title: 'Washing Machine',
         subtitle:
             'Repair support for top-load, front-load and semi-automatic washing machines.',
-        assetName: 'assets/images/washing_machine.png',
+        assetName: 'assets/images/service_washing_machine_uniform_v2.jpg',
         price: 'Starts Rs. 449',
         duration: '45-90 min',
         problemHint:
@@ -1779,7 +1779,7 @@ class _ServiceProfile {
         title: 'Microwave',
         subtitle:
             'Inspection and repair for heating, turntable, panel and power issues.',
-        assetName: 'assets/images/microwave.png',
+        assetName: 'assets/images/service_microwave_uniform_v2.jpg',
         price: 'Starts Rs. 299',
         duration: '30-60 min',
         problemHint: 'Example: not heating, sparks, plate not rotating',
@@ -1795,7 +1795,7 @@ class _ServiceProfile {
         title: 'Water Purifier',
         subtitle:
             'RO/UV purifier service for filter replacement, leakage and water-flow issues.',
-        assetName: 'assets/images/water_purifier.png',
+        assetName: 'assets/images/service_water_purifier_uniform_v2.jpg',
         price: 'Starts Rs. 349',
         duration: '40-70 min',
         problemHint:
@@ -1812,7 +1812,7 @@ class _ServiceProfile {
         title: 'Television',
         subtitle:
             'Screen, sound, power and connectivity diagnosis for LED and smart TVs.',
-        assetName: 'assets/images/television.png',
+        assetName: 'assets/images/service_television_uniform_v2.jpg',
         price: 'Starts Rs. 399',
         duration: '45-75 min',
         problemHint: 'Example: no display, no sound, lines on screen',
@@ -1828,7 +1828,7 @@ class _ServiceProfile {
         title: 'Fan',
         subtitle:
             'Ceiling, table and exhaust fan service for noise, speed and wiring problems.',
-        assetName: 'assets/images/fan.png',
+        assetName: 'assets/images/service_fan_uniform_v2.jpg',
         price: 'Starts Rs. 199',
         duration: '30-45 min',
         problemHint: 'Example: slow speed, noise, not starting',
@@ -1843,7 +1843,7 @@ class _ServiceProfile {
       title: 'Other Appliances',
       subtitle:
           'Tell us about the appliance and the issue so we can route the right technician.',
-      assetName: 'assets/images/other_services.png',
+      assetName: 'assets/images/service_other_uniform_v2.jpg',
       price: 'Starts Rs. 249',
       duration: '30-90 min',
       problemHint: 'Describe the appliance, model and issue',

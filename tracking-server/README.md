@@ -85,6 +85,19 @@ The live location document is refreshed as GPS telemetry arrives. For replay,
 the server stores one immutable location point per technician per minute in
 `technician_locations/{technicianId}/history`, using the server receipt time.
 
+## Horizontal scaling
+
+Render may run multiple web instances. Firestore remains the canonical state,
+and realtime collection listeners rebroadcast changes to clients connected to
+each instance. Attendance automation, push delivery, and tracking-gap checks
+are guarded by the `service_leases/background-automation` Firestore lease so
+only one healthy instance performs scheduled work. Another instance takes over
+after the one-minute lease expires.
+
+Initial socket recovery responses are capped at 500 records. Older operational
+history must be fetched through paginated Firestore screens instead of being
+placed in a single reconnect payload.
+
 ## RBAC migration
 
 Legacy `admin` documents are migrated conservatively to `branchAdmin`. Select

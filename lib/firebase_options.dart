@@ -29,28 +29,27 @@ class DefaultFirebaseOptions {
   static const FirebaseOptions android = FirebaseOptions(
     apiKey: String.fromEnvironment(
       'FIXNOW_FIREBASE_API_KEY',
-      defaultValue: 'AIzaSyA7xUQmSccYmUO4EtdZLga2Z7kgwKbzsR0',
+      defaultValue: 'AIzaSyACQij7KqmIA-vXnUSSupLMRzqiG4lw7uM',
     ),
     authDomain: String.fromEnvironment(
       'FIXNOW_FIREBASE_AUTH_DOMAIN',
-      defaultValue: 'fixnow-a6515.firebaseapp.com',
+      defaultValue: 'fixnow-2933a.firebaseapp.com',
     ),
     projectId: String.fromEnvironment(
       'FIXNOW_FIREBASE_PROJECT_ID',
-      defaultValue: 'fixnow-a6515',
+      defaultValue: 'fixnow-2933a',
     ),
     storageBucket: String.fromEnvironment(
       'FIXNOW_FIREBASE_STORAGE_BUCKET',
-      defaultValue: 'fixnow-a6515.firebasestorage.app',
+      defaultValue: 'fixnow-2933a.firebasestorage.app',
     ),
     messagingSenderId: String.fromEnvironment(
       'FIXNOW_FIREBASE_MESSAGING_SENDER_ID',
-      defaultValue: '778888734140',
+      defaultValue: '719614012293',
     ),
     appId: String.fromEnvironment(
       'FIXNOW_FIREBASE_APP_ID',
-      defaultValue: '1:778888734140:android:61108790109487cc7f37b9',
+      defaultValue: '1:719614012293:android:71982136d5d1debeb072ec',
     ),
-    measurementId: 'G-H6Z2Y23ZPH',
   );
 }

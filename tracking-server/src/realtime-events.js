@@ -83,11 +83,14 @@ export function startRealtimeEventBridge({ firestore, io, logger = console }) {
 }
 
 export async function socketSyncFor(principal, firestore) {
+  const snapshotLimit = 500;
   if (principal.role === 'technician') {
     const [bookings, location, attendance] = await Promise.all([
-      firestore.collection('bookings').where('technicianId', '==', principal.uid).get(),
+      firestore.collection('bookings').where('technicianId', '==', principal.uid)
+        .limit(snapshotLimit).get(),
       firestore.collection('technician_locations').doc(principal.uid).get(),
-      firestore.collection('attendance').where('technicianId', '==', principal.uid).get(),
+      firestore.collection('attendance').where('technicianId', '==', principal.uid)
+        .limit(snapshotLimit).get(),
     ]);
     return {
       bookings: bookings.docs.map((doc) => ({ id: doc.id, ...doc.data() })),
@@ -96,11 +99,13 @@ export async function socketSyncFor(principal, firestore) {
     };
   }
   const bookingQuery = principal.role === 'superAdmin'
-    ? firestore.collection('bookings')
-    : firestore.collection('bookings').where('branchId', '==', principal.branchId);
+    ? firestore.collection('bookings').limit(snapshotLimit)
+    : firestore.collection('bookings').where('branchId', '==', principal.branchId)
+      .limit(snapshotLimit);
   const locationQuery = principal.role === 'superAdmin'
-    ? firestore.collection('technician_locations')
-    : firestore.collection('technician_locations').where('branchId', '==', principal.branchId);
+    ? firestore.collection('technician_locations').limit(snapshotLimit)
+    : firestore.collection('technician_locations').where('branchId', '==', principal.branchId)
+      .limit(snapshotLimit);
   const [bookings, locations] = await Promise.all([bookingQuery.get(), locationQuery.get()]);
   return {
     bookings: bookings.docs.map((doc) => ({ id: doc.id, ...doc.data() })),

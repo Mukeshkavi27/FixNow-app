@@ -14,6 +14,13 @@ export function createRateLimiter({
   now = Date.now,
 }) {
   const clients = new Map();
+  const cleanupInterval = setInterval(() => {
+    const currentTime = now();
+    for (const [key, entry] of clients) {
+      if (currentTime >= entry.resetAt) clients.delete(key);
+    }
+  }, Math.max(windowMs, 60_000));
+  cleanupInterval.unref?.();
   return (req, res, next) => {
     const currentTime = now();
     const key = String(req.ip || req.socket?.remoteAddress || 'unknown');

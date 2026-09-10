@@ -3,6 +3,7 @@ import { applicationDefault, cert, getApps, initializeApp } from 'firebase-admin
 import { getAuth } from 'firebase-admin/auth';
 import { getFirestore } from 'firebase-admin/firestore';
 import { getMessaging } from 'firebase-admin/messaging';
+import { getStorage } from 'firebase-admin/storage';
 import { buildPrincipal } from './rbac.js';
 
 const projectId = process.env.FIREBASE_PROJECT_ID
@@ -12,12 +13,16 @@ const projectId = process.env.FIREBASE_PROJECT_ID
 
 if (getApps().length === 0) {
   const serviceAccountPath = process.env.GOOGLE_APPLICATION_CREDENTIALS;
+  const serviceAccountJson = process.env.FIREBASE_SERVICE_ACCOUNT_JSON;
+  const serviceAccount = serviceAccountPath
+    ? JSON.parse(readFileSync(serviceAccountPath, 'utf8'))
+    : serviceAccountJson
+      ? JSON.parse(serviceAccountJson)
+      : null;
   initializeApp({
     // A local service-account key signs custom login tokens directly. This
     // avoids a runtime dependency on the IAM Credentials API.
-    credential: serviceAccountPath
-        ? cert(JSON.parse(readFileSync(serviceAccountPath, 'utf8')))
-        : applicationDefault(),
+    credential: serviceAccount ? cert(serviceAccount) : applicationDefault(),
     projectId,
   });
 }
@@ -25,6 +30,7 @@ if (getApps().length === 0) {
 export const firebaseAuth = getAuth();
 export const firestore = getFirestore();
 export const firebaseMessaging = getMessaging();
+export const firebaseStorage = getStorage();
 
 export function firebaseAdminSetupMessage(error) {
   const message = String(error?.message ?? '');
@@ -32,7 +38,7 @@ export function firebaseAdminSetupMessage(error) {
     message.includes('Could not load the default credentials')
     || message.includes('Unable to detect a Project Id')
   ) {
-    return 'FixNow admin server is missing Firebase Admin credentials. Set FIREBASE_PROJECT_ID=fixnow-a6515 and GOOGLE_APPLICATION_CREDENTIALS to your Firebase service account JSON, then restart the tracking server.';
+    return 'FixNow admin server is missing Firebase Admin credentials. Set FIREBASE_PROJECT_ID and either GOOGLE_APPLICATION_CREDENTIALS or FIREBASE_SERVICE_ACCOUNT_JSON, then restart the tracking server.';
   }
   return null;
 }

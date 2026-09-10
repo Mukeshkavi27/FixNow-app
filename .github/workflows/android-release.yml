@@ -63,6 +63,7 @@ jobs:
           --admin-api-url=${{ vars.FIXNOW_ADMIN_API_URL }}
           --firebase-project-id=${{ vars.FIXNOW_FIREBASE_PROJECT_ID }}
           --application-id=${{ vars.FIXNOW_APPLICATION_ID }}
+          --map-tile-url=${{ vars.FIXNOW_MAP_TILE_URL }}
           --google-services=android/app/google-services.json
           --keystore=android/app/fixnow-release.jks
       - run: flutter pub get
@@ -76,6 +77,8 @@ jobs:
           --dart-define=FIXNOW_ENVIRONMENT=${{ inputs.environment }}
           --dart-define=FIXNOW_AUTH_API_URL=${{ vars.FIXNOW_AUTH_API_URL }}
           --dart-define=FIXNOW_ADMIN_API_URL=${{ vars.FIXNOW_ADMIN_API_URL }}
+          --dart-define=FIXNOW_MAP_TILE_URL=${{ vars.FIXNOW_MAP_TILE_URL }}
+          --dart-define=FIXNOW_MAP_TILE_USER_AGENT=${{ vars.FIXNOW_APPLICATION_ID }}
           --dart-define=FIXNOW_FIREBASE_API_KEY=${{ secrets.FIXNOW_FIREBASE_API_KEY }}
           --dart-define=FIXNOW_FIREBASE_AUTH_DOMAIN=${{ vars.FIXNOW_FIREBASE_AUTH_DOMAIN }}
           --dart-define=FIXNOW_FIREBASE_PROJECT_ID=${{ vars.FIXNOW_FIREBASE_PROJECT_ID }}
@@ -89,6 +92,8 @@ jobs:
           --dart-define=FIXNOW_ENVIRONMENT=${{ inputs.environment }}
           --dart-define=FIXNOW_AUTH_API_URL=${{ vars.FIXNOW_AUTH_API_URL }}
           --dart-define=FIXNOW_ADMIN_API_URL=${{ vars.FIXNOW_ADMIN_API_URL }}
+          --dart-define=FIXNOW_MAP_TILE_URL=${{ vars.FIXNOW_MAP_TILE_URL }}
+          --dart-define=FIXNOW_MAP_TILE_USER_AGENT=${{ vars.FIXNOW_APPLICATION_ID }}
           --dart-define=FIXNOW_FIREBASE_API_KEY=${{ secrets.FIXNOW_FIREBASE_API_KEY }}
           --dart-define=FIXNOW_FIREBASE_AUTH_DOMAIN=${{ vars.FIXNOW_FIREBASE_AUTH_DOMAIN }}
           --dart-define=FIXNOW_FIREBASE_PROJECT_ID=${{ vars.FIXNOW_FIREBASE_PROJECT_ID }}

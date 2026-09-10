@@ -24,6 +24,7 @@ class _CustomerProfileScreenState extends ConsumerState<CustomerProfileScreen> {
   final phoneController = TextEditingController();
   bool initialized = false;
   bool saving = false;
+  bool deleting = false;
   XFile? selectedPhoto;
   Uint8List? selectedPhotoBytes;
 
@@ -270,6 +271,33 @@ class _CustomerProfileScreenState extends ConsumerState<CustomerProfileScreen> {
                             ),
                             const SizedBox(height: 10),
                             _AccountTile(
+                              icon: Icons.privacy_tip_outlined,
+                              title: 'Privacy Policy',
+                              subtitle: 'How FixNow collects and protects data',
+                              onTap: () => context.push('/privacy'),
+                            ),
+                            const SizedBox(height: 10),
+                            _AccountTile(
+                              icon: Icons.description_outlined,
+                              title: 'Terms and Conditions',
+                              subtitle: 'Rules for using FixNow services',
+                              onTap: () => context.push('/terms'),
+                            ),
+                            const SizedBox(height: 10),
+                            _AccountTile(
+                              icon: Icons.delete_forever_outlined,
+                              title: deleting
+                                  ? 'Requesting deletion...'
+                                  : 'Delete account',
+                              subtitle:
+                                  'Permanently close your FixNow customer account',
+                              destructive: true,
+                              onTap: deleting
+                                  ? () {}
+                                  : () => _confirmDeletion(user.email),
+                            ),
+                            const SizedBox(height: 10),
+                            _AccountTile(
                               icon: Icons.logout,
                               title: 'Sign out',
                               subtitle: 'Sign out of this device',
@@ -301,6 +329,48 @@ class _CustomerProfileScreenState extends ConsumerState<CustomerProfileScreen> {
     final parts =
         name.trim().split(RegExp(r'\s+')).where((part) => part.isNotEmpty);
     return parts.take(2).map((part) => part[0].toUpperCase()).join();
+  }
+
+  Future<void> _confirmDeletion(String email) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Delete your account?'),
+        content: Text(
+          'This permanently closes $email, removes your profile and personal data, and signs you out on all devices. Anonymised invoices and service totals may be retained where legally required. This action cannot be undone.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: Colors.red.shade700),
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('Delete account'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    setState(() => deleting = true);
+    try {
+      await ref.read(authRepositoryProvider).requestAccountDeletion();
+      if (!mounted) return;
+      context.go('/login');
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Your account and personal data were deleted.'),
+        ),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not delete account: $error')),
+      );
+    } finally {
+      if (mounted) setState(() => deleting = false);
+    }
   }
 }
 

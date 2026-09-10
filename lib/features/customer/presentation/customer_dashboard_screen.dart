@@ -394,7 +394,8 @@ class _WelcomeHero extends StatelessWidget {
         children: [
           Positioned.fill(
             child: const ResilientAssetImage(
-              assetName: 'assets/images/fix_now_general.png',
+              key: Key('customer-uniform-hero'),
+              assetName: 'assets/images/technician_uniform_black.png',
               fit: BoxFit.cover,
               alignment: Alignment.centerRight,
               fallbackIcon: Icons.handyman_outlined,
@@ -1430,25 +1431,29 @@ String? _serviceAssetName(String name) {
   if (normalized.contains('air conditioner') ||
       normalized == 'ac' ||
       normalized.contains('ac repair')) {
-    return 'assets/images/ac.png';
+    return 'assets/images/service_ac_uniform_v2.jpg';
   }
   if (normalized.contains('refrigerator') || normalized.contains('fridge')) {
-    return 'assets/images/refrigerator.png';
+    return 'assets/images/service_refrigerator_uniform_v2.jpg';
   }
   if (normalized.contains('washing')) {
-    return 'assets/images/washing_machine.png';
+    return 'assets/images/service_washing_machine_uniform_v2.jpg';
   }
   if (normalized.contains('microwave')) {
-    return 'assets/images/microwave.png';
+    return 'assets/images/service_microwave_uniform_v2.jpg';
   }
   if (normalized.contains('purifier')) {
-    return 'assets/images/water_purifier.png';
+    return 'assets/images/service_water_purifier_uniform_v2.jpg';
   }
   if (normalized.contains('television') || normalized.contains('tv')) {
-    return 'assets/images/television.png';
+    return 'assets/images/service_television_uniform_v2.jpg';
   }
-  if (normalized.contains('fan')) return 'assets/images/fan.png';
-  if (normalized.contains('other')) return 'assets/images/other_services.png';
+  if (normalized.contains('fan')) {
+    return 'assets/images/service_fan_uniform_v2.jpg';
+  }
+  if (normalized.contains('other')) {
+    return 'assets/images/service_other_uniform_v2.jpg';
+  }
   return null;
 }
 

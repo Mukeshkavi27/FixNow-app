@@ -71,13 +71,14 @@ async function deliverNotification(doc, { firestore, messaging, logger, startedA
 
 async function recipientTokens(notification, firestore) {
   const userId = String(notification.userId ?? '');
-  if (userId && !userId.startsWith('branch:') && userId !== 'admin') {
+  if (userId && !userId.startsWith('branch:') &&
+      !userId.startsWith('role:') && userId !== 'admin') {
     const token = await firestore.collection('device_tokens').doc(userId).get();
     return token.data()?.token ? [token.data().token] : [];
   }
 
   let query = firestore.collection('device_tokens');
-  if (userId === 'admin') {
+  if (userId === 'admin' || userId === 'role:superAdmin') {
     query = query.where('role', '==', 'superAdmin');
   } else if (userId.startsWith('branch:') && notification.branchId) {
     query = query.where('branchId', '==', notification.branchId);
@@ -87,7 +88,7 @@ async function recipientTokens(notification, firestore) {
   const snapshot = await query.get();
   return snapshot.docs
     .map((item) => item.data())
-    .filter((item) => userId === 'admin' || item.role === 'branchAdmin')
+    .filter((item) => userId === 'admin' || userId === 'role:superAdmin' || item.role === 'branchAdmin')
     .map((item) => item.token)
     .filter((token) => typeof token === 'string' && token.length > 0);
 }

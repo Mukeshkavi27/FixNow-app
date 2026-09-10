@@ -10,10 +10,12 @@ import {
   authenticateSocket,
   firebaseAuth,
   firebaseMessaging,
+  firebaseStorage,
   firestore,
 } from './firebase-auth.js';
 import { registerSuperAdminRoutes } from './admin-api.js';
 import { registerMobilePasswordAuth } from './mobile-password-auth.js';
+import { registerAccountDeletionRoutes } from './account-deletion.js';
 import {
   normalizeGpsPayload,
   persistGpsUpdate,
@@ -40,7 +42,9 @@ import {
 } from './realtime-events.js';
 import { startAttendanceAutomation } from './attendance-automation.js';
 import { startNotificationPushBridge } from './notification-push-bridge.js';
+import { startTrackingGapMonitor } from './tracking-gap-monitor.js';
 import { createRateLimiter, securityHeaders } from './http-security.js';
+import { startDistributedSingleton } from './distributed-singleton.js';
 
 const app = express();
 if (process.env.NODE_ENV === 'production') app.set('trust proxy', 1);
@@ -99,6 +103,11 @@ app.get('/api/session', (req, res) => {
   });
 });
 registerSuperAdminRoutes(app, { auth: firebaseAuth, firestore });
+registerAccountDeletionRoutes(app, {
+  auth: firebaseAuth,
+  firestore,
+  storage: firebaseStorage,
+});
 
 io.use(authenticateSocket);
 
@@ -230,15 +239,18 @@ io.on('connection', (socket) => {
 });
 
 const stopRealtimeEventBridge = startRealtimeEventBridge({ firestore, io });
-const stopAttendanceAutomation = startAttendanceAutomation(
+const stopBackgroundAutomation = startDistributedSingleton({
   firestore,
-  console,
-  firebaseMessaging,
-);
-const stopNotificationPushBridge = startNotificationPushBridge(
-  firestore,
-  firebaseMessaging,
-);
+  logger: console,
+  start: () => {
+    const stops = [
+      startAttendanceAutomation(firestore, console, firebaseMessaging),
+      startNotificationPushBridge(firestore, firebaseMessaging),
+      startTrackingGapMonitor(firestore, console),
+    ];
+    return () => stops.forEach((stop) => stop());
+  },
+});
 
 async function bookingById(jobId) {
   if (!jobId) throw new Error('Booking ID is required');
@@ -400,9 +412,8 @@ async function shutdown(signal) {
   if (shuttingDown) return;
   shuttingDown = true;
   console.log(`${signal} received; closing FixNow tracking server`);
-  stopAttendanceAutomation();
+  stopBackgroundAutomation();
   stopRealtimeEventBridge();
-  stopNotificationPushBridge();
   io.close();
   const forceExit = setTimeout(() => process.exit(1), 10_000);
   forceExit.unref();

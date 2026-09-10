@@ -19,6 +19,7 @@ class NotificationPhoneBridge {
 
   StreamSubscription<List<AppNotification>>? _userSubscription;
   StreamSubscription<List<AppNotification>>? _branchSubscription;
+  StreamSubscription<List<AppNotification>>? _roleSubscription;
   String? _activeUserId;
 
   Future<void> sync({
@@ -28,23 +29,30 @@ class NotificationPhoneBridge {
     if (user?.uid == _activeUserId) return;
     await _userSubscription?.cancel();
     await _branchSubscription?.cancel();
+    await _roleSubscription?.cancel();
     _userSubscription = null;
     _branchSubscription = null;
+    _roleSubscription = null;
     _activeUserId = user?.uid;
     if (user == null) return;
 
     final notifications = NotificationRepository(firestore);
     _userSubscription = notifications.watchUserNotifications(user.uid).listen(
-      _showNotifications,
-      onError: (_) {},
-    );
+          _showNotifications,
+          onError: (_) {},
+        );
     if (user.role == UserRole.branchAdmin &&
         (user.branchId ?? '').trim().isNotEmpty) {
       _branchSubscription =
           notifications.watchBranchAlerts(user.branchId!).listen(
-        _showNotifications,
-        onError: (_) {},
-      );
+                _showNotifications,
+                onError: (_) {},
+              );
+    }
+    if (user.role == UserRole.superAdmin) {
+      _roleSubscription = notifications
+          .watchUserNotifications('role:superAdmin')
+          .listen(_showNotifications, onError: (_) {});
     }
 
     // Register every role for device delivery. The tracking server currently

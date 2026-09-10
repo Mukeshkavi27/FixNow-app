@@ -10,6 +10,7 @@ import 'package:fixnow/features/customer/presentation/customer_dashboard_screen.
 import 'package:fixnow/features/customer/presentation/customer_history_screen.dart';
 import 'package:fixnow/features/customer/presentation/customer_service_search_screen.dart';
 import 'package:fixnow/features/services/data/service_catalog_repository.dart';
+import 'package:fixnow/app/widgets/resilient_asset_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -58,6 +59,13 @@ void main() {
     expect(
       find.text('Home appliance repair,\nright when you need it'),
       findsOneWidget,
+    );
+    final uniformHero = tester.widget<ResilientAssetImage>(
+      find.byKey(const Key('customer-uniform-hero')),
+    );
+    expect(
+      uniformHero.assetName,
+      'assets/images/technician_uniform_black.png',
     );
     final hero = tester.getRect(
       find.byKey(const Key('customer-welcome-hero')),

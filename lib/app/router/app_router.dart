@@ -17,6 +17,7 @@ import '../../features/customer/presentation/customer_dashboard_screen.dart';
 import '../../features/customer/presentation/customer_history_screen.dart';
 import '../../features/customer/presentation/customer_profile_screen.dart';
 import '../../features/customer/presentation/customer_service_search_screen.dart';
+import '../../features/legal/presentation/legal_document_screen.dart';
 import '../../features/technician/presentation/technician_dashboard_screen.dart';
 import '../../features/super_admin/presentation/super_admin_dashboard_screen.dart';
 import '../widgets/splash_screen.dart';
@@ -49,6 +50,7 @@ final appRouterProvider = Provider<GoRouter>((ref) {
       final user = ref.read(currentUserProvider);
       final isAuthLoading = auth.isLoading || user.isLoading;
       final location = state.matchedLocation;
+      final isPublicLegalPage = location == '/privacy' || location == '/terms';
       if (isAuthLoading) {
         if (location == '/splash') return null;
         final intended = Uri.encodeComponent(state.uri.toString());
@@ -60,7 +62,9 @@ final appRouterProvider = Provider<GoRouter>((ref) {
       if (user.hasError) {
         return location == '/auth-error' ? null : '/auth-error';
       }
-      if (firebaseUser == null) return location == '/login' ? null : '/login';
+      if (firebaseUser == null) {
+        return location == '/login' || isPublicLegalPage ? null : '/login';
+      }
       if (appUser == null) {
         return location == '/auth-error' ? null : '/auth-error';
       }
@@ -99,6 +103,18 @@ final appRouterProvider = Provider<GoRouter>((ref) {
       GoRoute(
           path: '/splash', builder: (context, state) => const SplashScreen()),
       GoRoute(path: '/login', builder: (context, state) => const LoginScreen()),
+      GoRoute(
+        path: '/privacy',
+        builder: (context, state) => const LegalDocumentScreen(
+          document: LegalDocument.privacy,
+        ),
+      ),
+      GoRoute(
+        path: '/terms',
+        builder: (context, state) => const LegalDocumentScreen(
+          document: LegalDocument.terms,
+        ),
+      ),
       GoRoute(
         path: '/approval-pending',
         builder: (context, state) => const ApprovalPendingScreen(),

@@ -473,7 +473,8 @@ class _BookingDetailScreenState extends ConsumerState<BookingDetailScreen> {
                     child: _EstimateApprovalNotification(
                       estimate: estimate,
                       onReject: () => _rejectEstimate(estimate.id, booking.id),
-                      onApprove: () => _approveEstimate(estimate.id, booking.id),
+                      onApprove: () =>
+                          _approveEstimate(estimate.id, booking.id),
                     ),
                   );
                 },
@@ -909,7 +910,9 @@ class _BookingDetailScreenState extends ConsumerState<BookingDetailScreen> {
                                         ),
                                       ),
                                     if (bill.adjustmentReason != null &&
-                                        bill.adjustmentReason!.trim().isNotEmpty)
+                                        bill.adjustmentReason!
+                                            .trim()
+                                            .isNotEmpty)
                                       Text(
                                         'Final-charge note: ${bill.adjustmentReason}',
                                         style: const TextStyle(
@@ -2371,25 +2374,27 @@ String _serviceAssetName(String name) {
   if (normalized.contains('air conditioner') ||
       normalized == 'ac' ||
       normalized.contains('ac repair')) {
-    return 'assets/images/ac.png';
+    return 'assets/images/service_ac_uniform_v2.jpg';
   }
   if (normalized.contains('refrigerator') || normalized.contains('fridge')) {
-    return 'assets/images/refrigerator.png';
+    return 'assets/images/service_refrigerator_uniform_v2.jpg';
   }
   if (normalized.contains('washing')) {
-    return 'assets/images/washing_machine.png';
+    return 'assets/images/service_washing_machine_uniform_v2.jpg';
   }
   if (normalized.contains('microwave')) {
-    return 'assets/images/microwave.png';
+    return 'assets/images/service_microwave_uniform_v2.jpg';
   }
   if (normalized.contains('purifier')) {
-    return 'assets/images/water_purifier.png';
+    return 'assets/images/service_water_purifier_uniform_v2.jpg';
   }
   if (normalized.contains('television') || normalized.contains('tv')) {
-    return 'assets/images/television.png';
+    return 'assets/images/service_television_uniform_v2.jpg';
   }
-  if (normalized.contains('fan')) return 'assets/images/fan.png';
-  return 'assets/images/other_services.png';
+  if (normalized.contains('fan')) {
+    return 'assets/images/service_fan_uniform_v2.jpg';
+  }
+  return 'assets/images/service_other_uniform_v2.jpg';
 }
 
 String _bookingBackFallback(AppUser? user) {

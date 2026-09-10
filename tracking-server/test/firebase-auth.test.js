@@ -8,7 +8,8 @@ test('Firebase Admin credential errors get setup guidance', () => {
   );
 
   assert.match(message, /GOOGLE_APPLICATION_CREDENTIALS/);
-  assert.match(message, /fixnow-a6515/);
+  assert.match(message, /FIREBASE_PROJECT_ID/);
+  assert.match(message, /FIREBASE_SERVICE_ACCOUNT_JSON/);
 });
 
 test('non-setup auth errors are not rewritten', () => {

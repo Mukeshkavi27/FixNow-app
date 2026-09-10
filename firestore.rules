@@ -922,7 +922,11 @@ service cloud.firestore {
             || (resource.data.type == 'technicianRegistration'
               && resource.data.recipientRole == 'branchAdmin'
               && resource.data.branchId == currentUser().branchId)
-            || (resource.data.type == 'technicianOvertimeStarted'
+            || (resource.data.type in [
+                'technicianOvertimeStarted',
+                'trackingGap',
+                'trackingRestored',
+              ]
               && resource.data.recipientRole == 'branchAdmin'
               && resource.data.branchId == currentUser().branchId)))
         || (signedIn() && resource.data.userId == request.auth.uid);

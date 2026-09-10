@@ -1,8 +1,7 @@
-import 'dart:ui';
-
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:geolocator/geolocator.dart';
+import 'package:go_router/go_router.dart';
 
 import '../../../app/theme/app_theme.dart';
 import '../../../app/widgets/resilient_asset_image.dart';
@@ -163,481 +162,482 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     final formHPad = isWide ? 32.0 : 18.0;
     final fieldGap = isMobile || isSmall ? 10.0 : 14.0;
     final panelPad = isMobile ? 18.0 : (isSmall ? 22.0 : 28.0);
-    final panelRadius = isMobile ? 22.0 : 28.0;
-    final panelOpacity = isWide ? 0.34 : 0.24;
     final imageLightenOpacity = isWide ? 0.08 : 0.18;
     final imageTintOpacity = isWide ? 0.22 : 0.08;
+    const backgroundTextShadows = <Shadow>[
+      Shadow(
+        color: Color(0xCC0F1B2D),
+        blurRadius: 8,
+        offset: Offset(0, 2),
+      ),
+    ];
 
-    Widget formPanel = ClipRRect(
-      borderRadius: BorderRadius.circular(panelRadius),
-      child: BackdropFilter(
-        filter: ImageFilter.blur(
-          sigmaX: isMobile ? 10 : 18,
-          sigmaY: isMobile ? 10 : 18,
-        ),
-        child: Container(
-          padding: EdgeInsets.all(panelPad),
-          decoration: BoxDecoration(
-            color: Colors.white.withValues(alpha: panelOpacity),
-            borderRadius: BorderRadius.circular(panelRadius),
-            border: Border.all(
-              color: Colors.white.withValues(alpha: isMobile ? 0.42 : 0.62),
-              width: 1.2,
-            ),
-            boxShadow: [
-              BoxShadow(
-                color: AppTheme.primary.withValues(
-                  alpha: isMobile ? 0.06 : 0.1,
+    Widget formPanel = Container(
+      padding: EdgeInsets.all(panelPad),
+      color: Colors.transparent,
+      child: Form(
+        key: _formKey,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Align(
+              alignment: Alignment.centerLeft,
+              child: Container(
+                width: logoSize,
+                height: logoSize,
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: Colors.white.withValues(
+                    alpha: isMobile ? 0.62 : 0.76,
+                  ),
+                  borderRadius: BorderRadius.circular(isMobile ? 16 : 22),
+                  boxShadow: [
+                    BoxShadow(
+                      color: AppTheme.primary.withValues(alpha: 0.12),
+                      blurRadius: isMobile ? 14 : 24,
+                      offset: Offset(0, isMobile ? 7 : 12),
+                    ),
+                  ],
                 ),
-                blurRadius: isMobile ? 16 : 24,
-                offset: Offset(0, isMobile ? 8 : 12),
+                child: const ResilientAssetImage(
+                  assetName: 'assets/images/fixnow_logo.png',
+                  fit: BoxFit.contain,
+                  fallbackIcon: Icons.home_repair_service_outlined,
+                  fallbackIconSize: 30,
+                ),
               ),
+            ),
+            SizedBox(height: isMobile ? 10 : (isSmall ? 14 : 20)),
+            Text(
+              'FixNow',
+              style: TextStyle(
+                color: Colors.white,
+                fontSize: titleFontSize,
+                fontWeight: FontWeight.w900,
+                shadows: backgroundTextShadows,
+              ),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              _isRegister
+                  ? (_isTechnicianRequest
+                      ? 'Join your branch as a verified service technician'
+                      : 'Create your appliance service booking account')
+                  : 'Trusted appliance repair and service booking',
+              style: TextStyle(
+                color: Colors.white,
+                fontSize: isMobile ? 13 : 14,
+                fontWeight: FontWeight.w700,
+                shadows: backgroundTextShadows,
+              ),
+            ),
+            SizedBox(height: isMobile ? 16 : (isSmall ? 18 : 26)),
+            if (_isRegister && _isTechnicianRequest) ...[
+              if (branchesAsync.hasError)
+                Padding(
+                  padding: EdgeInsets.only(bottom: fieldGap),
+                  child: Text(
+                    'Branch list could not be loaded right now. Customer login still works, but technician signup needs an approved service branch.',
+                    style: const TextStyle(
+                      color: Color(0xFFD95C2A),
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                )
+              else if (!branchesAsync.isLoading && branches.isEmpty)
+                Padding(
+                  padding: EdgeInsets.only(bottom: fieldGap),
+                  child: const Text(
+                    'No service branches are available yet. Ask admin to create a branch before technician signup.',
+                    style: TextStyle(
+                      color: Color(0xFFD95C2A),
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
             ],
-          ),
-          child: Form(
-            key: _formKey,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Align(
-                  alignment: Alignment.centerLeft,
-                  child: Container(
-                    width: logoSize,
-                    height: logoSize,
-                    padding: const EdgeInsets.all(8),
-                    decoration: BoxDecoration(
-                      color: Colors.white.withValues(
-                        alpha: isMobile ? 0.62 : 0.76,
+            Text(
+              _isRegister ? 'Sign up' : 'Sign in',
+              style: TextStyle(
+                fontSize: isMobile || isSmall ? 18 : 22,
+                fontWeight: FontWeight.w800,
+                color: Colors.white,
+                shadows: backgroundTextShadows,
+              ),
+            ),
+            SizedBox(height: isMobile ? 12 : (isSmall ? 14 : 20)),
+            if (!_isRegister) ...[
+              Container(
+                padding: const EdgeInsets.all(4),
+                decoration: BoxDecoration(
+                  color: Colors.white.withValues(alpha: 0.52),
+                  borderRadius: BorderRadius.circular(14),
+                ),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: _RegisterModeChip(
+                        label: 'Email',
+                        selected: !_usePhoneLogin,
+                        onTap: () => setState(() {
+                          _usePhoneLogin = false;
+                          _errorMessage = null;
+                        }),
                       ),
-                      borderRadius: BorderRadius.circular(isMobile ? 16 : 22),
-                      boxShadow: [
-                        BoxShadow(
-                          color: AppTheme.primary.withValues(alpha: 0.12),
-                          blurRadius: isMobile ? 14 : 24,
-                          offset: Offset(0, isMobile ? 7 : 12),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: _RegisterModeChip(
+                        label: 'Mobile',
+                        selected: _usePhoneLogin,
+                        onTap: () => setState(() {
+                          _usePhoneLogin = true;
+                          _errorMessage = null;
+                        }),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              SizedBox(height: fieldGap),
+            ],
+            if (_isRegister) ...[
+              Container(
+                padding: const EdgeInsets.all(4),
+                decoration: BoxDecoration(
+                  color: Colors.white.withValues(alpha: 0.52),
+                  borderRadius: BorderRadius.circular(14),
+                ),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: _RegisterModeChip(
+                        label: 'Customer',
+                        selected: !_isTechnicianRequest,
+                        onTap: () => setState(() {
+                          _isTechnicianRequest = false;
+                        }),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: _RegisterModeChip(
+                        label: 'Technician',
+                        selected: _isTechnicianRequest,
+                        onTap: () => setState(() {
+                          _isTechnicianRequest = true;
+                        }),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              SizedBox(height: fieldGap),
+              _UCTextField(
+                controller: _name,
+                label: 'Full name',
+                prefixIcon: Icons.person_outline,
+                validator: (v) =>
+                    v == null || v.trim().isEmpty ? 'Enter name' : null,
+              ),
+              SizedBox(height: fieldGap),
+              _UCTextField(
+                controller: _phone,
+                label: 'Phone number',
+                prefixIcon: Icons.phone_outlined,
+                keyboardType: TextInputType.phone,
+                validator: (v) => v == null || v.trim().length < 8
+                    ? 'Enter phone number'
+                    : null,
+              ),
+              SizedBox(height: fieldGap),
+              if (_isTechnicianRequest) ...[
+                DropdownButtonFormField<String>(
+                  initialValue: _selectedBranchId,
+                  decoration: const InputDecoration(
+                    labelText: 'Requested branch',
+                    prefixIcon: Icon(Icons.account_tree_outlined),
+                  ),
+                  items: branches
+                      .map(
+                        (branch) => DropdownMenuItem(
+                          value: branch.id,
+                          child: Text(branch.name),
                         ),
-                      ],
-                    ),
-                    child: const ResilientAssetImage(
-                      assetName: 'assets/images/fixnow_logo.png',
-                      fit: BoxFit.contain,
-                      fallbackIcon: Icons.home_repair_service_outlined,
-                      fallbackIconSize: 30,
-                    ),
+                      )
+                      .toList(),
+                  onChanged: (value) =>
+                      setState(() => _selectedBranchId = value),
+                  disabledHint: Text(
+                    branchesAsync.isLoading
+                        ? 'Loading branches...'
+                        : 'No branches available',
                   ),
+                  validator: (value) =>
+                      value == null || value.isEmpty ? 'Choose a branch' : null,
                 ),
-                SizedBox(height: isMobile ? 10 : (isSmall ? 14 : 20)),
-                Text(
-                  'FixNow',
-                  style: TextStyle(
-                    color: AppTheme.textPrimary,
-                    fontSize: titleFontSize,
-                    fontWeight: FontWeight.w900,
-                  ),
+                SizedBox(height: fieldGap),
+                OutlinedButton.icon(
+                  onPressed:
+                      _isLoading || branches.isEmpty ? null : _suggestBranch,
+                  icon: const Icon(Icons.my_location_outlined),
+                  label: const Text('Suggest nearest branch'),
                 ),
-                const SizedBox(height: 4),
-                Text(
-                  _isRegister
-                      ? (_isTechnicianRequest
-                          ? 'Join your branch as a verified service technician'
-                          : 'Create your appliance service booking account')
-                      : 'Trusted appliance repair and service booking',
+                SizedBox(height: fieldGap),
+                const Text(
+                  'Technician access stays pending until the selected branch admin verifies and approves the request.',
                   style: TextStyle(
                     color: AppTheme.textSecondary,
-                    fontSize: isMobile ? 13 : 14,
-                    fontWeight: FontWeight.w500,
+                    fontSize: 12,
                   ),
                 ),
-                SizedBox(height: isMobile ? 16 : (isSmall ? 18 : 26)),
-                if (_isRegister && _isTechnicianRequest) ...[
-                  if (branchesAsync.hasError)
-                    Padding(
-                      padding: EdgeInsets.only(bottom: fieldGap),
-                      child: Text(
-                        'Branch list could not be loaded right now. Customer login still works, but technician signup needs an approved service branch.',
-                        style: const TextStyle(
-                          color: Color(0xFFD95C2A),
-                          fontSize: 12,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                    )
-                  else if (!branchesAsync.isLoading && branches.isEmpty)
-                    Padding(
-                      padding: EdgeInsets.only(bottom: fieldGap),
-                      child: const Text(
-                        'No service branches are available yet. Ask admin to create a branch before technician signup.',
-                        style: TextStyle(
-                          color: Color(0xFFD95C2A),
-                          fontSize: 12,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                    ),
-                ],
-                Text(
-                  _isRegister ? 'Sign up' : 'Sign in',
+                SizedBox(height: fieldGap),
+              ] else ...[
+                const Text(
+                  'Customer accounts can book services instantly. Technician accounts need branch admin approval.',
                   style: TextStyle(
-                    fontSize: isMobile || isSmall ? 18 : 22,
-                    fontWeight: FontWeight.w800,
-                    color: AppTheme.textPrimary,
+                    color: AppTheme.textSecondary,
+                    fontSize: 12,
                   ),
                 ),
-                SizedBox(height: isMobile ? 12 : (isSmall ? 14 : 20)),
-                if (!_isRegister) ...[
-                  Container(
-                    padding: const EdgeInsets.all(4),
-                    decoration: BoxDecoration(
-                      color: Colors.white.withValues(alpha: 0.52),
-                      borderRadius: BorderRadius.circular(14),
-                    ),
-                    child: Row(
-                      children: [
-                        Expanded(
-                          child: _RegisterModeChip(
-                            label: 'Email',
-                            selected: !_usePhoneLogin,
-                            onTap: () => setState(() {
-                              _usePhoneLogin = false;
-                              _errorMessage = null;
-                            }),
-                          ),
-                        ),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: _RegisterModeChip(
-                            label: 'Mobile',
-                            selected: _usePhoneLogin,
-                            onTap: () => setState(() {
-                              _usePhoneLogin = true;
-                              _errorMessage = null;
-                            }),
-                          ),
-                        ),
-                      ],
-                    ),
+                SizedBox(height: fieldGap),
+              ],
+            ],
+            if (!_isRegister && _usePhoneLogin) ...[
+              const Padding(
+                padding: EdgeInsets.only(bottom: 10),
+                child: Text(
+                  'Use your registered mobile number and FixNow password.',
+                  style: TextStyle(
+                    color: AppTheme.textSecondary,
+                    fontSize: 12,
                   ),
-                  SizedBox(height: fieldGap),
+                ),
+              ),
+              DropdownButtonFormField<String>(
+                initialValue: _mobileLoginRole,
+                decoration: const InputDecoration(
+                  labelText: 'Account type',
+                  prefixIcon: Icon(Icons.badge_outlined),
+                ),
+                items: const [
+                  DropdownMenuItem(
+                    value: 'customer',
+                    child: Text('Customer'),
+                  ),
+                  DropdownMenuItem(
+                    value: 'technician',
+                    child: Text('Technician'),
+                  ),
+                  DropdownMenuItem(
+                    value: 'branchAdmin',
+                    child: Text('Branch Admin'),
+                  ),
+                  DropdownMenuItem(
+                    value: 'superAdmin',
+                    child: Text('Super Admin'),
+                  ),
                 ],
-                if (_isRegister) ...[
-                  Container(
-                    padding: const EdgeInsets.all(4),
-                    decoration: BoxDecoration(
-                      color: Colors.white.withValues(alpha: 0.52),
-                      borderRadius: BorderRadius.circular(14),
-                    ),
-                    child: Row(
-                      children: [
-                        Expanded(
-                          child: _RegisterModeChip(
-                            label: 'Customer',
-                            selected: !_isTechnicianRequest,
-                            onTap: () => setState(() {
-                              _isTechnicianRequest = false;
-                            }),
-                          ),
-                        ),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: _RegisterModeChip(
-                            label: 'Technician',
-                            selected: _isTechnicianRequest,
-                            onTap: () => setState(() {
-                              _isTechnicianRequest = true;
-                            }),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  SizedBox(height: fieldGap),
-                  _UCTextField(
-                    controller: _name,
-                    label: 'Full name',
-                    prefixIcon: Icons.person_outline,
-                    validator: (v) =>
-                        v == null || v.trim().isEmpty ? 'Enter name' : null,
-                  ),
-                  SizedBox(height: fieldGap),
-                  _UCTextField(
-                    controller: _phone,
-                    label: 'Phone number',
-                    prefixIcon: Icons.phone_outlined,
-                    keyboardType: TextInputType.phone,
-                    validator: (v) => v == null || v.trim().length < 8
-                        ? 'Enter phone number'
-                        : null,
-                  ),
-                  SizedBox(height: fieldGap),
-                  if (_isTechnicianRequest) ...[
-                    DropdownButtonFormField<String>(
-                      initialValue: _selectedBranchId,
-                      decoration: const InputDecoration(
-                        labelText: 'Requested branch',
-                        prefixIcon: Icon(Icons.account_tree_outlined),
-                      ),
-                      items: branches
-                          .map(
-                            (branch) => DropdownMenuItem(
-                              value: branch.id,
-                              child: Text(branch.name),
-                            ),
-                          )
-                          .toList(),
-                      onChanged: (value) =>
-                          setState(() => _selectedBranchId = value),
-                      disabledHint: Text(
-                        branchesAsync.isLoading
-                            ? 'Loading branches...'
-                            : 'No branches available',
-                      ),
-                      validator: (value) => value == null || value.isEmpty
-                          ? 'Choose a branch'
-                          : null,
-                    ),
-                    SizedBox(height: fieldGap),
-                    OutlinedButton.icon(
-                      onPressed: _isLoading || branches.isEmpty
-                          ? null
-                          : _suggestBranch,
-                      icon: const Icon(Icons.my_location_outlined),
-                      label: const Text('Suggest nearest branch'),
-                    ),
-                    SizedBox(height: fieldGap),
-                    const Text(
-                      'Technician access stays pending until the selected branch admin verifies and approves the request.',
-                      style: TextStyle(
-                        color: AppTheme.textSecondary,
-                        fontSize: 12,
-                      ),
-                    ),
-                    SizedBox(height: fieldGap),
-                  ] else ...[
-                    const Text(
-                      'Customer accounts can book services instantly. Technician accounts need branch admin approval.',
-                      style: TextStyle(
-                        color: AppTheme.textSecondary,
-                        fontSize: 12,
-                      ),
-                    ),
-                    SizedBox(height: fieldGap),
-                  ],
-                ],
-                if (!_isRegister && _usePhoneLogin) ...[
-                  const Padding(
-                    padding: EdgeInsets.only(bottom: 10),
-                    child: Text(
-                      'Use your registered mobile number and FixNow password.',
-                      style: TextStyle(
-                        color: AppTheme.textSecondary,
-                        fontSize: 12,
-                      ),
-                    ),
-                  ),
-                  DropdownButtonFormField<String>(
-                    initialValue: _mobileLoginRole,
-                    decoration: const InputDecoration(
-                      labelText: 'Account type',
-                      prefixIcon: Icon(Icons.badge_outlined),
-                    ),
-                    items: const [
-                      DropdownMenuItem(
-                        value: 'customer',
-                        child: Text('Customer'),
-                      ),
-                      DropdownMenuItem(
-                        value: 'technician',
-                        child: Text('Technician'),
-                      ),
-                      DropdownMenuItem(
-                        value: 'branchAdmin',
-                        child: Text('Branch Admin'),
-                      ),
-                      DropdownMenuItem(
-                        value: 'superAdmin',
-                        child: Text('Super Admin'),
-                      ),
-                    ],
-                    onChanged: (value) {
-                      if (value != null) {
-                        setState(() => _mobileLoginRole = value);
-                      }
-                    },
-                  ),
-                  SizedBox(height: fieldGap),
-                  _UCTextField(
-                    controller: _loginPhone,
-                    label: 'Mobile number',
-                    prefixIcon: Icons.phone_outlined,
-                    keyboardType: TextInputType.phone,
-                    validator: (v) => v == null || v.replaceAll(RegExp(r'[^0-9]'), '').length < 10
+                onChanged: (value) {
+                  if (value != null) {
+                    setState(() => _mobileLoginRole = value);
+                  }
+                },
+              ),
+              SizedBox(height: fieldGap),
+              _UCTextField(
+                controller: _loginPhone,
+                label: 'Mobile number',
+                prefixIcon: Icons.phone_outlined,
+                keyboardType: TextInputType.phone,
+                validator: (v) =>
+                    v == null || v.replaceAll(RegExp(r'[^0-9]'), '').length < 10
                         ? 'Enter a valid mobile number'
                         : null,
+              ),
+              SizedBox(height: fieldGap),
+              _UCTextField(
+                controller: _password,
+                label: 'Password',
+                prefixIcon: Icons.lock_outline,
+                obscureText: _obscurePassword,
+                suffixIcon: IconButton(
+                  icon: Icon(
+                    _obscurePassword
+                        ? Icons.visibility_off_outlined
+                        : Icons.visibility_outlined,
+                    color: AppTheme.textHint,
+                    size: 20,
                   ),
-                  SizedBox(height: fieldGap),
-                  _UCTextField(
-                    controller: _password,
-                    label: 'Password',
-                    prefixIcon: Icons.lock_outline,
-                    obscureText: _obscurePassword,
-                    suffixIcon: IconButton(
-                      icon: Icon(
-                        _obscurePassword
-                            ? Icons.visibility_off_outlined
-                            : Icons.visibility_outlined,
-                        color: AppTheme.textHint,
+                  onPressed: () =>
+                      setState(() => _obscurePassword = !_obscurePassword),
+                ),
+                validator: (v) =>
+                    v == null || v.length < 6 ? 'Minimum 6 characters' : null,
+              ),
+            ] else ...[
+              _UCTextField(
+                controller: _email,
+                label: 'Email address',
+                prefixIcon: Icons.email_outlined,
+                keyboardType: TextInputType.emailAddress,
+                validator: (v) => v == null || !v.contains('@')
+                    ? 'Enter a valid email'
+                    : null,
+              ),
+              SizedBox(height: fieldGap),
+              _UCTextField(
+                controller: _password,
+                label: 'Password',
+                prefixIcon: Icons.lock_outline,
+                obscureText: _obscurePassword,
+                suffixIcon: IconButton(
+                  icon: Icon(
+                    _obscurePassword
+                        ? Icons.visibility_off_outlined
+                        : Icons.visibility_outlined,
+                    color: AppTheme.textHint,
+                    size: 20,
+                  ),
+                  onPressed: () =>
+                      setState(() => _obscurePassword = !_obscurePassword),
+                ),
+                validator: (v) =>
+                    v == null || v.length < 6 ? 'Minimum 6 characters' : null,
+              ),
+            ],
+            if (_errorMessage != null) ...[
+              SizedBox(height: fieldGap),
+              Semantics(
+                liveRegion: true,
+                label: 'Sign in error',
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 10,
+                  ),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFFFECE8),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: const Color(0xFFE46A4A)),
+                  ),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Icon(
+                        Icons.error_outline,
+                        color: Color(0xFFB93820),
                         size: 20,
                       ),
-                      onPressed: () =>
-                          setState(() => _obscurePassword = !_obscurePassword),
-                    ),
-                    validator: (v) => v == null || v.length < 6
-                        ? 'Minimum 6 characters'
-                        : null,
-                  ),
-                ] else ...[
-                  _UCTextField(
-                    controller: _email,
-                    label: 'Email address',
-                    prefixIcon: Icons.email_outlined,
-                    keyboardType: TextInputType.emailAddress,
-                    validator: (v) => v == null || !v.contains('@')
-                        ? 'Enter a valid email'
-                        : null,
-                  ),
-                  SizedBox(height: fieldGap),
-                  _UCTextField(
-                    controller: _password,
-                    label: 'Password',
-                    prefixIcon: Icons.lock_outline,
-                    obscureText: _obscurePassword,
-                    suffixIcon: IconButton(
-                      icon: Icon(
-                        _obscurePassword
-                            ? Icons.visibility_off_outlined
-                            : Icons.visibility_outlined,
-                        color: AppTheme.textHint,
-                        size: 20,
-                      ),
-                      onPressed: () =>
-                          setState(() => _obscurePassword = !_obscurePassword),
-                    ),
-                    validator: (v) => v == null || v.length < 6
-                        ? 'Minimum 6 characters'
-                        : null,
-                  ),
-                ],
-                if (_errorMessage != null) ...[
-                  SizedBox(height: fieldGap),
-                  Semantics(
-                    liveRegion: true,
-                    label: 'Sign in error',
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 12,
-                        vertical: 10,
-                      ),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFFFFECE8),
-                        borderRadius: BorderRadius.circular(12),
-                        border: Border.all(color: const Color(0xFFE46A4A)),
-                      ),
-                      child: Row(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          const Icon(
-                            Icons.error_outline,
-                            color: Color(0xFFB93820),
-                            size: 20,
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          _errorMessage!,
+                          style: const TextStyle(
+                            color: Color(0xFF8A2718),
+                            fontSize: 13,
+                            fontWeight: FontWeight.w700,
                           ),
-                          const SizedBox(width: 8),
-                          Expanded(
-                            child: Text(
-                              _errorMessage!,
-                              style: const TextStyle(
-                                color: Color(0xFF8A2718),
-                                fontSize: 13,
-                                fontWeight: FontWeight.w700,
-                              ),
-                            ),
-                          ),
-                        ],
+                        ),
                       ),
-                    ),
-                  ),
-                ],
-                SizedBox(height: isMobile ? 14 : (isSmall ? 16 : 24)),
-                SizedBox(
-                  height: isMobile || isSmall ? 46 : 52,
-                  child: ElevatedButton(
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: AppTheme.accent,
-                      foregroundColor: Colors.white,
-                      disabledBackgroundColor:
-                          AppTheme.accent.withValues(alpha: 0.55),
-                      elevation: 0,
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(14),
-                      ),
-                      textStyle: const TextStyle(
-                        fontSize: 15,
-                        fontWeight: FontWeight.w800,
-                      ),
-                    ),
-                    onPressed: _isLoading ? null : _submit,
-                    child: _isLoading
-                        ? const SizedBox.square(
-                            dimension: 20,
-                            child: CircularProgressIndicator(
-                              color: Colors.white,
-                              strokeWidth: 2.5,
-                            ),
-                          )
-                        : Text(_isRegister
-                            ? (_isTechnicianRequest
-                                ? 'Request Technician Access'
-                                : 'Create Service Account')
-                            : _usePhoneLogin
-                                ? 'Sign in with mobile'
-                                : 'Sign In'),
+                    ],
                   ),
                 ),
-                SizedBox(height: isMobile ? 12 : 16),
-                Center(
-                  child: GestureDetector(
-                    onTap: _isLoading
-                        ? null
-                        : () => setState(() {
-                              _isRegister = !_isRegister;
-                              _errorMessage = null;
-                            }),
-                    child: RichText(
-                      text: TextSpan(
-                        style: const TextStyle(fontSize: 13),
-                        children: [
-                          TextSpan(
-                            text: _isRegister
-                                ? 'Already have an account? '
-                                : 'New to FixNow? ',
-                            style:
-                                const TextStyle(color: AppTheme.textSecondary),
-                          ),
-                          TextSpan(
-                            text: _isRegister ? 'Sign in' : 'Create account',
-                            style: const TextStyle(
-                              color: AppTheme.primary,
-                              fontWeight: FontWeight.w800,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
+              ),
+            ],
+            SizedBox(height: isMobile ? 14 : (isSmall ? 16 : 24)),
+            SizedBox(
+              height: isMobile || isSmall ? 46 : 52,
+              child: ElevatedButton(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppTheme.accent,
+                  foregroundColor: Colors.white,
+                  disabledBackgroundColor:
+                      AppTheme.accent.withValues(alpha: 0.55),
+                  elevation: 0,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(14),
                   ),
+                  textStyle: const TextStyle(
+                    fontSize: 15,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+                onPressed: _isLoading ? null : _submit,
+                child: _isLoading
+                    ? const SizedBox.square(
+                        dimension: 20,
+                        child: CircularProgressIndicator(
+                          color: Colors.white,
+                          strokeWidth: 2.5,
+                        ),
+                      )
+                    : Text(_isRegister
+                        ? (_isTechnicianRequest
+                            ? 'Request Technician Access'
+                            : 'Create Service Account')
+                        : _usePhoneLogin
+                            ? 'Sign in with mobile'
+                            : 'Sign In'),
+              ),
+            ),
+            SizedBox(height: isMobile ? 12 : 16),
+            Center(
+              child: GestureDetector(
+                onTap: _isLoading
+                    ? null
+                    : () => setState(() {
+                          _isRegister = !_isRegister;
+                          _errorMessage = null;
+                        }),
+                child: RichText(
+                  text: TextSpan(
+                    style: const TextStyle(fontSize: 13),
+                    children: [
+                      TextSpan(
+                        text: _isRegister
+                            ? 'Already have an account? '
+                            : 'New to FixNow? ',
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.w600,
+                          shadows: backgroundTextShadows,
+                        ),
+                      ),
+                      TextSpan(
+                        text: _isRegister ? 'Sign in' : 'Create account',
+                        style: const TextStyle(
+                          color: AppTheme.accent,
+                          fontWeight: FontWeight.w800,
+                          shadows: backgroundTextShadows,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(height: 12),
+            Wrap(
+              alignment: WrapAlignment.center,
+              spacing: 4,
+              children: [
+                TextButton(
+                  onPressed: () => context.push('/privacy'),
+                  style: TextButton.styleFrom(foregroundColor: Colors.white),
+                  child: const Text('Privacy Policy'),
+                ),
+                TextButton(
+                  onPressed: () => context.push('/terms'),
+                  style: TextButton.styleFrom(foregroundColor: Colors.white),
+                  child: const Text('Terms & Conditions'),
                 ),
               ],
             ),
-          ),
+          ],
         ),
       ),
     );
@@ -653,9 +653,12 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
         fit: StackFit.expand,
         children: [
           ResilientAssetImage(
-            assetName: 'assets/images/fix_now_general.png',
+            key: const Key('login-uniform-hero'),
+            assetName: isWide
+                ? 'assets/images/technician_uniform_blue.png'
+                : 'assets/images/technician_uniform_blue_portrait.png',
             fit: BoxFit.cover,
-            alignment: isWide ? Alignment.center : Alignment.centerRight,
+            alignment: isWide ? Alignment.center : Alignment.topCenter,
             color: Colors.white.withValues(alpha: imageLightenOpacity),
             colorBlendMode: BlendMode.screen,
             fallbackIcon: Icons.build_circle_outlined,
@@ -766,6 +769,20 @@ class _UCTextField extends StatelessWidget {
           color: AppTheme.textHint,
           fontSize: 13,
         ),
+        errorStyle: const TextStyle(
+          color: Color(0xFF8B1A1A),
+          backgroundColor: Color(0xFFFFF1F1),
+          fontSize: 12,
+          fontWeight: FontWeight.w800,
+          height: 1.35,
+          shadows: [
+            Shadow(
+              color: Colors.white,
+              blurRadius: 3,
+            ),
+          ],
+        ),
+        errorMaxLines: 2,
         prefixIcon: Icon(prefixIcon, size: 18, color: AppTheme.textHint),
         suffixIcon: suffixIcon,
         filled: true,

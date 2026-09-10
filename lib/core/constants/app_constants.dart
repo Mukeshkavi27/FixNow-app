@@ -5,42 +5,42 @@ class AppConstants {
     ApplianceCategory(
       'Air Conditioner',
       'Starting at Rs. 499',
-      'assets/images/ac.png',
+      'assets/images/service_ac_uniform_v2.jpg',
     ),
     ApplianceCategory(
       'Refrigerator',
       'Starting at Rs. 399',
-      'assets/images/refrigerator.png',
+      'assets/images/service_refrigerator_uniform_v2.jpg',
     ),
     ApplianceCategory(
       'Washing Machine',
       'Starting at Rs. 449',
-      'assets/images/washing_machine.png',
+      'assets/images/service_washing_machine_uniform_v2.jpg',
     ),
     ApplianceCategory(
       'Microwave',
       'Starting at Rs. 299',
-      'assets/images/microwave.png',
+      'assets/images/service_microwave_uniform_v2.jpg',
     ),
     ApplianceCategory(
       'Water Purifier',
       'Starting at Rs. 349',
-      'assets/images/water_purifier.png',
+      'assets/images/service_water_purifier_uniform_v2.jpg',
     ),
     ApplianceCategory(
       'Television',
       'Starting at Rs. 399',
-      'assets/images/television.png',
+      'assets/images/service_television_uniform_v2.jpg',
     ),
     ApplianceCategory(
       'Fan',
       'Starting at Rs. 199',
-      'assets/images/fan.png',
+      'assets/images/service_fan_uniform_v2.jpg',
     ),
     ApplianceCategory(
       'Other Appliances',
       'Starting at Rs. 249',
-      'assets/images/other_services.png',
+      'assets/images/service_other_uniform_v2.jpg',
     ),
   ];
 }

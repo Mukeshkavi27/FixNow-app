@@ -22,6 +22,15 @@
         <meta-data
             android:name="com.google.firebase.messaging.default_notification_color"
             android:resource="@color/fixnow_notification" />
+        <!-- Geolocator runs this as a visible Android foreground service while
+             the technician is on duty. Keeping it outside the task lifecycle
+             allows tracking to continue after the UI is minimized or swiped
+             away; sign-out and Close today's work stop it explicitly. -->
+        <service
+            android:name="com.baseflow.geolocator.GeolocatorLocationService"
+            android:enabled="true"
+            android:exported="false"
+            android:stopWithTask="false" />
         <activity
             android:name=".MainActivity"
             android:exported="true"

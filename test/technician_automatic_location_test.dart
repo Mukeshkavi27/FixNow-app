@@ -252,7 +252,7 @@ void main() {
 
     expect(find.text('Allow workday location tracking?'), findsOneWidget);
     expect(
-      find.textContaining('including when the app is in the background'),
+      find.textContaining('even when the app is closed or not in use'),
       findsOneWidget,
     );
     expect(tracker.startCount, 0);
