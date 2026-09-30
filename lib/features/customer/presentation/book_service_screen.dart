@@ -121,7 +121,7 @@ class _BookServiceScreenState extends ConsumerState<BookServiceScreen> {
         }
         return null;
       }
-      return Geolocator.getCurrentPosition().timeout(
+      return await Geolocator.getCurrentPosition().timeout(
         const Duration(seconds: 15),
         onTimeout: () => throw TimeoutException('Location timed out'),
       );

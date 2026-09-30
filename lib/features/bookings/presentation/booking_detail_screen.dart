@@ -215,7 +215,7 @@ class _BookingDetailScreenState extends ConsumerState<BookingDetailScreen> {
       }
       final lastKnown = await Geolocator.getLastKnownPosition();
       if (lastKnown != null) return lastKnown;
-      return Geolocator.getCurrentPosition(
+      return await Geolocator.getCurrentPosition(
         locationSettings: const LocationSettings(
           accuracy: LocationAccuracy.medium,
         ),

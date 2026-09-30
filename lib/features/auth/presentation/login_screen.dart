@@ -116,7 +116,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
           permission == LocationPermission.deniedForever) {
         return null;
       }
-      return Geolocator.getCurrentPosition();
+      return await Geolocator.getCurrentPosition();
     } catch (_) {
       return null;
     }

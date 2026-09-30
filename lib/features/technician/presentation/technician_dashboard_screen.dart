@@ -3464,7 +3464,7 @@ Future<Position?> _bestAvailableTechnicianPosition() async {
         permission == LocationPermission.deniedForever) {
       return null;
     }
-    return Geolocator.getCurrentPosition(
+    return await Geolocator.getCurrentPosition(
       locationSettings: const LocationSettings(
         accuracy: LocationAccuracy.high,
       ),

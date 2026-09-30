@@ -605,19 +605,19 @@ class _RoadRouteMapState extends State<RoadRouteMap> {
     });
     try {
       final response = await http.get(uri).timeout(const Duration(seconds: 8));
-      if (response.statusCode != 200) return _fetchSecondaryRoute(origin);
+      if (response.statusCode != 200) return await _fetchSecondaryRoute(origin);
       final data = jsonDecode(response.body) as Map<String, dynamic>;
-      if (data['status'] != 'OK') return _fetchSecondaryRoute(origin);
+      if (data['status'] != 'OK') return await _fetchSecondaryRoute(origin);
       final routes = data['routes'] as List<dynamic>? ?? const [];
-      if (routes.isEmpty) return _fetchSecondaryRoute(origin);
+      if (routes.isEmpty) return await _fetchSecondaryRoute(origin);
       final route = routes.first as Map<String, dynamic>;
       final legs = route['legs'] as List<dynamic>? ?? const [];
-      if (legs.isEmpty) return _fetchSecondaryRoute(origin);
+      if (legs.isEmpty) return await _fetchSecondaryRoute(origin);
       final leg = legs.first as Map<String, dynamic>;
       final encoded = ((route['overview_polyline']
           as Map<String, dynamic>?)?['points']) as String?;
       if (encoded == null || encoded.isEmpty) {
-        return _fetchSecondaryRoute(origin);
+        return await _fetchSecondaryRoute(origin);
       }
       return _RoadRouteData(
         polyline: _decodeGooglePolyline(encoded),
@@ -660,10 +660,10 @@ class _RoadRouteMapState extends State<RoadRouteMap> {
     );
     try {
       final response = await http.get(uri).timeout(const Duration(seconds: 8));
-      if (response.statusCode != 200) return _fetchOsrmRoute(origin);
+      if (response.statusCode != 200) return await _fetchOsrmRoute(origin);
       final data = jsonDecode(response.body) as Map<String, dynamic>;
       final features = data['features'] as List<dynamic>? ?? const [];
-      if (features.isEmpty) return _fetchOsrmRoute(origin);
+      if (features.isEmpty) return await _fetchOsrmRoute(origin);
       final feature = features.first as Map<String, dynamic>;
       final geometry = feature['geometry'] as Map<String, dynamic>? ?? const {};
       final coordinates = geometry['coordinates'] as List<dynamic>? ?? const [];
@@ -673,7 +673,7 @@ class _RoadRouteMapState extends State<RoadRouteMap> {
       final segment = segments.isEmpty
           ? const <String, dynamic>{}
           : segments.first as Map<String, dynamic>;
-      if (coordinates.length < 2) return _fetchOsrmRoute(origin);
+      if (coordinates.length < 2) return await _fetchOsrmRoute(origin);
       return _RoadRouteData(
         polyline: coordinates
             .whereType<List<dynamic>>()
