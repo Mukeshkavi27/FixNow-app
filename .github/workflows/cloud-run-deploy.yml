@@ -1,0 +1,58 @@
+name: Deploy tracking server to Cloud Run
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'tracking-server/**'
+      - '.github/workflows/cloud-run-deploy.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: cloud-run-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_DEPLOYER_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@v2
+      - name: Deploy the container
+        run: >-
+          gcloud run deploy fixnow-tracking-server
+          --project=${{ vars.FIXNOW_FIREBASE_PROJECT_ID }}
+          --region=${{ vars.CLOUD_RUN_REGION }}
+          --source=tracking-server
+          --allow-unauthenticated
+          --service-account=${{ vars.CLOUD_RUN_RUNTIME_SERVICE_ACCOUNT }}
+          --port=8080
+          --cpu=1
+          --memory=512Mi
+          --concurrency=40
+          --max-instances=10
+          --min-instances=0
+          --timeout=3600
+          --session-affinity
+          --set-env-vars=NODE_ENV=production,FIREBASE_PROJECT_ID=${{ vars.FIXNOW_FIREBASE_PROJECT_ID }}
+          --set-secrets=FIREBASE_WEB_API_KEY=fixnow-firebase-web-api-key:latest
+      - name: Record public server URL
+        id: endpoint
+        run: |
+          URL="$(gcloud run services describe fixnow-tracking-server \
+            --project=${{ vars.FIXNOW_FIREBASE_PROJECT_ID }} \
+            --region=${{ vars.CLOUD_RUN_REGION }} \
+            --format='value(status.url)')"
+          echo "url=$URL" >> "$GITHUB_OUTPUT"
+          curl --fail --retry 8 --retry-delay 5 "$URL/health"
+      - run: echo "Cloud Run is healthy at ${{ steps.endpoint.outputs.url }}"

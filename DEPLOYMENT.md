@@ -40,6 +40,10 @@ runs all checks, builds signed APK/AAB files, and stores them as GitHub artifact
 The pipeline creates artifacts only; it intentionally does not automatically
 publish to Google Play.
 
+The tracking server uses Cloud Run in the company Firebase project. Its
+deployment workflow, security model, scaling guardrails, monitoring checklist,
+and GitHub variables are in `docs/CLOUD_RUN_PRODUCTION.md`.
+
 ## Android Play Store
 
 1. Confirm the checked-in Firebase Android options still match project `fixnow-2933a`. Run `flutterfire configure` again whenever the Android application ID changes.
