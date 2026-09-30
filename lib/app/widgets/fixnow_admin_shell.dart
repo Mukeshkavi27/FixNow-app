@@ -567,22 +567,29 @@ class _AdminNavigationTileState extends State<_AdminNavigationTile> {
                     : Colors.transparent,
             borderRadius: BorderRadius.circular(10),
           ),
-          child: ListTile(
-            dense: true,
-            minLeadingWidth: 24,
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(10),
-            ),
-            leading: Icon(widget.destination.icon, size: 21),
-            iconColor: widget.selected ? Colors.white : const Color(0xFFB9CAE3),
-            textColor: widget.selected ? Colors.white : const Color(0xFFD7E2F2),
-            title: Text(
-              widget.destination.label,
-              style: TextStyle(
-                fontWeight: widget.selected ? FontWeight.w800 : FontWeight.w600,
+          child: Material(
+            type: MaterialType.transparency,
+            borderRadius: BorderRadius.circular(10),
+            child: ListTile(
+              dense: true,
+              minLeadingWidth: 24,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(10),
               ),
+              leading: Icon(widget.destination.icon, size: 21),
+              iconColor:
+                  widget.selected ? Colors.white : const Color(0xFFB9CAE3),
+              textColor:
+                  widget.selected ? Colors.white : const Color(0xFFD7E2F2),
+              title: Text(
+                widget.destination.label,
+                style: TextStyle(
+                  fontWeight:
+                      widget.selected ? FontWeight.w800 : FontWeight.w600,
+                ),
+              ),
+              onTap: widget.onTap,
             ),
-            onTap: widget.onTap,
           ),
         ),
       ),
