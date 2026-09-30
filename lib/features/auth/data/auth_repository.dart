@@ -18,7 +18,7 @@ const _configuredMobileAuthApiUrl = String.fromEnvironment(
   defaultValue: '',
 );
 const _defaultProductionMobileAuthApiUrl =
-    'https://fixnow-tracking-server.onrender.com';
+    'https://fixnow-tracking-server-uhrr6qe3gq-el.a.run.app';
 
 final authRepositoryProvider = Provider<AuthRepository>((ref) {
   return AuthRepository(ref.watch(firebaseRefsProvider).auth,

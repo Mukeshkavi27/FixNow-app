@@ -16,7 +16,8 @@ const _configuredAdminApiUrl = String.fromEnvironment(
   'FIXNOW_ADMIN_API_URL',
   defaultValue: '',
 );
-const _productionAdminApiUrl = 'https://fixnow-tracking-server.onrender.com';
+const _productionAdminApiUrl =
+    'https://fixnow-tracking-server-uhrr6qe3gq-el.a.run.app';
 String get _adminApiUrl => AppEnvironment.requireServiceUrl(
       _configuredAdminApiUrl != ''
           ? _configuredAdminApiUrl
