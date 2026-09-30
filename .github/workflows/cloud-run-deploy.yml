@@ -18,6 +18,12 @@ concurrency:
 
 jobs:
   deploy:
+    if: >-
+      vars.FIXNOW_FIREBASE_PROJECT_ID != '' &&
+      vars.CLOUD_RUN_REGION != '' &&
+      vars.CLOUD_RUN_RUNTIME_SERVICE_ACCOUNT != '' &&
+      vars.GCP_WORKLOAD_IDENTITY_PROVIDER != '' &&
+      vars.GCP_DEPLOYER_SERVICE_ACCOUNT != ''
     runs-on: ubuntu-latest
     timeout-minutes: 30
     environment: production
