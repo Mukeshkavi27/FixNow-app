@@ -12,9 +12,9 @@ Verified against the Android app source on 29 August 2026. Recheck this file whe
 - Government app: No
 - News app: No
 - Health app: No
-- Privacy Policy: https://fixnow.live/privacy-policy
-- Terms: https://fixnow.live/terms
-- Account deletion: https://fixnow.live/account-deletion
+- Privacy Policy: https://fixnow.live/privacy.html
+- Terms: https://fixnow.live/terms.html
+- Account deletion: https://fixnow.live/delete-account.html
 
 All three URLs must load publicly without login, must not be PDFs, and must identify FixNow consistently with the Play developer/listing entity.
 

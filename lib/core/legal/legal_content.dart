@@ -1,9 +1,9 @@
 class LegalContent {
   const LegalContent._();
 
-  static const privacyPolicyUrl = 'https://fixnow.live/privacy-policy';
-  static const termsUrl = 'https://fixnow.live/terms';
-  static const deletionUrl = 'https://fixnow.live/account-deletion';
+  static const privacyPolicyUrl = 'https://fixnow.live/privacy.html';
+  static const termsUrl = 'https://fixnow.live/terms.html';
+  static const deletionUrl = 'https://fixnow.live/delete-account.html';
 
   static const privacyPolicy = '''
 FixNow Privacy Policy
@@ -18,7 +18,7 @@ We may use Firebase and approved hosting, mapping, notification and media-storag
 
 We apply access controls and reasonable technical safeguards. Information is retained only for operational, security, tax, accounting and legal requirements. Some transaction records may be retained after account deletion where required by law; unnecessary personal information is deleted or anonymised.
 
-You may request access, correction or deletion from the app under My profile > Legal & account, or at https://fixnow.live/account-deletion. Questions may be submitted through https://fixnow.live.
+You may request access, correction or deletion from the app under My profile > Legal & account, or at https://fixnow.live/delete-account.html. Questions may be submitted through https://fixnow.live.
 ''';
 
   static const terms = '''
@@ -36,6 +36,6 @@ Location, attendance and operational monitoring may be used for technicians whil
 
 FixNow may suspend accounts for fraud, unsafe conduct, policy violations or legal requirements. Service records may be retained where required for tax, accounting, dispute resolution and legal compliance.
 
-To request account deletion, use My profile > Delete account or visit https://fixnow.live/account-deletion. Continued use of FixNow means acceptance of these terms and the Privacy Policy.
+To request account deletion, use My profile > Delete account or visit https://fixnow.live/delete-account.html. Continued use of FixNow means acceptance of these terms and the Privacy Policy.
 ''';
 }
