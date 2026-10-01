@@ -69,36 +69,38 @@ jobs:
       - run: flutter analyze
       - run: flutter test
       - name: Build signed APK and AAB
-        run: >-
-          flutter build apk --release
-          --build-name=${{ inputs.version_name }}
-          --build-number=${{ inputs.version_code }}
-          --dart-define=FIXNOW_ENVIRONMENT=${{ inputs.environment }}
-          --dart-define=FIXNOW_AUTH_API_URL=${{ vars.FIXNOW_AUTH_API_URL }}
-          --dart-define=FIXNOW_ADMIN_API_URL=${{ vars.FIXNOW_ADMIN_API_URL }}
-          --dart-define=FIXNOW_MAP_TILE_URL=${{ vars.FIXNOW_MAP_TILE_URL }}
-          --dart-define=FIXNOW_MAP_TILE_USER_AGENT=${{ vars.FIXNOW_APPLICATION_ID }}
-          --dart-define=FIXNOW_FIREBASE_API_KEY=${{ secrets.FIXNOW_FIREBASE_API_KEY }}
-          --dart-define=FIXNOW_FIREBASE_AUTH_DOMAIN=${{ vars.FIXNOW_FIREBASE_AUTH_DOMAIN }}
-          --dart-define=FIXNOW_FIREBASE_PROJECT_ID=${{ vars.FIXNOW_FIREBASE_PROJECT_ID }}
-          --dart-define=FIXNOW_FIREBASE_STORAGE_BUCKET=${{ vars.FIXNOW_FIREBASE_STORAGE_BUCKET }}
-          --dart-define=FIXNOW_FIREBASE_MESSAGING_SENDER_ID=${{ vars.FIXNOW_FIREBASE_MESSAGING_SENDER_ID }}
-          --dart-define=FIXNOW_FIREBASE_APP_ID=${{ vars.FIXNOW_FIREBASE_APP_ID }}
-      - run: >-
-          flutter build appbundle --release
-          --build-name=${{ inputs.version_name }}
-          --build-number=${{ inputs.version_code }}
-          --dart-define=FIXNOW_ENVIRONMENT=${{ inputs.environment }}
-          --dart-define=FIXNOW_AUTH_API_URL=${{ vars.FIXNOW_AUTH_API_URL }}
-          --dart-define=FIXNOW_ADMIN_API_URL=${{ vars.FIXNOW_ADMIN_API_URL }}
-          --dart-define=FIXNOW_MAP_TILE_URL=${{ vars.FIXNOW_MAP_TILE_URL }}
-          --dart-define=FIXNOW_MAP_TILE_USER_AGENT=${{ vars.FIXNOW_APPLICATION_ID }}
-          --dart-define=FIXNOW_FIREBASE_API_KEY=${{ secrets.FIXNOW_FIREBASE_API_KEY }}
-          --dart-define=FIXNOW_FIREBASE_AUTH_DOMAIN=${{ vars.FIXNOW_FIREBASE_AUTH_DOMAIN }}
-          --dart-define=FIXNOW_FIREBASE_PROJECT_ID=${{ vars.FIXNOW_FIREBASE_PROJECT_ID }}
-          --dart-define=FIXNOW_FIREBASE_STORAGE_BUCKET=${{ vars.FIXNOW_FIREBASE_STORAGE_BUCKET }}
-          --dart-define=FIXNOW_FIREBASE_MESSAGING_SENDER_ID=${{ vars.FIXNOW_FIREBASE_MESSAGING_SENDER_ID }}
-          --dart-define=FIXNOW_FIREBASE_APP_ID=${{ vars.FIXNOW_FIREBASE_APP_ID }}
+        env:
+          FIREBASE_API_KEY: ${{ secrets.FIXNOW_FIREBASE_API_KEY }}
+        run: |
+          flutter build apk --release \
+            --build-name="${{ inputs.version_name }}" \
+            --build-number="${{ inputs.version_code }}" \
+            --dart-define=FIXNOW_ENVIRONMENT="${{ inputs.environment }}" \
+            --dart-define=FIXNOW_AUTH_API_URL="${{ vars.FIXNOW_AUTH_API_URL }}" \
+            --dart-define=FIXNOW_ADMIN_API_URL="${{ vars.FIXNOW_ADMIN_API_URL }}" \
+            --dart-define=FIXNOW_MAP_TILE_URL="${{ vars.FIXNOW_MAP_TILE_URL }}" \
+            --dart-define=FIXNOW_MAP_TILE_USER_AGENT="${{ vars.FIXNOW_APPLICATION_ID }}" \
+            --dart-define=FIXNOW_FIREBASE_API_KEY="$FIREBASE_API_KEY" \
+            --dart-define=FIXNOW_FIREBASE_AUTH_DOMAIN="${{ vars.FIXNOW_FIREBASE_AUTH_DOMAIN }}" \
+            --dart-define=FIXNOW_FIREBASE_PROJECT_ID="${{ vars.FIXNOW_FIREBASE_PROJECT_ID }}" \
+            --dart-define=FIXNOW_FIREBASE_STORAGE_BUCKET="${{ vars.FIXNOW_FIREBASE_STORAGE_BUCKET }}" \
+            --dart-define=FIXNOW_FIREBASE_MESSAGING_SENDER_ID="${{ vars.FIXNOW_FIREBASE_MESSAGING_SENDER_ID }}" \
+            --dart-define=FIXNOW_FIREBASE_APP_ID="${{ vars.FIXNOW_FIREBASE_APP_ID }}"
+
+          flutter build appbundle --release \
+            --build-name="${{ inputs.version_name }}" \
+            --build-number="${{ inputs.version_code }}" \
+            --dart-define=FIXNOW_ENVIRONMENT="${{ inputs.environment }}" \
+            --dart-define=FIXNOW_AUTH_API_URL="${{ vars.FIXNOW_AUTH_API_URL }}" \
+            --dart-define=FIXNOW_ADMIN_API_URL="${{ vars.FIXNOW_ADMIN_API_URL }}" \
+            --dart-define=FIXNOW_MAP_TILE_URL="${{ vars.FIXNOW_MAP_TILE_URL }}" \
+            --dart-define=FIXNOW_MAP_TILE_USER_AGENT="${{ vars.FIXNOW_APPLICATION_ID }}" \
+            --dart-define=FIXNOW_FIREBASE_API_KEY="$FIREBASE_API_KEY" \
+            --dart-define=FIXNOW_FIREBASE_AUTH_DOMAIN="${{ vars.FIXNOW_FIREBASE_AUTH_DOMAIN }}" \
+            --dart-define=FIXNOW_FIREBASE_PROJECT_ID="${{ vars.FIXNOW_FIREBASE_PROJECT_ID }}" \
+            --dart-define=FIXNOW_FIREBASE_STORAGE_BUCKET="${{ vars.FIXNOW_FIREBASE_STORAGE_BUCKET }}" \
+            --dart-define=FIXNOW_FIREBASE_MESSAGING_SENDER_ID="${{ vars.FIXNOW_FIREBASE_MESSAGING_SENDER_ID }}" \
+            --dart-define=FIXNOW_FIREBASE_APP_ID="${{ vars.FIXNOW_FIREBASE_APP_ID }}"
       - uses: actions/upload-artifact@v4
         with:
           name: fixnow-android-${{ inputs.environment }}-${{ inputs.version_name }}-${{ inputs.version_code }}
