@@ -11,6 +11,16 @@ import '../../../core/branches/branch_resolver.dart';
 import '../../../core/errors/user_facing_error.dart';
 import '../data/auth_repository.dart';
 
+/// Technician applicants must choose from the live service branches configured
+/// by the company. Never show the demo fallback cities on this public flow.
+final technicianSignupBranchesProvider =
+    StreamProvider.autoDispose<List<BranchInfo>>((ref) {
+  return ref
+      .watch(branchRepositoryProvider)
+      .watchBranches(fallbackWhenEmpty: false)
+      .map((branches) => branches.where((branch) => branch.isActive).toList());
+});
+
 class LoginScreen extends ConsumerStatefulWidget {
   const LoginScreen({super.key});
 
@@ -60,8 +70,9 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
         );
       } else if (_isRegister) {
         if (_isTechnicianRequest) {
-          final branches = ref.read(branchesProvider).valueOrNull ??
-              BranchInfo.fallbackBranches;
+          final branches =
+              ref.read(technicianSignupBranchesProvider).valueOrNull ??
+                  const <BranchInfo>[];
           final branch =
               branches.where((item) => item.id == _selectedBranchId).isEmpty
                   ? null
@@ -124,7 +135,8 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
 
   Future<void> _suggestBranch() async {
     final position = await _position();
-    final branches = ref.read(branchesProvider).valueOrNull ?? const [];
+    final branches =
+        ref.read(technicianSignupBranchesProvider).valueOrNull ?? const [];
     if (position == null || branches.isEmpty) return;
     final resolution = BranchResolver.resolve(
       branches: branches,
@@ -145,10 +157,10 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
   Widget build(BuildContext context) {
     final shouldLoadBranches = _isRegister && _isTechnicianRequest;
     final branchesAsync = shouldLoadBranches
-        ? ref.watch(branchesProvider)
+        ? ref.watch(technicianSignupBranchesProvider)
         : const AsyncValue<List<BranchInfo>>.data([]);
     final List<BranchInfo> branches =
-        branchesAsync.valueOrNull ?? BranchInfo.fallbackBranches;
+        branchesAsync.valueOrNull ?? const <BranchInfo>[];
     final size = MediaQuery.sizeOf(context);
     final screenHeight = size.height;
     final screenWidth = size.width;
