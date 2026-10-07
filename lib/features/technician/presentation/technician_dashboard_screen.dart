@@ -3486,6 +3486,7 @@ class _AttendanceViewState extends ConsumerState<_AttendanceView> {
   String? _result;
   bool _usingLocalTestPosition = false;
   bool _attendanceStarted = false;
+  bool _attendanceSaved = false;
   int _attendanceStep = 1;
   XFile? _attendanceSelfie;
   Uint8List? _attendanceSelfieBytes;
@@ -3591,6 +3592,16 @@ class _AttendanceViewState extends ConsumerState<_AttendanceView> {
       ref.read(technicianLocationDisclosureAcceptedProvider.notifier).state =
           true;
     }
+
+    // Android cannot grant "Allow all the time" from its first permission
+    // prompt. A technician must complete that extra Settings step before we
+    // accept attendance, otherwise Android stops location sharing as soon as
+    // FixNow leaves the foreground.
+    if (!await _ensureRequiredWorkdayLocationPermission()) {
+      _setViewState(() => _result =
+          'All-day location is required before you can start your workday.');
+      return;
+    }
     _setViewState(() {
       _loading = true;
       _result = 'Detecting current location...';
@@ -3611,6 +3622,92 @@ class _AttendanceViewState extends ConsumerState<_AttendanceView> {
     } finally {
       _setViewState(() => _loading = false);
     }
+  }
+
+  Future<bool> _ensureRequiredWorkdayLocationPermission() async {
+    if (kIsWeb || defaultTargetPlatform != TargetPlatform.android) {
+      return true;
+    }
+
+    var servicesEnabled = await Geolocator.isLocationServiceEnabled();
+    if (!servicesEnabled) {
+      return _showRequiredLocationSettings(
+        locationServicesDisabled: true,
+      );
+    }
+
+    var permission = await Geolocator.checkPermission();
+    if (permission == LocationPermission.denied) {
+      permission = await Geolocator.requestPermission();
+    }
+    if (permission == LocationPermission.always) return true;
+
+    // Android 11+ presents "Allow only while using" first. The following
+    // dialog keeps the workday flow blocked until the technician explicitly
+    // enables the separate all-the-time setting.
+    return _showRequiredLocationSettings(
+      permanentlyDenied: permission == LocationPermission.deniedForever,
+    );
+  }
+
+  Future<bool> _showRequiredLocationSettings({
+    bool locationServicesDisabled = false,
+    bool permanentlyDenied = false,
+  }) async {
+    final result = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) => AlertDialog(
+        icon: const Icon(Icons.location_on_outlined, size: 36),
+        title: const Text('All-day location is required'),
+        content: Text(
+          locationServicesDisabled
+              ? 'Turn on your phone\'s Location service, return here, then tap Check again. FixNow cannot begin a tracked workday without it.'
+              : permanentlyDenied
+                  ? 'Android has blocked location for FixNow. Open App settings, choose Permissions > Location, select Allow all the time, then return and tap Check again.'
+                  : 'Choose Allow all the time in Android settings. This is required to keep technician tracking active when FixNow is minimized or the phone is locked.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Cancel'),
+          ),
+          OutlinedButton(
+            onPressed: () async {
+              if (locationServicesDisabled) {
+                await Geolocator.openLocationSettings();
+              } else {
+                await Geolocator.openAppSettings();
+              }
+            },
+            child: Text(locationServicesDisabled
+                ? 'Open location settings'
+                : 'Open app settings'),
+          ),
+          FilledButton(
+            onPressed: () async {
+              final servicesEnabled =
+                  await Geolocator.isLocationServiceEnabled();
+              final permission = await Geolocator.checkPermission();
+              if (!dialogContext.mounted) return;
+              if (servicesEnabled && permission == LocationPermission.always) {
+                Navigator.pop(dialogContext, true);
+                return;
+              }
+              ScaffoldMessenger.of(dialogContext).showSnackBar(
+                const SnackBar(
+                  content: Text(
+                    'Location is still not set to Allow all the time.',
+                  ),
+                ),
+              );
+            },
+            child: const Text('Check again'),
+          ),
+        ],
+      ),
+    );
+    return result == true;
   }
 
   Future<void> _confirmStagedAttendance() async {
@@ -3649,23 +3746,26 @@ class _AttendanceViewState extends ConsumerState<_AttendanceView> {
         userId: user.uid,
         dayKey: _attendanceStorageDayKey(now),
       );
-      await ref.read(technicianRepositoryProvider).markAttendance(
-            Attendance(
-              id: '',
-              technicianId: user.uid,
-              selfieUrl: selfieUrl,
-              latitude: position.latitude,
-              longitude: position.longitude,
-              timestamp: now,
-              status: status,
-              faceMatchPassed: match.passed,
-              geofencePassed: distance <= config.geofenceRadiusMeters,
-              faceMatchScore: match.score,
-              branchId: user.branchId,
-              locationSource:
-                  _usingLocalTestPosition ? 'localTestFallback' : 'deviceGps',
-            ),
-          );
+      if (!_attendanceSaved) {
+        await ref.read(technicianRepositoryProvider).markAttendance(
+              Attendance(
+                id: '',
+                technicianId: user.uid,
+                selfieUrl: selfieUrl,
+                latitude: position.latitude,
+                longitude: position.longitude,
+                timestamp: now,
+                status: status,
+                faceMatchPassed: match.passed,
+                geofencePassed: distance <= config.geofenceRadiusMeters,
+                faceMatchScore: match.score,
+                branchId: user.branchId,
+                locationSource:
+                    _usingLocalTestPosition ? 'localTestFallback' : 'deviceGps',
+              ),
+            );
+        _attendanceSaved = true;
+      }
       try {
         final activeBooking = findTechnicianActiveBooking(
           ref.read(technicianBookingsProvider).valueOrNull ?? const <Booking>[],
@@ -3676,7 +3776,14 @@ class _AttendanceViewState extends ConsumerState<_AttendanceView> {
               branchId: user.branchId ?? '',
               bookingId: activeBooking?.id,
             );
-      } catch (_) {}
+      } catch (_) {
+        _setViewState(() {
+          _attendanceStep = 2;
+          _result =
+              'Attendance was saved, but tracking did not start. Enable all-day location and tap Start tracking again.';
+        });
+        return;
+      }
       _setViewState(() {
         _marked = true;
         _result =
@@ -4383,6 +4490,7 @@ class _AttendanceViewState extends ConsumerState<_AttendanceView> {
                               _attendanceSelfieBytes = null;
                               _attendanceLocation = null;
                               _attendanceFaceMatch = null;
+                              _attendanceSaved = false;
                               _result = null;
                             }),
                     icon: const Icon(Icons.refresh),
