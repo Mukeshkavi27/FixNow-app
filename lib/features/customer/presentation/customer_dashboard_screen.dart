@@ -688,7 +688,7 @@ class _ServiceCard extends StatelessWidget {
 }
 
 /// Resolves which image to show, in this order:
-/// 1. A bundled local asset (e.g. 'assets/images/television.png'). This is
+/// 1. A bundled local asset (PNG/JPEG/WebP). This is
 ///    what the hardcoded AppConstants.applianceCategories list uses.
 /// 2. A remote network image, used for Firestore-sourced or user-uploaded
 ///    photos (e.g. an appliance category image, or a customer's own photo
@@ -714,10 +714,15 @@ class _ResilientImage extends StatelessWidget {
   final Color color;
   final double iconSize;
 
-  bool get _hasLocalAsset =>
-      assetName != null &&
-      assetName!.startsWith('assets/') &&
-      assetName!.toLowerCase().endsWith('.png');
+  bool get _hasLocalAsset {
+    final asset = assetName?.trim().toLowerCase();
+    return asset != null &&
+        asset.startsWith('assets/') &&
+        (asset.endsWith('.png') ||
+            asset.endsWith('.jpg') ||
+            asset.endsWith('.jpeg') ||
+            asset.endsWith('.webp'));
+  }
 
   @override
   Widget build(BuildContext context) {
