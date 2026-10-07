@@ -15,6 +15,7 @@ import {
 import { registerSuperAdminRoutes } from './admin-api.js';
 import { registerMobilePasswordAuth } from './mobile-password-auth.js';
 import { registerAccountDeletionRoutes } from './account-deletion.js';
+import { registerBillingRoutes } from './billing.js';
 import {
   normalizeGpsPayload,
   persistGpsUpdate,
@@ -106,6 +107,7 @@ registerAccountDeletionRoutes(app, {
   firestore,
   storage: firebaseStorage,
 });
+registerBillingRoutes(app, { firestore });
 
 io.use(authenticateSocket);
 

@@ -1,20 +1,47 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:http/http.dart' as http;
 
+import '../../../core/config/app_environment.dart';
 import '../../../core/enums/booking_status.dart';
 import '../../../core/providers/firebase_providers.dart';
 import '../domain/bill.dart';
 
+const _configuredBillingApiUrl = String.fromEnvironment(
+  'FIXNOW_BILLING_API_URL',
+  defaultValue: '',
+);
+const _productionBillingApiUrl =
+    'https://fixnow-tracking-server-uhrr6qe3gq-el.a.run.app';
+
+String get _billingApiUrl => AppEnvironment.requireServiceUrl(
+      _configuredBillingApiUrl.isNotEmpty
+          ? _configuredBillingApiUrl
+          : const bool.fromEnvironment('dart.vm.product')
+              ? _productionBillingApiUrl
+              : '',
+      name: 'FIXNOW_BILLING_API_URL',
+    );
+
 final billRepositoryProvider = Provider<BillRepository>((ref) {
-  return BillRepository(ref.watch(firebaseRefsProvider).firestore);
+  final refs = ref.watch(firebaseRefsProvider);
+  return BillRepository(
+    refs.firestore,
+    refs.auth,
+    http.Client(),
+  );
 });
 
 class BillRepository {
-  BillRepository(this._firestore);
+  BillRepository(this._firestore, this._auth, this._client);
 
   final FirebaseFirestore _firestore;
+  final FirebaseAuth _auth;
+  final http.Client _client;
 
   Stream<Bill?> watchForBooking(String bookingId) {
     return _firestore.collection('bills').doc(bookingId).snapshots().map(
@@ -108,6 +135,78 @@ class BillRepository {
   }
 
   Future<void> generateBill({
+    required String bookingId,
+    required String customerId,
+    required String technicianId,
+    required double labourCharge,
+    required double partsCharge,
+    String? adjustmentReason,
+  }) async {
+    if (!AppEnvironment.isDevelopment || _configuredBillingApiUrl.isNotEmpty) {
+      await _generateBillWithService(
+        bookingId: bookingId,
+        labourCharge: labourCharge,
+        partsCharge: partsCharge,
+        adjustmentReason: adjustmentReason,
+      );
+      return;
+    }
+    await _generateBillWithFirestore(
+      bookingId: bookingId,
+      customerId: customerId,
+      technicianId: technicianId,
+      labourCharge: labourCharge,
+      partsCharge: partsCharge,
+      adjustmentReason: adjustmentReason,
+    );
+  }
+
+  Future<void> _generateBillWithService({
+    required String bookingId,
+    required double labourCharge,
+    required double partsCharge,
+    String? adjustmentReason,
+  }) async {
+    final user = _auth.currentUser;
+    if (user == null) throw StateError('Sign in again to generate the final bill.');
+    final token = await user.getIdToken(true);
+    if (token == null || token.isEmpty) {
+      throw StateError('Your sign-in session has expired. Sign in again and retry.');
+    }
+    final response = await _client.post(
+      Uri.parse('$_billingApiUrl/api/technician/bills'),
+      headers: {
+        'Authorization': 'Bearer $token',
+        'Content-Type': 'application/json',
+      },
+      body: jsonEncode({
+        'bookingId': bookingId,
+        'labourCharge': labourCharge,
+        'partsCharge': partsCharge,
+        'adjustmentReason': adjustmentReason,
+      }),
+    ).timeout(
+      const Duration(seconds: 25),
+      onTimeout: () => throw StateError(
+        'Final billing service did not respond. Check your connection and retry.',
+      ),
+    );
+    Map<String, dynamic> body = const {};
+    try {
+      if (response.body.isNotEmpty) {
+        body = jsonDecode(response.body) as Map<String, dynamic>;
+      }
+    } on FormatException {
+      throw StateError('Final billing service returned an invalid response.');
+    }
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw StateError(
+        body['error'] as String? ?? 'Final bill could not be generated.',
+      );
+    }
+  }
+
+  Future<void> _generateBillWithFirestore({
     required String bookingId,
     required String customerId,
     required String technicianId,
