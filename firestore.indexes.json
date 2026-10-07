@@ -32,6 +32,14 @@
         { "fieldPath": "recipientRole", "order": "ASCENDING" },
         { "fieldPath": "type", "order": "ASCENDING" }
       ]
+    },
+    {
+      "collectionGroup": "technician_locations",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "isOnDuty", "order": "ASCENDING" },
+        { "fieldPath": "updatedAt", "order": "ASCENDING" }
+      ]
     }
   ],
   "fieldOverrides": []

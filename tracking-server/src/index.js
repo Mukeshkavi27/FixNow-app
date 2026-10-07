@@ -236,7 +236,14 @@ io.on('connection', (socket) => {
   });
 });
 
-const stopRealtimeEventBridge = startRealtimeEventBridge({ firestore, io });
+// Flutter reads its operational records directly from Firestore. Do not make
+// every autoscaled Cloud Run instance subscribe to every booking, attendance,
+// and technician location just to mirror those records into Socket.IO. The
+// optional bridge is retained for a future web socket client and is off by
+// default in production.
+const stopRealtimeEventBridge = process.env.ENABLE_FIRESTORE_SOCKET_BRIDGE === 'true'
+  ? startRealtimeEventBridge({ firestore, io })
+  : () => {};
 const stopBackgroundAutomation = startDistributedSingleton({
   firestore,
   logger: console,

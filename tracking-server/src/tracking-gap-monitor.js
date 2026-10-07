@@ -32,9 +32,15 @@ function notificationData({ userId, recipientRole, technicianId, branchId,
 }
 
 export async function runTrackingGapCheck(firestore, now = new Date()) {
+  const cutoff = new Date(now.getTime() - trackingGapThresholdMs);
   const [snapshot, activeStateSnapshot] = await Promise.all([
     firestore.collection('technician_locations')
-      .where('isOnDuty', '==', true).get(),
+      // Read only technicians that have actually missed the three-minute
+      // threshold. The former query read every on-duty technician every
+      // minute, even when all GPS updates were healthy.
+      .where('isOnDuty', '==', true)
+      .where('updatedAt', '<=', cutoff)
+      .get(),
     firestore.collection('tracking_gap_state')
       .where('active', '==', true).get(),
   ]);
@@ -43,6 +49,8 @@ export async function runTrackingGapCheck(firestore, now = new Date()) {
   ));
   let opened = 0;
   let restored = 0;
+
+  const staleTechnicianIds = new Set(snapshot.docs.map((doc) => doc.id));
 
   await Promise.all(snapshot.docs.map(async (locationDoc) => {
     const location = locationDoc.data();
@@ -134,6 +142,54 @@ export async function runTrackingGapCheck(firestore, now = new Date()) {
     );
     await batch.commit();
     opened += 1;
+  }));
+
+  // A recovery does not need a full fleet scan. Only technicians that already
+  // had an alert need to be checked for a fresh location.
+  await Promise.all(activeStateSnapshot.docs.map(async (stateDoc) => {
+    if (staleTechnicianIds.has(stateDoc.id)) return;
+    const state = stateDoc.data();
+    const locationDoc = await firestore.collection('technician_locations')
+      .doc(stateDoc.id).get();
+    if (!locationDoc.exists) return;
+    const location = locationDoc.data();
+    if (isTrackingGap(location, now)) return;
+    const technicianName = state.technicianName ?? 'Technician';
+    const key = state.incidentKey ?? stateDoc.id;
+    const batch = firestore.batch();
+    batch.set(stateDoc.ref, {
+      active: false,
+      restoredAt: FieldValue.serverTimestamp(),
+      lastLocationAt: location.updatedAt ?? null,
+    }, { merge: true });
+    batch.set(
+      firestore.collection('notifications').doc(`tracking_restored_${key}_branch`),
+      notificationData({
+        userId: `branch:${location.branchId}`,
+        recipientRole: 'branchAdmin',
+        technicianId: stateDoc.id,
+        branchId: location.branchId ?? null,
+        technicianName,
+        type: 'trackingRestored',
+        title: 'Technician tracking restored',
+        body: `${technicianName}'s live GPS updates have resumed.`,
+      }),
+    );
+    batch.set(
+      firestore.collection('notifications').doc(`tracking_restored_${key}_super`),
+      notificationData({
+        userId: 'role:superAdmin',
+        recipientRole: 'superAdmin',
+        technicianId: stateDoc.id,
+        branchId: location.branchId ?? null,
+        technicianName,
+        type: 'trackingRestored',
+        title: 'Technician tracking restored',
+        body: `${technicianName}'s live GPS updates have resumed.`,
+      }),
+    );
+    await batch.commit();
+    restored += 1;
   }));
   return { checked: snapshot.size, opened, restored };
 }

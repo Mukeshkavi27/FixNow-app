@@ -5,9 +5,17 @@ const androidChannelId = 'fixnow_technician_alerts';
 /// Delivers new workflow notifications while the app is backgrounded. Existing
 /// notifications are not re-sent when the server starts.
 export function startNotificationPushBridge(firestore, messaging, logger = console) {
-  const startedAt = Date.now();
+  // Do not attach a listener to the entire notification archive. Apart from
+  // making a new Cloud Run instance read every historical notification, that
+  // would become progressively more expensive as the business grows. This
+  // bridge deliberately sends only notifications created after it starts.
+  // Notifications created while the service is down are already available in
+  // the in-app notification centre and are not replayed as push messages.
+  const startedAt = new Date();
   const inFlight = new Set();
-  return firestore.collection('notifications').onSnapshot((snapshot) => {
+  return firestore.collection('notifications')
+    .where('createdAt', '>=', startedAt)
+    .onSnapshot((snapshot) => {
     snapshot.docChanges().forEach((change) => {
       if (change.type !== 'added' && change.type !== 'modified') return;
       void deliverNotification(change.doc, { firestore, messaging, logger, startedAt, inFlight });
@@ -18,7 +26,7 @@ export function startNotificationPushBridge(firestore, messaging, logger = conso
 async function deliverNotification(doc, { firestore, messaging, logger, startedAt, inFlight }) {
   const notification = doc.data();
   const createdAt = notification.createdAt?.toDate?.();
-  if (!createdAt || createdAt.getTime() < startedAt || notification.isRead === true ||
+  if (!createdAt || createdAt.getTime() < startedAt.getTime() || notification.isRead === true ||
       notification.pushSentAt || notification.pushFailedAt || inFlight.has(doc.id)) {
     return;
   }

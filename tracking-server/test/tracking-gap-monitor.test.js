@@ -40,33 +40,33 @@ test('gap monitor alerts branch and super admins once per incident', async () =>
   const refs = (path) => ({ path });
   const firestore = {
     collection(name) {
-      return {
-        where() {
-          return {
-            async get() {
-              if (name === 'technician_locations') return {
-                    size: 1,
-                    docs: [{
-                      id: 'tech-1',
-                      data: () => ({
-                        technicianId: 'tech-1',
-                        branchId: 'branch-1',
-                        isOnDuty: true,
-                        isOnline: true,
-                        updatedAt: oldUpdate,
-                      }),
-                    }],
-                  };
-              if (name === 'tracking_gap_state' && state['tech-1']) {
-                return {
-                  size: 1,
-                  docs: [{ id: 'tech-1', data: () => state['tech-1'] }],
-                };
-              }
-              return { size: 0, docs: [] };
-            },
-          };
+      const query = {
+        where() { return query; },
+        async get() {
+          if (name === 'technician_locations') return {
+                size: 1,
+                docs: [{
+                  id: 'tech-1',
+                  data: () => ({
+                    technicianId: 'tech-1',
+                    branchId: 'branch-1',
+                    isOnDuty: true,
+                    isOnline: true,
+                    updatedAt: oldUpdate,
+                  }),
+                }],
+              };
+          if (name === 'tracking_gap_state' && state['tech-1']) {
+            return {
+              size: 1,
+              docs: [{ id: 'tech-1', data: () => state['tech-1'] }],
+            };
+          }
+          return { size: 0, docs: [] };
         },
+      };
+      return {
+        where() { return query; },
         doc(id) {
           const ref = refs(`${name}/${id}`);
           return {
