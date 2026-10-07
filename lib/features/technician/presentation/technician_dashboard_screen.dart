@@ -3490,6 +3490,7 @@ class _AttendanceViewState extends ConsumerState<_AttendanceView> {
   int _attendanceStep = 1;
   XFile? _attendanceSelfie;
   Uint8List? _attendanceSelfieBytes;
+  String? _attendanceSelfieUrl;
   Position? _attendanceLocation;
   FaceMatchResult? _attendanceFaceMatch;
 
@@ -3559,6 +3560,7 @@ class _AttendanceViewState extends ConsumerState<_AttendanceView> {
       _setViewState(() {
         _attendanceSelfie = image;
         _attendanceSelfieBytes = bytes;
+        _attendanceSelfieUrl = null;
         _attendanceFaceMatch = match;
         _attendanceStep = 2;
         _result = match.passed
@@ -3609,8 +3611,22 @@ class _AttendanceViewState extends ConsumerState<_AttendanceView> {
     try {
       final position = await _attendancePosition(config);
       if (position == null) {
+        final locationServicesEnabled =
+            await Geolocator.isLocationServiceEnabled();
+        if (mounted) {
+          await _showRequiredLocationSettings(
+            locationServicesDisabled: !locationServicesEnabled,
+            preciseLocationRequired: locationServicesEnabled,
+          );
+        }
         _setViewState(() => _result =
-            'Location could not be obtained. Enable precise location permission and retry.');
+            'Location could not be obtained. Enable precise all-day location and retry.');
+        return;
+      }
+      if (position.accuracy > technicianMaximumAcceptedAccuracyMeters) {
+        await _showRequiredLocationSettings(preciseLocationRequired: true);
+        _setViewState(() => _result =
+            'Precise location is required before you can start tracking.');
         return;
       }
       _setViewState(() {
@@ -3640,7 +3656,14 @@ class _AttendanceViewState extends ConsumerState<_AttendanceView> {
     if (permission == LocationPermission.denied) {
       permission = await Geolocator.requestPermission();
     }
-    if (permission == LocationPermission.always) return true;
+    if (permission == LocationPermission.always) {
+      final accuracy = await Geolocator.getLocationAccuracy();
+      // Android reports `unknown` here because it does not expose the
+      // precise/approximate toggle through this plugin. Its real GPS
+      // accuracy is validated after the first location sample below.
+      if (accuracy != LocationAccuracyStatus.reduced) return true;
+      return _showRequiredLocationSettings(preciseLocationRequired: true);
+    }
 
     // Android 11+ presents "Allow only while using" first. The following
     // dialog keeps the workday flow blocked until the technician explicitly
@@ -3653,6 +3676,7 @@ class _AttendanceViewState extends ConsumerState<_AttendanceView> {
   Future<bool> _showRequiredLocationSettings({
     bool locationServicesDisabled = false,
     bool permanentlyDenied = false,
+    bool preciseLocationRequired = false,
   }) async {
     final result = await showDialog<bool>(
       context: context,
@@ -3665,6 +3689,8 @@ class _AttendanceViewState extends ConsumerState<_AttendanceView> {
               ? 'Turn on your phone\'s Location service, return here, then tap Check again. FixNow cannot begin a tracked workday without it.'
               : permanentlyDenied
                   ? 'Android has blocked location for FixNow. Open App settings, choose Permissions > Location, select Allow all the time, then return and tap Check again.'
+                  : preciseLocationRequired
+                      ? 'FixNow needs Precise location as well as Allow all the time. Open App settings, choose Permissions > Location, turn on Use precise location, select Allow all the time, then return and tap Check again.'
                   : 'Choose Allow all the time in Android settings. This is required to keep technician tracking active when FixNow is minimized or the phone is locked.',
         ),
         actions: [
@@ -3689,8 +3715,13 @@ class _AttendanceViewState extends ConsumerState<_AttendanceView> {
               final servicesEnabled =
                   await Geolocator.isLocationServiceEnabled();
               final permission = await Geolocator.checkPermission();
+              final accuracy = permission == LocationPermission.always
+                  ? await Geolocator.getLocationAccuracy()
+                  : LocationAccuracyStatus.reduced;
               if (!dialogContext.mounted) return;
-              if (servicesEnabled && permission == LocationPermission.always) {
+              if (servicesEnabled &&
+                  permission == LocationPermission.always &&
+                  accuracy != LocationAccuracyStatus.reduced) {
                 Navigator.pop(dialogContext, true);
                 return;
               }
@@ -3740,13 +3771,15 @@ class _AttendanceViewState extends ConsumerState<_AttendanceView> {
         position.latitude,
         position.longitude,
       );
-      final selfieUrl = await _uploadAttendanceSelfie(
-        image: image,
-        bytes: bytes,
-        userId: user.uid,
-        dayKey: _attendanceStorageDayKey(now),
-      );
       if (!_attendanceSaved) {
+        final selfieUrl = _attendanceSelfieUrl ??
+            await _uploadAttendanceSelfie(
+              image: image,
+              bytes: bytes,
+              userId: user.uid,
+              dayKey: _attendanceStorageDayKey(now),
+            );
+        _attendanceSelfieUrl = selfieUrl;
         await ref.read(technicianRepositoryProvider).markAttendance(
               Attendance(
                 id: '',
@@ -4488,6 +4521,7 @@ class _AttendanceViewState extends ConsumerState<_AttendanceView> {
                               _attendanceStep = 1;
                               _attendanceSelfie = null;
                               _attendanceSelfieBytes = null;
+                              _attendanceSelfieUrl = null;
                               _attendanceLocation = null;
                               _attendanceFaceMatch = null;
                               _attendanceSaved = false;
