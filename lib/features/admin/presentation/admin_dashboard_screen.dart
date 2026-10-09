@@ -3614,27 +3614,36 @@ class _AbsenteeCalendarCardState extends State<_AbsenteeCalendarCard> {
               const SizedBox(width: 8),
               Expanded(
                 child: Text(
-                  'Absentees — ${DateFormat('dd MMM yyyy').format(_selectedDate)}',
+                  'Absentees',
                   style: const TextStyle(
                     fontWeight: FontWeight.w900,
                     color: AppTheme.textPrimary,
                   ),
                 ),
               ),
-              OutlinedButton.icon(
-                onPressed: () async {
-                  final picked = await showDatePicker(
-                    context: context,
-                    initialDate: _selectedDate,
-                    firstDate: DateTime(2024),
-                    lastDate: DateTime.now().add(const Duration(days: 365)),
-                  );
-                  if (picked != null) setState(() => _selectedDate = picked);
-                },
-                icon: const Icon(Icons.calendar_month_outlined, size: 17),
-                label: const Text('Select date'),
-              ),
             ],
+          ),
+          const SizedBox(height: 4),
+          Text(
+            DateFormat('dd MMMM yyyy').format(_selectedDate),
+            style: const TextStyle(color: AppTheme.textSecondary),
+          ),
+          const SizedBox(height: 10),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: OutlinedButton.icon(
+              onPressed: () async {
+                final picked = await showDatePicker(
+                  context: context,
+                  initialDate: _selectedDate,
+                  firstDate: DateTime(2024),
+                  lastDate: DateTime.now().add(const Duration(days: 365)),
+                );
+                if (picked != null) setState(() => _selectedDate = picked);
+              },
+              icon: const Icon(Icons.calendar_month_outlined, size: 17),
+              label: const Text('Select date'),
+            ),
           ),
           const SizedBox(height: 10),
           if (absentRecords.isEmpty && automaticAbsentees.isEmpty)
@@ -7177,6 +7186,52 @@ class _TechnicianTrackingTile extends StatelessWidget {
                 color: AppTheme.accent,
                 icon: Icons.home_repair_service_outlined,
               );
+    final compact = MediaQuery.sizeOf(context).width < 600;
+    final details = Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          _registeredTechnicianName(technician),
+          maxLines: 2,
+          overflow: TextOverflow.ellipsis,
+          style: const TextStyle(
+            color: AppTheme.textPrimary,
+            fontWeight: FontWeight.w900,
+          ),
+        ),
+        const SizedBox(height: 3),
+        Text(
+          booking == null
+              ? statusLabel
+              : '$statusLabel - ${booking!.applianceType} for ${booking!.customerName}',
+          maxLines: 2,
+          overflow: TextOverflow.ellipsis,
+          style: const TextStyle(
+            color: AppTheme.textSecondary,
+            fontSize: 12,
+          ),
+        ),
+        if (location != null) ...[
+          const SizedBox(height: 3),
+          Text(
+            '${location!.isOnline ? 'Online' : 'Offline'} - '
+            '${_formatSpeed(location!.speed)} - '
+            'Updated ${_formatRelative(location!.updatedAt)}',
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(
+              color: AppTheme.textSecondary,
+              fontSize: 11,
+            ),
+          ),
+        ],
+      ],
+    );
+    final trackButton = OutlinedButton.icon(
+      onPressed: location == null ? null : onTrack,
+      icon: const Icon(Icons.my_location_outlined, size: 17),
+      label: const Text('Track'),
+    );
 
     return Container(
       padding: const EdgeInsets.all(12),
@@ -7190,60 +7245,35 @@ class _TechnicianTrackingTile extends StatelessWidget {
       ),
       child: Column(
         children: [
-          Row(
-            children: [
-              CircleAvatar(
-                backgroundColor: statusColor.withValues(alpha: 0.12),
-                foregroundColor: statusColor,
-                child: const Icon(Icons.engineering_outlined),
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      _registeredTechnicianName(technician),
-                      style: const TextStyle(
-                        color: AppTheme.textPrimary,
-                        fontWeight: FontWeight.w900,
-                      ),
-                    ),
-                    const SizedBox(height: 3),
-                    Text(
-                      booking == null
-                          ? statusLabel
-                          : '$statusLabel - ${booking!.applianceType} for ${booking!.customerName}',
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        color: AppTheme.textSecondary,
-                        fontSize: 12,
-                      ),
-                    ),
-                    if (location != null) ...[
-                      const SizedBox(height: 3),
-                      Text(
-                        '${location!.isOnline ? 'Online' : 'Offline'} - '
-                        '${_formatSpeed(location!.speed)} - '
-                        'Updated ${_formatRelative(location!.updatedAt)}',
-                        style: const TextStyle(
-                          color: AppTheme.textSecondary,
-                          fontSize: 11,
-                        ),
-                      ),
-                    ],
-                  ],
+          if (compact) ...[
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                CircleAvatar(
+                  backgroundColor: statusColor.withValues(alpha: 0.12),
+                  foregroundColor: statusColor,
+                  child: const Icon(Icons.engineering_outlined),
                 ),
-              ),
-              const SizedBox(width: 10),
-              OutlinedButton.icon(
-                onPressed: location == null ? null : onTrack,
-                icon: const Icon(Icons.my_location_outlined, size: 17),
-                label: const Text('Track'),
-              ),
-            ],
-          ),
+                const SizedBox(width: 10),
+                Expanded(child: details),
+              ],
+            ),
+            const SizedBox(height: 10),
+            SizedBox(width: double.infinity, child: trackButton),
+          ] else
+            Row(
+              children: [
+                CircleAvatar(
+                  backgroundColor: statusColor.withValues(alpha: 0.12),
+                  foregroundColor: statusColor,
+                  child: const Icon(Icons.engineering_outlined),
+                ),
+                const SizedBox(width: 10),
+                Expanded(child: details),
+                const SizedBox(width: 10),
+                trackButton,
+              ],
+            ),
           if (selected && techPoint != null && customerPoint != null) ...[
             const SizedBox(height: 12),
             ClipRRect(

@@ -177,6 +177,7 @@ enum _AutomaticLocationState {
 enum _TechnicianHeaderAction {
   attendance,
   closeWork,
+  restartTracking,
   signOut,
 }
 
@@ -389,6 +390,15 @@ class _TechnicianDashboardScreenState
         _showAttendanceHistory();
       case _TechnicianHeaderAction.closeWork:
         if (user != null) await _closeTodaysWork(user.uid);
+      case _TechnicianHeaderAction.restartTracking:
+        if (user != null) {
+          await _startAutomaticLocation(
+            technicianId: user.uid,
+            branchId: user.branchId,
+            bookingId: null,
+            force: true,
+          );
+        }
       case _TechnicianHeaderAction.signOut:
         await _signOut();
     }
@@ -420,7 +430,7 @@ class _TechnicianDashboardScreenState
       builder: (dialogContext) => AlertDialog(
         title: const Text('Final confirmation'),
         content: const Text(
-          'This ends today\'s location recording. You can only restart it by marking attendance on a new workday.',
+          'This pauses today\'s location recording. You can restart tracking later today from the location status or the menu.',
         ),
         actions: [
           TextButton(
@@ -441,7 +451,8 @@ class _TechnicianDashboardScreenState
         () => _locationState = _AutomaticLocationState.waitingForAttendance);
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(
-          content: Text('Today\'s work closed. Location tracking stopped.')),
+          content: Text(
+              'Today\'s tracking is paused. You can restart it any time today.')),
     );
   }
 
@@ -550,6 +561,14 @@ class _TechnicianDashboardScreenState
                     title: Text('Close today\'s work'),
                   ),
                 ),
+              if (workingToday && workClosedToday)
+                const PopupMenuItem(
+                  value: _TechnicianHeaderAction.restartTracking,
+                  child: ListTile(
+                    leading: Icon(Icons.play_circle_outline),
+                    title: Text('Restart location tracking'),
+                  ),
+                ),
               const PopupMenuItem(
                 value: _TechnicianHeaderAction.signOut,
                 child: ListTile(
@@ -571,9 +590,11 @@ class _TechnicianDashboardScreenState
                     child: Align(
                       alignment: Alignment.centerLeft,
                       child: _LocationStatusBadge(
-                        label: switch (_locationState) {
-                          _AutomaticLocationState.waitingForAttendance =>
-                            'OFF DUTY',
+                        label: workClosedToday
+                            ? 'RESTART LOCATION'
+                            : switch (_locationState) {
+                                _AutomaticLocationState.waitingForAttendance =>
+                                  'OFF DUTY',
                           _AutomaticLocationState.starting => 'STARTING',
                           _AutomaticLocationState.sharing => 'LIVE',
                           _AutomaticLocationState.permissionRequired =>
@@ -583,11 +604,17 @@ class _TechnicianDashboardScreenState
                           _AutomaticLocationState.profileRequired =>
                             'NO BRANCH',
                         },
-                        tooltip: _locationTooltip,
-                        icon: _locationIcon,
-                        color: switch (_locationState) {
-                          _AutomaticLocationState.waitingForAttendance =>
-                            AppTheme.textSecondary,
+                        tooltip: workClosedToday
+                            ? 'Tracking is paused. Tap to restart it today.'
+                            : _locationTooltip,
+                        icon: workClosedToday
+                            ? const Icon(Icons.play_circle_outline)
+                            : _locationIcon,
+                        color: workClosedToday
+                            ? AppTheme.primary
+                            : switch (_locationState) {
+                                _AutomaticLocationState.waitingForAttendance =>
+                                  AppTheme.textSecondary,
                           _AutomaticLocationState.starting =>
                             const Color(0xFFF38A1F),
                           _AutomaticLocationState.sharing =>
@@ -597,7 +624,8 @@ class _TechnicianDashboardScreenState
                           _AutomaticLocationState.profileRequired =>
                             const Color(0xFFD95C2A),
                         },
-                        onRetry: (_locationState ==
+                        onRetry: (workClosedToday ||
+                                _locationState ==
                                     _AutomaticLocationState
                                         .permissionRequired ||
                                 _locationState ==
