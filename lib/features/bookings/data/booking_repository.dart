@@ -1,8 +1,12 @@
 import 'dart:math' as math;
+import 'dart:convert';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:http/http.dart' as http;
 
+import '../../../core/config/app_environment.dart';
 import '../../../core/enums/booking_status.dart';
 import '../../../core/providers/firebase_providers.dart';
 import '../domain/booking.dart';
@@ -18,8 +22,12 @@ void validateBookingBranch(Booking booking) {
 }
 
 final bookingRepositoryProvider = Provider<BookingRepository>((ref) {
-  return BookingRepository(ref.watch(firebaseRefsProvider).firestore);
+  final refs = ref.watch(firebaseRefsProvider);
+  return BookingRepository(refs.firestore, refs.auth, http.Client());
 });
+
+const _productionWorkflowApiUrl =
+    'https://fixnow-tracking-server-uhrr6qe3gq-el.a.run.app';
 
 const technicianBusyStatuses = {
   BookingStatus.technicianAssigned,
@@ -60,9 +68,34 @@ bool isTechnicianVisibleStatus(BookingStatus status) {
 }
 
 class BookingRepository {
-  BookingRepository(this._firestore);
+  BookingRepository(this._firestore, this._auth, this._client);
 
   final FirebaseFirestore _firestore;
+  final FirebaseAuth _auth;
+  final http.Client _client;
+
+  Future<void> _postWorkflow(String path, Map<String, dynamic> body) async {
+    final user = _auth.currentUser;
+    if (user == null) throw StateError('Sign in again and retry.');
+    final token = await user.getIdToken(true);
+    if (token == null || token.isEmpty) {
+      throw StateError('Your sign-in session has expired. Sign in again and retry.');
+    }
+    final response = await _client.post(
+      Uri.parse('$_productionWorkflowApiUrl$path'),
+      headers: {'Authorization': 'Bearer $token', 'Content-Type': 'application/json'},
+      body: jsonEncode(body),
+    ).timeout(const Duration(seconds: 25));
+    Map<String, dynamic> decoded = const {};
+    try {
+      if (response.body.isNotEmpty) decoded = jsonDecode(response.body) as Map<String, dynamic>;
+    } on FormatException {
+      throw StateError('FixNow service returned an invalid response.');
+    }
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw StateError(decoded['error'] as String? ?? 'Unable to complete this action.');
+    }
+  }
 
   Stream<List<Booking>> watchCustomerBookings(String customerId) {
     return _firestore
@@ -381,6 +414,19 @@ class BookingRepository {
     required String bookingId,
     required String customerId,
   }) {
+    if (!AppEnvironment.isDevelopment) {
+      return _postWorkflow('/api/customer/work-completion', {'bookingId': bookingId});
+    }
+    return _confirmWorkCompletedWithFirestore(
+      bookingId: bookingId,
+      customerId: customerId,
+    );
+  }
+
+  Future<void> _confirmWorkCompletedWithFirestore({
+    required String bookingId,
+    required String customerId,
+  }) {
     final bookingRef = _firestore.collection('bookings').doc(bookingId);
     return _firestore.runTransaction((transaction) async {
       final snapshot = await transaction.get(bookingRef);
@@ -482,6 +528,19 @@ class BookingRepository {
   }
 
   Future<void> requestWorkCompletion({
+    required String bookingId,
+    required String technicianId,
+  }) {
+    if (!AppEnvironment.isDevelopment) {
+      return _postWorkflow('/api/technician/work-completion', {'bookingId': bookingId});
+    }
+    return _requestWorkCompletionWithFirestore(
+      bookingId: bookingId,
+      technicianId: technicianId,
+    );
+  }
+
+  Future<void> _requestWorkCompletionWithFirestore({
     required String bookingId,
     required String technicianId,
   }) {

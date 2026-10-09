@@ -866,17 +866,13 @@ class _BookingDetailScreenState extends ConsumerState<BookingDetailScreen> {
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Row(
-                            children: [
-                              const Icon(
-                                Icons.receipt_long_outlined,
-                                color: AppTheme.primary,
-                              ),
-                              const SizedBox(width: 12),
-                              Expanded(
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
+                          LayoutBuilder(
+                            builder: (context, constraints) {
+                              final compact = constraints.maxWidth < 420;
+                              final details = Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                    if (!compact)
                                     const Text(
                                       'Final bill',
                                       style: TextStyle(
@@ -892,6 +888,8 @@ class _BookingDetailScreenState extends ConsumerState<BookingDetailScreen> {
                                       style: const TextStyle(
                                         color: AppTheme.textSecondary,
                                       ),
+                                      maxLines: 2,
+                                      overflow: TextOverflow.ellipsis,
                                     ),
                                     Text(
                                       'Service ₹${bill.taxableAmount.toStringAsFixed(0)} + CGST ₹${bill.cgst.toStringAsFixed(0)} + SGST ₹${bill.sgst.toStringAsFixed(0)}',
@@ -899,6 +897,8 @@ class _BookingDetailScreenState extends ConsumerState<BookingDetailScreen> {
                                         color: AppTheme.textSecondary,
                                         fontSize: 12,
                                       ),
+                                      maxLines: 3,
+                                      overflow: TextOverflow.ellipsis,
                                     ),
                                     if (bill.labourCharge != null ||
                                         bill.partsCharge != null)
@@ -908,6 +908,8 @@ class _BookingDetailScreenState extends ConsumerState<BookingDetailScreen> {
                                           color: AppTheme.textSecondary,
                                           fontSize: 12,
                                         ),
+                                        maxLines: 2,
+                                        overflow: TextOverflow.ellipsis,
                                       ),
                                     if (bill.adjustmentReason != null &&
                                         bill.adjustmentReason!
@@ -919,19 +921,55 @@ class _BookingDetailScreenState extends ConsumerState<BookingDetailScreen> {
                                           color: AppTheme.textSecondary,
                                           fontSize: 12,
                                         ),
+                                        maxLines: 3,
+                                        overflow: TextOverflow.ellipsis,
                                       ),
-                                  ],
-                                ),
-                              ),
-                              Chip(
+                                ],
+                              );
+                              final status = Chip(
                                 label: Text(bill.paymentStatusLabel),
                                 backgroundColor: bill.isPaid
                                     ? Colors.green.shade50
                                     : bill.hasPaymentForApproval
                                         ? Colors.blue.shade50
                                         : Colors.orange.shade50,
-                              ),
-                            ],
+                              );
+                              if (compact) {
+                                return Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Row(children: [
+                                      const Icon(
+                                        Icons.receipt_long_outlined,
+                                        color: AppTheme.primary,
+                                      ),
+                                      const SizedBox(width: 12),
+                                      const Expanded(
+                                        child: Text(
+                                          'Final bill',
+                                          style: TextStyle(
+                                            fontWeight: FontWeight.w800,
+                                            color: AppTheme.textPrimary,
+                                          ),
+                                        ),
+                                      ),
+                                      status,
+                                    ]),
+                                    const SizedBox(height: 8),
+                                    details,
+                                  ],
+                                );
+                              }
+                              return Row(children: [
+                                const Icon(
+                                  Icons.receipt_long_outlined,
+                                  color: AppTheme.primary,
+                                ),
+                                const SizedBox(width: 12),
+                                Expanded(child: details),
+                                status,
+                              ]);
+                            },
                           ),
                           const SizedBox(height: 12),
                           SizedBox(
@@ -2303,14 +2341,19 @@ class _EstimateRow extends StatelessWidget {
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          Text(
-            label,
-            style: TextStyle(
-              fontSize: bold ? 14 : 13,
-              fontWeight: bold ? FontWeight.w700 : FontWeight.w400,
-              color: bold ? AppTheme.textPrimary : AppTheme.textSecondary,
+          Expanded(
+            child: Text(
+              label,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontSize: bold ? 14 : 13,
+                fontWeight: bold ? FontWeight.w700 : FontWeight.w400,
+                color: bold ? AppTheme.textPrimary : AppTheme.textSecondary,
+              ),
             ),
           ),
+          const SizedBox(width: 12),
           Text(
             value,
             style: TextStyle(

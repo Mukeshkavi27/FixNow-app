@@ -18,7 +18,12 @@ bool hasTechnicianTrackingPermission({
   required LocationPermission permission,
 }) {
   if (platform == TargetPlatform.android) {
-    return permission == LocationPermission.always;
+    // A foreground location service can track a technician during an active
+    // shift with "While using the app". Android only offers "Allow all the
+    // time" after the initial prompt, so treating it as mandatory prevented
+    // tracking from ever starting for new technicians.
+    return permission == LocationPermission.always ||
+        permission == LocationPermission.whileInUse;
   }
   return permission == LocationPermission.always ||
       permission == LocationPermission.whileInUse;

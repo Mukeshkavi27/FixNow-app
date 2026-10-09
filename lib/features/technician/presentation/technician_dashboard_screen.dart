@@ -295,6 +295,9 @@ class _TechnicianDashboardScreenState
       if (mounted) {
         setState(() => _locationState = _AutomaticLocationState.sharing);
       }
+      // Tracking is now active with foreground permission. Give Android users
+      // a clear optional path to background permission for locked-screen use.
+      await _showBackgroundPermissionHelp();
     } catch (_) {
       if (!mounted) return;
       setState(() {
@@ -318,17 +321,20 @@ class _TechnicianDashboardScreenState
         !mounted) {
       return;
     }
+    final serviceEnabled = await Geolocator.isLocationServiceEnabled();
     final permission = await Geolocator.checkPermission();
-    if (permission == LocationPermission.always || !mounted) return;
+    if ((permission == LocationPermission.always && serviceEnabled) || !mounted) {
+      return;
+    }
     _backgroundPermissionPromptInProgress = true;
     final openSettings = await showDialog<bool>(
       context: context,
       builder: (dialogContext) => AlertDialog(
         icon: const Icon(Icons.location_on_outlined),
-        title: const Text('Allow all-day location'),
-        content: const Text(
-          'For workday tracking to continue when FixNow is minimized, open Android settings, choose Permissions > Location, and select Allow all the time. Then return and tap LOCATION OFF.',
-        ),
+        title: Text(serviceEnabled ? 'Keep tracking while the app is closed' : 'Turn on phone location'),
+        content: Text(serviceEnabled
+            ? 'Tracking is active while FixNow is open. For tracking when the app is minimized or the phone is locked, open Android settings and choose Permissions > Location > Allow all the time.'
+            : 'Turn on your phone\'s Location service, then return to FixNow and tap LOCATION OFF.'),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(dialogContext, false),
@@ -336,7 +342,7 @@ class _TechnicianDashboardScreenState
           ),
           FilledButton(
             onPressed: () => Navigator.pop(dialogContext, true),
-            child: const Text('Open app settings'),
+            child: Text(serviceEnabled ? 'Open app settings' : 'Open location settings'),
           ),
         ],
       ),
@@ -344,7 +350,11 @@ class _TechnicianDashboardScreenState
     _backgroundPermissionPromptInProgress = false;
     if (openSettings == true) {
       _requestedTrackingKey = null;
-      await Geolocator.openAppSettings();
+      if (serviceEnabled) {
+        await Geolocator.openAppSettings();
+      } else {
+        await Geolocator.openLocationSettings();
+      }
     }
   }
 
@@ -3595,13 +3605,9 @@ class _AttendanceViewState extends ConsumerState<_AttendanceView> {
           true;
     }
 
-    // Android cannot grant "Allow all the time" from its first permission
-    // prompt. A technician must complete that extra Settings step before we
-    // accept attendance, otherwise Android stops location sharing as soon as
-    // FixNow leaves the foreground.
     if (!await _ensureRequiredWorkdayLocationPermission()) {
       _setViewState(() => _result =
-          'All-day location is required before you can start your workday.');
+          'Location permission is required before you can start your workday.');
       return;
     }
     _setViewState(() {
@@ -3620,7 +3626,7 @@ class _AttendanceViewState extends ConsumerState<_AttendanceView> {
           );
         }
         _setViewState(() => _result =
-            'Location could not be obtained. Enable precise all-day location and retry.');
+            'Location could not be obtained. Enable precise location and retry.');
         return;
       }
       if (position.accuracy > technicianMaximumAcceptedAccuracyMeters) {
@@ -3656,7 +3662,8 @@ class _AttendanceViewState extends ConsumerState<_AttendanceView> {
     if (permission == LocationPermission.denied) {
       permission = await Geolocator.requestPermission();
     }
-    if (permission == LocationPermission.always) {
+    if (permission == LocationPermission.always ||
+        permission == LocationPermission.whileInUse) {
       final accuracy = await Geolocator.getLocationAccuracy();
       // Android reports `unknown` here because it does not expose the
       // precise/approximate toggle through this plugin. Its real GPS
@@ -3665,9 +3672,6 @@ class _AttendanceViewState extends ConsumerState<_AttendanceView> {
       return _showRequiredLocationSettings(preciseLocationRequired: true);
     }
 
-    // Android 11+ presents "Allow only while using" first. The following
-    // dialog keeps the workday flow blocked until the technician explicitly
-    // enables the separate all-the-time setting.
     return _showRequiredLocationSettings(
       permanentlyDenied: permission == LocationPermission.deniedForever,
     );
@@ -3683,15 +3687,15 @@ class _AttendanceViewState extends ConsumerState<_AttendanceView> {
       barrierDismissible: false,
       builder: (dialogContext) => AlertDialog(
         icon: const Icon(Icons.location_on_outlined, size: 36),
-        title: const Text('All-day location is required'),
+        title: const Text('Location access is required'),
         content: Text(
           locationServicesDisabled
               ? 'Turn on your phone\'s Location service, return here, then tap Check again. FixNow cannot begin a tracked workday without it.'
               : permanentlyDenied
-                  ? 'Android has blocked location for FixNow. Open App settings, choose Permissions > Location, select Allow all the time, then return and tap Check again.'
+                  ? 'Android has blocked location for FixNow. Open App settings, choose Permissions > Location, select While using the app, then return and tap Check again.'
                   : preciseLocationRequired
-                      ? 'FixNow needs Precise location as well as Allow all the time. Open App settings, choose Permissions > Location, turn on Use precise location, select Allow all the time, then return and tap Check again.'
-                  : 'Choose Allow all the time in Android settings. This is required to keep technician tracking active when FixNow is minimized or the phone is locked.',
+                      ? 'FixNow needs Precise location. Open App settings, choose Permissions > Location, and turn on Use precise location, then return and tap Check again.'
+                  : 'Choose While using the app when Android asks for permission. You can choose Allow all the time later to keep tracking active when the phone is locked.',
         ),
         actions: [
           TextButton(
@@ -3715,12 +3719,14 @@ class _AttendanceViewState extends ConsumerState<_AttendanceView> {
               final servicesEnabled =
                   await Geolocator.isLocationServiceEnabled();
               final permission = await Geolocator.checkPermission();
-              final accuracy = permission == LocationPermission.always
+              final accuracy = (permission == LocationPermission.always ||
+                      permission == LocationPermission.whileInUse)
                   ? await Geolocator.getLocationAccuracy()
                   : LocationAccuracyStatus.reduced;
               if (!dialogContext.mounted) return;
               if (servicesEnabled &&
-                  permission == LocationPermission.always &&
+                  (permission == LocationPermission.always ||
+                      permission == LocationPermission.whileInUse) &&
                   accuracy != LocationAccuracyStatus.reduced) {
                 Navigator.pop(dialogContext, true);
                 return;
@@ -3728,7 +3734,7 @@ class _AttendanceViewState extends ConsumerState<_AttendanceView> {
               ScaffoldMessenger.of(dialogContext).showSnackBar(
                 const SnackBar(
                   content: Text(
-                    'Location is still not set to Allow all the time.',
+                    'Location permission or precise location is still not enabled.',
                   ),
                 ),
               );

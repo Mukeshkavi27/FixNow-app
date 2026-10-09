@@ -167,6 +167,18 @@ class BillRepository {
     required double partsCharge,
     String? adjustmentReason,
   }) async {
+    await _postBillingService('/api/technician/bills', {
+      'bookingId': bookingId,
+      'labourCharge': labourCharge,
+      'partsCharge': partsCharge,
+      'adjustmentReason': adjustmentReason,
+    });
+  }
+
+  Future<void> _postBillingService(
+    String path,
+    Map<String, dynamic> payload,
+  ) async {
     final user = _auth.currentUser;
     if (user == null) throw StateError('Sign in again to generate the final bill.');
     final token = await user.getIdToken(true);
@@ -174,17 +186,12 @@ class BillRepository {
       throw StateError('Your sign-in session has expired. Sign in again and retry.');
     }
     final response = await _client.post(
-      Uri.parse('$_billingApiUrl/api/technician/bills'),
+      Uri.parse('$_billingApiUrl$path'),
       headers: {
         'Authorization': 'Bearer $token',
         'Content-Type': 'application/json',
       },
-      body: jsonEncode({
-        'bookingId': bookingId,
-        'labourCharge': labourCharge,
-        'partsCharge': partsCharge,
-        'adjustmentReason': adjustmentReason,
-      }),
+      body: jsonEncode(payload),
     ).timeout(
       const Duration(seconds: 25),
       onTimeout: () => throw StateError(
@@ -322,6 +329,15 @@ class BillRepository {
     required double amountReceived,
     String? paymentProofUrl,
   }) async {
+    if (!AppEnvironment.isDevelopment) {
+      await _postBillingService('/api/technician/payments', {
+        'bookingId': bookingId,
+        'paymentMode': paymentMode,
+        'amountReceived': amountReceived,
+        'paymentProofUrl': paymentProofUrl,
+      });
+      return;
+    }
     final normalizedMode = paymentMode.trim();
     if (normalizedMode.isEmpty) {
       throw ArgumentError('Select the payment mode.');
@@ -401,6 +417,12 @@ class BillRepository {
     required String bookingId,
     required String customerId,
   }) async {
+    if (!AppEnvironment.isDevelopment) {
+      await _postBillingService('/api/customer/payments/approve', {
+        'bookingId': bookingId,
+      });
+      return;
+    }
     final billRef = _firestore.collection('bills').doc(bookingId);
     final bookingRef = _firestore.collection('bookings').doc(bookingId);
     await _firestore.runTransaction((transaction) async {

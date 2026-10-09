@@ -17,13 +17,13 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:geolocator/geolocator.dart';
 
 void main() {
-  test('Android workday tracking requires all-the-time permission', () {
+  test('Android workday tracking starts with foreground location permission', () {
     expect(
       hasTechnicianTrackingPermission(
         platform: TargetPlatform.android,
         permission: LocationPermission.whileInUse,
       ),
-      isFalse,
+      isTrue,
     );
     expect(
       hasTechnicianTrackingPermission(

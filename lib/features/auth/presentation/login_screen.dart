@@ -691,14 +691,23 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
             ),
           ),
           SafeArea(
-            child: Align(
-              alignment: isMobile ? Alignment.bottomCenter : Alignment.center,
-              child: SingleChildScrollView(
-                padding: EdgeInsets.symmetric(
-                  horizontal: formHPad,
-                  vertical: isMobile ? 18 : (isSmall ? 18 : 28),
+            child: AnimatedPadding(
+              duration: const Duration(milliseconds: 180),
+              curve: Curves.easeOut,
+              padding: EdgeInsets.only(
+                bottom: MediaQuery.viewInsetsOf(context).bottom,
+              ),
+              child: Align(
+                alignment: isMobile ? Alignment.topCenter : Alignment.center,
+                child: SingleChildScrollView(
+                  keyboardDismissBehavior:
+                      ScrollViewKeyboardDismissBehavior.onDrag,
+                  padding: EdgeInsets.symmetric(
+                    horizontal: formHPad,
+                    vertical: isMobile ? 18 : (isSmall ? 18 : 28),
+                  ),
+                  child: formPanel,
                 ),
-                child: formPanel,
               ),
             ),
           ),
@@ -778,7 +787,7 @@ class _UCTextField extends StatelessWidget {
       decoration: InputDecoration(
         labelText: label,
         labelStyle: const TextStyle(
-          color: AppTheme.textHint,
+          color: AppTheme.textSecondary,
           fontSize: 13,
         ),
         errorStyle: const TextStyle(
@@ -798,7 +807,9 @@ class _UCTextField extends StatelessWidget {
         prefixIcon: Icon(prefixIcon, size: 18, color: AppTheme.textHint),
         suffixIcon: suffixIcon,
         filled: true,
-        fillColor: Colors.white.withValues(alpha: 0.7),
+        // The photograph remains visible, while the input itself stays
+        // readable when the keyboard changes the layout on a small phone.
+        fillColor: Colors.white.withValues(alpha: 0.90),
         border: OutlineInputBorder(
           borderRadius: BorderRadius.circular(12),
           borderSide: BorderSide(
