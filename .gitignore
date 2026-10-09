@@ -10,6 +10,7 @@ tracking-server/node_modules/
 tracking-server/.env
 tracking-server/*service*account*.json
 tracking-server/service-account*.json
+private/
 android/.gradle/
 android/.kotlin/
 android/local.properties
