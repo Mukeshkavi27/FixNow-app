@@ -86,6 +86,23 @@ service cloud.firestore {
         && data.updatedAt == request.time;
     }
 
+    // Starting a shift deliberately creates a small, attendance-backed
+    // tracking session before Android has delivered its first GPS sample.
+    // Do not require coordinates for that one initial document; every later
+    // coordinate write is still checked by validLocationSample above.
+    function validLocationTrackingSession(data) {
+      return data.technicianId == request.auth.uid
+        && data.branchId == currentUser().branchId
+        && data.attendanceId is string
+        && data.isOnline == true
+        && data.isOnDuty == true
+        && data.updatedAt == request.time
+        && !('latitude' in data)
+        && !('longitude' in data)
+        && !('accuracy' in data)
+        && !('capturedAt' in data);
+    }
+
     function booking(bookingId) {
       return get(/databases/$(database)/documents/bookings/$(bookingId)).data;
     }
@@ -806,7 +823,8 @@ service cloud.firestore {
         && request.resource.data.technicianId == request.auth.uid
         && request.resource.data.branchId == currentUser().branchId
         && hasRecentAttendanceForLocation(request.resource.data)
-        && validLocationSample(request.resource.data)
+        && (validLocationSample(request.resource.data)
+          || validLocationTrackingSession(request.resource.data))
         && (!('activeBookingId' in request.resource.data)
           || request.resource.data.activeBookingId == null
           || booking(request.resource.data.activeBookingId).technicianId

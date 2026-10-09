@@ -691,23 +691,18 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
             ),
           ),
           SafeArea(
-            child: AnimatedPadding(
-              duration: const Duration(milliseconds: 180),
-              curve: Curves.easeOut,
-              padding: EdgeInsets.only(
-                bottom: MediaQuery.viewInsetsOf(context).bottom,
-              ),
-              child: Align(
-                alignment: isMobile ? Alignment.topCenter : Alignment.center,
-                child: SingleChildScrollView(
-                  keyboardDismissBehavior:
-                      ScrollViewKeyboardDismissBehavior.onDrag,
-                  padding: EdgeInsets.symmetric(
-                    horizontal: formHPad,
-                    vertical: isMobile ? 18 : (isSmall ? 18 : 28),
-                  ),
-                  child: formPanel,
+            // Scaffold already applies the keyboard inset. Applying it a
+            // second time shrank the mobile form to almost nothing.
+            child: Align(
+              alignment: isMobile ? Alignment.topCenter : Alignment.center,
+              child: SingleChildScrollView(
+                keyboardDismissBehavior:
+                    ScrollViewKeyboardDismissBehavior.onDrag,
+                padding: EdgeInsets.symmetric(
+                  horizontal: formHPad,
+                  vertical: isMobile ? 18 : (isSmall ? 18 : 28),
                 ),
+                child: formPanel,
               ),
             ),
           ),

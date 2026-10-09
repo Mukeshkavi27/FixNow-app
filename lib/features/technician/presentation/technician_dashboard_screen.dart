@@ -170,6 +170,7 @@ enum _AutomaticLocationState {
   starting,
   sharing,
   permissionRequired,
+  syncFailed,
   profileRequired,
 }
 
@@ -298,19 +299,27 @@ class _TechnicianDashboardScreenState
       // Tracking is now active with foreground permission. Give Android users
       // a clear optional path to background permission for locked-screen use.
       await _showBackgroundPermissionHelp();
-    } catch (_) {
+    } on StateError catch (error) {
       if (!mounted) return;
       setState(() {
         _locationState = _AutomaticLocationState.permissionRequired;
       });
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text(
-            'Automatic location could not start. Enable device location permission and try again.',
-          ),
+        SnackBar(
+          content: Text(error.message.toString()),
         ),
       );
       await _showBackgroundPermissionHelp();
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _locationState = _AutomaticLocationState.syncFailed);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Location permission is granted, but FixNow could not start syncing. Tap the status to retry.',
+          ),
+        ),
+      );
     }
   }
 
@@ -443,6 +452,8 @@ class _TechnicianDashboardScreenState
         _AutomaticLocationState.sharing => 'Location is automatically shared',
         _AutomaticLocationState.permissionRequired =>
           'Enable location permission and retry',
+        _AutomaticLocationState.syncFailed =>
+          'Location is enabled but tracking could not sync. Tap to retry',
         _AutomaticLocationState.profileRequired =>
           'Branch assignment is required for location sharing',
       };
@@ -458,6 +469,8 @@ class _TechnicianDashboardScreenState
         _AutomaticLocationState.sharing => const Icon(Icons.location_on),
         _AutomaticLocationState.permissionRequired =>
           const Icon(Icons.location_disabled),
+        _AutomaticLocationState.syncFailed =>
+          const Icon(Icons.sync_problem_outlined),
         _AutomaticLocationState.profileRequired =>
           const Icon(Icons.wrong_location_outlined),
       };
@@ -565,6 +578,8 @@ class _TechnicianDashboardScreenState
                           _AutomaticLocationState.sharing => 'LIVE',
                           _AutomaticLocationState.permissionRequired =>
                             'LOCATION OFF',
+                          _AutomaticLocationState.syncFailed =>
+                            'RETRY TRACKING',
                           _AutomaticLocationState.profileRequired =>
                             'NO BRANCH',
                         },
@@ -578,12 +593,15 @@ class _TechnicianDashboardScreenState
                           _AutomaticLocationState.sharing =>
                             const Color(0xFF138A52),
                           _AutomaticLocationState.permissionRequired ||
+                          _AutomaticLocationState.syncFailed ||
                           _AutomaticLocationState.profileRequired =>
                             const Color(0xFFD95C2A),
                         },
-                        onRetry: _locationState ==
+                        onRetry: (_locationState ==
                                     _AutomaticLocationState
-                                        .permissionRequired &&
+                                        .permissionRequired ||
+                                _locationState ==
+                                    _AutomaticLocationState.syncFailed) &&
                                 bookings != null
                             ? () => _startAutomaticLocation(
                                   technicianId: user.uid,
@@ -981,16 +999,22 @@ class _ProfileDetailRow extends StatelessWidget {
           children: [
             Icon(icon, size: 18, color: AppTheme.textSecondary),
             const SizedBox(width: 9),
-            SizedBox(
-              width: 145,
-              child: Text(
-                label,
-                style: const TextStyle(color: AppTheme.textSecondary),
-              ),
-            ),
             Expanded(
-              child: Text(value,
-                  style: const TextStyle(fontWeight: FontWeight.w700)),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    label,
+                    style: const TextStyle(color: AppTheme.textSecondary),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    value,
+                    softWrap: true,
+                    style: const TextStyle(fontWeight: FontWeight.w700),
+                  ),
+                ],
+              ),
             ),
           ],
         ),

@@ -866,110 +866,85 @@ class _BookingDetailScreenState extends ConsumerState<BookingDetailScreen> {
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          LayoutBuilder(
-                            builder: (context, constraints) {
-                              final compact = constraints.maxWidth < 420;
-                              final details = Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
+                          Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(
                                 children: [
-                                    if (!compact)
-                                    const Text(
+                                  const Icon(
+                                    Icons.receipt_long_outlined,
+                                    color: AppTheme.primary,
+                                  ),
+                                  const SizedBox(width: 12),
+                                  const Expanded(
+                                    child: Text(
                                       'Final bill',
                                       style: TextStyle(
                                         fontWeight: FontWeight.w800,
                                         color: AppTheme.textPrimary,
                                       ),
                                     ),
-                                    Text(
-                                      bill.isPaid || bill.hasPaymentForApproval
-                                          ? 'INR ${bill.amount.toStringAsFixed(0)}'
-                                              ' - ${bill.paymentModeLabel}'
-                                          : 'INR ${bill.amount.toStringAsFixed(0)}',
-                                      style: const TextStyle(
-                                        color: AppTheme.textSecondary,
-                                      ),
-                                      maxLines: 2,
-                                      overflow: TextOverflow.ellipsis,
-                                    ),
-                                    Text(
-                                      'Service ₹${bill.taxableAmount.toStringAsFixed(0)} + CGST ₹${bill.cgst.toStringAsFixed(0)} + SGST ₹${bill.sgst.toStringAsFixed(0)}',
-                                      style: const TextStyle(
-                                        color: AppTheme.textSecondary,
-                                        fontSize: 12,
-                                      ),
-                                      maxLines: 3,
-                                      overflow: TextOverflow.ellipsis,
-                                    ),
-                                    if (bill.labourCharge != null ||
-                                        bill.partsCharge != null)
-                                      Text(
-                                        'Actual labour ₹${(bill.labourCharge ?? 0).toStringAsFixed(0)} · parts ₹${(bill.partsCharge ?? 0).toStringAsFixed(0)}',
-                                        style: const TextStyle(
-                                          color: AppTheme.textSecondary,
-                                          fontSize: 12,
-                                        ),
-                                        maxLines: 2,
+                                  ),
+                                  Flexible(
+                                    child: Chip(
+                                      label: Text(
+                                        bill.paymentStatusLabel,
                                         overflow: TextOverflow.ellipsis,
                                       ),
-                                    if (bill.adjustmentReason != null &&
-                                        bill.adjustmentReason!
-                                            .trim()
-                                            .isNotEmpty)
-                                      Text(
-                                        'Final-charge note: ${bill.adjustmentReason}',
-                                        style: const TextStyle(
-                                          color: AppTheme.textSecondary,
-                                          fontSize: 12,
-                                        ),
-                                        maxLines: 3,
-                                        overflow: TextOverflow.ellipsis,
-                                      ),
+                                      backgroundColor: bill.isPaid
+                                          ? Colors.green.shade50
+                                          : bill.hasPaymentForApproval
+                                              ? Colors.blue.shade50
+                                              : Colors.orange.shade50,
+                                    ),
+                                  ),
                                 ],
-                              );
-                              final status = Chip(
-                                label: Text(bill.paymentStatusLabel),
-                                backgroundColor: bill.isPaid
-                                    ? Colors.green.shade50
-                                    : bill.hasPaymentForApproval
-                                        ? Colors.blue.shade50
-                                        : Colors.orange.shade50,
-                              );
-                              if (compact) {
-                                return Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Row(children: [
-                                      const Icon(
-                                        Icons.receipt_long_outlined,
-                                        color: AppTheme.primary,
-                                      ),
-                                      const SizedBox(width: 12),
-                                      const Expanded(
-                                        child: Text(
-                                          'Final bill',
-                                          style: TextStyle(
-                                            fontWeight: FontWeight.w800,
-                                            color: AppTheme.textPrimary,
-                                          ),
-                                        ),
-                                      ),
-                                      status,
-                                    ]),
-                                    const SizedBox(height: 8),
-                                    details,
-                                  ],
-                                );
-                              }
-                              return Row(children: [
-                                const Icon(
-                                  Icons.receipt_long_outlined,
-                                  color: AppTheme.primary,
+                              ),
+                              const SizedBox(height: 8),
+                              Text(
+                                bill.isPaid || bill.hasPaymentForApproval
+                                    ? 'INR ${bill.amount.toStringAsFixed(0)} - ${bill.paymentModeLabel}'
+                                    : 'INR ${bill.amount.toStringAsFixed(0)}',
+                                style: const TextStyle(
+                                  color: AppTheme.textSecondary,
                                 ),
-                                const SizedBox(width: 12),
-                                Expanded(child: details),
-                                status,
-                              ]);
-                            },
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                              Text(
+                                'Service ₹${bill.taxableAmount.toStringAsFixed(0)} + CGST ₹${bill.cgst.toStringAsFixed(0)} + SGST ₹${bill.sgst.toStringAsFixed(0)}',
+                                style: const TextStyle(
+                                  color: AppTheme.textSecondary,
+                                  fontSize: 12,
+                                ),
+                                maxLines: 3,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                              if (bill.labourCharge != null ||
+                                  bill.partsCharge != null)
+                                Text(
+                                  'Actual labour ₹${(bill.labourCharge ?? 0).toStringAsFixed(0)} · parts ₹${(bill.partsCharge ?? 0).toStringAsFixed(0)}',
+                                  style: const TextStyle(
+                                    color: AppTheme.textSecondary,
+                                    fontSize: 12,
+                                  ),
+                                  maxLines: 2,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              if (bill.adjustmentReason != null &&
+                                  bill.adjustmentReason!
+                                      .trim()
+                                      .isNotEmpty)
+                                Text(
+                                  'Final-charge note: ${bill.adjustmentReason}',
+                                  style: const TextStyle(
+                                    color: AppTheme.textSecondary,
+                                    fontSize: 12,
+                                  ),
+                                  maxLines: 3,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                            ],
                           ),
                           const SizedBox(height: 12),
                           SizedBox(
