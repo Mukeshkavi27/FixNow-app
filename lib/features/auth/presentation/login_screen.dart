@@ -115,6 +115,36 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     }
   }
 
+  Future<void> _sendPasswordReset() async {
+    final email = _email.text.trim();
+    if (email.isEmpty || !email.contains('@')) {
+      setState(() {
+        _errorMessage =
+            'Enter your FixNow email address, then tap Forgot password.';
+      });
+      return;
+    }
+
+    setState(() {
+      _isLoading = true;
+      _errorMessage = null;
+    });
+    try {
+      await ref.read(authRepositoryProvider).sendPasswordResetForEmail(email);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Password-reset email sent to $email.'),
+        ),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      setState(() => _errorMessage = userFacingOperationError(error));
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
+    }
+  }
+
   Future<Position?> _position() async {
     try {
       final enabled = await Geolocator.isLocationServiceEnabled();
@@ -521,6 +551,14 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                     v == null || v.length < 6 ? 'Minimum 6 characters' : null,
               ),
             ],
+            if (!_isRegister && !_usePhoneLogin)
+              Align(
+                alignment: Alignment.centerRight,
+                child: TextButton(
+                  onPressed: _isLoading ? null : _sendPasswordReset,
+                  child: const Text('Forgot password?'),
+                ),
+              ),
             if (_errorMessage != null) ...[
               SizedBox(height: fieldGap),
               Semantics(

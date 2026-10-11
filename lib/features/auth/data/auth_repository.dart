@@ -335,6 +335,21 @@ class AuthRepository {
     if (email == null || email.isEmpty) {
       throw StateError('No email is linked to this account.');
     }
-    await _auth.sendPasswordResetEmail(email: email);
+    await sendPasswordResetForEmail(email);
+  }
+
+  /// Sends Firebase's password-reset email without requiring an active session.
+  /// This is used from the sign-in screen, where a user cannot be signed in yet.
+  Future<void> sendPasswordResetForEmail(String email) async {
+    final normalizedEmail = email.trim();
+    if (normalizedEmail.isEmpty || !normalizedEmail.contains('@')) {
+      throw StateError('Enter the email address for your FixNow account.');
+    }
+    await _auth.sendPasswordResetEmail(email: normalizedEmail).timeout(
+          const Duration(seconds: 25),
+          onTimeout: () => throw StateError(
+            'Password reset is taking too long. Check your connection and try again.',
+          ),
+        );
   }
 }
