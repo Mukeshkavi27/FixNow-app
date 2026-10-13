@@ -204,23 +204,87 @@ class SuperAdminRepository {
   }) async {
     final branchRef = _firestore.collection('branches').doc(branch.id);
     final auditRef = _firestore.collection('audit_logs').doc();
-    final batch = _firestore.batch();
-    batch.update(branchRef, {
-      ...branch.toJson(),
-      'updatedAt': FieldValue.serverTimestamp(),
-    });
-    batch.set(
-      auditRef,
-      _auditData(
-        actorId: actorId,
-        action: 'branch.updated',
-        targetType: 'branch',
-        targetId: branch.id,
-        branchId: branch.id,
-        summary: 'Updated ${branch.name}',
+    // Keep denormalised names in sync. A user's branch name is displayed in
+    // the technician and admin dashboards, while a booking's branch name is
+    // displayed to customers. Without this fan-out, a rename is only visible
+    // to screens that happen to read the branch collection directly.
+    final snapshots = await Future.wait([
+      _firestore.collection('users').where('branchId', isEqualTo: branch.id).get(),
+      _firestore
+          .collection('users')
+          .where('nativeBranchId', isEqualTo: branch.id)
+          .get(),
+      _firestore
+          .collection('bookings')
+          .where('branchId', isEqualTo: branch.id)
+          .get(),
+    ]);
+    final members = snapshots[0];
+    final nativeMembers = snapshots[1];
+    final bookings = snapshots[2];
+
+    final memberUpdates = <DocumentReference<Map<String, dynamic>>,
+        Map<String, Object?>>{};
+    for (final member in members.docs) {
+      memberUpdates[member.reference] = {
+        'branchName': branch.name.trim(),
+        'updatedAt': FieldValue.serverTimestamp(),
+      };
+    }
+    for (final member in nativeMembers.docs) {
+      memberUpdates.update(
+        member.reference,
+        (updates) => {
+          ...updates,
+          'nativeBranchName': branch.name.trim(),
+          'updatedAt': FieldValue.serverTimestamp(),
+        },
+        ifAbsent: () => {
+          'nativeBranchName': branch.name.trim(),
+          'updatedAt': FieldValue.serverTimestamp(),
+        },
+      );
+    }
+
+    final writes = <void Function(WriteBatch)>[
+      (batch) => batch.update(branchRef, {
+            ...branch.toJson(),
+            'updatedAt': FieldValue.serverTimestamp(),
+          }),
+      (batch) => batch.set(
+            auditRef,
+            _auditData(
+              actorId: actorId,
+              action: 'branch.updated',
+              targetType: 'branch',
+              targetId: branch.id,
+              branchId: branch.id,
+              summary: 'Updated ${branch.name}',
+            ),
+          ),
+      ...memberUpdates.entries.map(
+        (entry) => (WriteBatch batch) => batch.update(entry.key, entry.value),
       ),
-    );
-    await batch.commit();
+      ...bookings.docs.map(
+        (booking) => (WriteBatch batch) => batch.update(booking.reference, {
+              'branchName': branch.name.trim(),
+              'updatedAt': FieldValue.serverTimestamp(),
+            }),
+      ),
+    ];
+    await _commitInBatches(writes);
+  }
+
+  Future<void> _commitInBatches(List<void Function(WriteBatch)> writes) async {
+    // Firestore permits up to 500 mutations per batch. Leave headroom for
+    // future fields and allow a branch rename to scale beyond one small team.
+    for (var start = 0; start < writes.length; start += 450) {
+      final batch = _firestore.batch();
+      for (final write in writes.skip(start).take(450)) {
+        write(batch);
+      }
+      await batch.commit();
+    }
   }
 
   Future<void> setBranchActive({

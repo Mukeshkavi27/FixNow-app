@@ -39,7 +39,9 @@ final superAdminBranchesProvider =
     StreamProvider.autoDispose<List<BranchInfo>>((ref) {
   return ref
       .watch(branchRepositoryProvider)
-      .watchBranches(fallbackWhenEmpty: false);
+      // Super Admins must see inactive branches as well, so they can audit
+      // and reactivate them. Other roles receive active branches only.
+      .watchBranches(fallbackWhenEmpty: false, includeInactive: true);
 });
 
 final superAdminBookingsProvider =

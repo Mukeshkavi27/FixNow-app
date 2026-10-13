@@ -15,7 +15,9 @@ final branchesProvider = StreamProvider.autoDispose<List<BranchInfo>>((ref) {
   final branchId = user?.role == UserRole.branchAdmin ? user?.branchId : null;
   return ref.watch(branchRepositoryProvider).watchBranches(
         branchId: branchId,
-        fallbackWhenEmpty: user?.role != UserRole.branchAdmin,
+        // Branches are live operational data. Returning demo branches here
+        // makes a removed branch remain selectable for customers and staff.
+        fallbackWhenEmpty: false,
       );
 });
 
@@ -30,6 +32,7 @@ class BranchRepository {
   Stream<List<BranchInfo>> watchBranches({
     String? branchId,
     bool fallbackWhenEmpty = true,
+    bool includeInactive = false,
   }) {
     Query<Map<String, dynamic>> query = _branches;
     if (branchId != null && branchId.isNotEmpty) {
@@ -41,7 +44,12 @@ class BranchRepository {
       (snapshot) {
         final branches = snapshot.docs
             .map((doc) => BranchInfo.fromJson(doc.id, doc.data()))
-            .where((branch) => branch.name.isNotEmpty && branch.city.isNotEmpty)
+            .where(
+              (branch) =>
+                  branch.name.isNotEmpty &&
+                  branch.city.isNotEmpty &&
+                  (includeInactive || branch.isActive),
+            )
             .toList();
         return branches.isEmpty && fallbackWhenEmpty
             ? BranchInfo.fallbackBranches

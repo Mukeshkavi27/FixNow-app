@@ -273,6 +273,18 @@ class _BookServiceScreenState extends ConsumerState<BookServiceScreen> {
     required Position initial,
     required String initialQuery,
   }) async {
+    final branches = ref.read(branchesProvider).valueOrNull ??
+        const <BranchInfo>[];
+    if (branches.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Service branches are not available right now. Please try again shortly.',
+          ),
+        ),
+      );
+      return;
+    }
     final selected = await showModalBottomSheet<_ConfirmedServiceLocation>(
       context: context,
       isScrollControlled: true,
@@ -280,8 +292,7 @@ class _BookServiceScreenState extends ConsumerState<BookServiceScreen> {
       builder: (sheetContext) => _PinPickerSheet(
         initial: initial,
         initialQuery: initialQuery,
-        branches: ref.read(branchesProvider).valueOrNull ??
-            BranchInfo.fallbackBranches,
+        branches: branches,
       ),
     );
     if (selected == null || !mounted) return;
@@ -301,10 +312,21 @@ class _BookServiceScreenState extends ConsumerState<BookServiceScreen> {
     if (!_formKey.currentState!.validate()) return;
     final user = ref.read(currentUserProvider).valueOrNull;
     final branches =
-        ref.read(branchesProvider).valueOrNull ?? BranchInfo.fallbackBranches;
+        ref.read(branchesProvider).valueOrNull ?? const <BranchInfo>[];
     if (user == null) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Please sign in before booking.')),
+      );
+      return;
+    }
+    if (branches.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'No active service branch is available right now. Please try again later.',
+          ),
+          behavior: SnackBarBehavior.floating,
+        ),
       );
       return;
     }
@@ -420,7 +442,7 @@ class _BookServiceScreenState extends ConsumerState<BookServiceScreen> {
   Widget build(BuildContext context) {
     final user = ref.watch(currentUserProvider).valueOrNull;
     final branches =
-        ref.watch(branchesProvider).valueOrNull ?? BranchInfo.fallbackBranches;
+        ref.watch(branchesProvider).valueOrNull ?? const <BranchInfo>[];
     if (!_profileLoaded && user != null) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted || _profileLoaded) return;
