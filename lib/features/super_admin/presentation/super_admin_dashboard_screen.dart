@@ -2134,16 +2134,16 @@ class _PersonRow extends StatelessWidget {
       final identity = Row(
         children: [
           CircleAvatar(
-            child: Text(user.name.trim().isEmpty
+            child: Text(user.displayName.trim().isEmpty
                 ? '?'
-                : user.name.trim()[0].toUpperCase()),
+                : user.displayName.trim()[0].toUpperCase()),
           ),
           const SizedBox(width: 12),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(user.name,
+                Text(user.displayName,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: const TextStyle(fontWeight: FontWeight.w700)),

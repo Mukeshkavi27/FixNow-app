@@ -79,6 +79,22 @@ class AppUser {
   final TechnicianCategory technicianCategory;
   final double monthlySalary;
 
+  /// A safe identity for admin-facing lists. Older Firestore profiles can be
+  /// missing a display name, but an empty row makes those accounts impossible
+  /// to manage on a phone-sized screen.
+  String get displayName {
+    final trimmedName = name.trim();
+    if (trimmedName.isNotEmpty) return trimmedName;
+
+    final trimmedEmail = email.trim();
+    if (trimmedEmail.isNotEmpty) {
+      final atIndex = trimmedEmail.indexOf('@');
+      return atIndex > 0 ? trimmedEmail.substring(0, atIndex) : trimmedEmail;
+    }
+
+    return role == UserRole.technician ? 'Unnamed technician' : 'Unnamed user';
+  }
+
   bool get hasValidBranchAssignment =>
       role != UserRole.branchAdmin || (branchId?.trim().isNotEmpty ?? false);
 

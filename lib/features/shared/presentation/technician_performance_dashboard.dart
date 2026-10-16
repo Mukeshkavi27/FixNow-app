@@ -366,7 +366,7 @@ class _PerformerList extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      records[index].technician.name,
+                      records[index].technician.displayName,
                       style: const TextStyle(fontWeight: FontWeight.w900),
                     ),
                     Text(
@@ -414,7 +414,7 @@ class _LeaderboardTable extends StatelessWidget {
             DataRow(
               cells: [
                 DataCell(Text('#${index + 1}')),
-                DataCell(Text(records[index].technician.name)),
+                DataCell(Text(records[index].technician.displayName)),
                 DataCell(Text(_money(records[index].revenue))),
                 DataCell(Text('${records[index].completedJobs}')),
                 DataCell(Text(
